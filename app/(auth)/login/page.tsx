@@ -13,7 +13,7 @@ import { Eye, EyeOff, Loader2, Lock, Mail, Clock } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { LOGO_TICKET_CLASS } from '@/lib/brand-logo'
 
-import { asegurarPerfilAlLogin } from './actions'
+import { asegurarPerfilAlLogin, obtenerRutaInicioPostLogin } from './actions'
 
 
 
@@ -93,8 +93,8 @@ export default function LoginPage() {
 
 
 
-    router.push('/')
-
+    const rutaInicio = await obtenerRutaInicioPostLogin()
+    router.push(rutaInicio)
     router.refresh()
 
   }
