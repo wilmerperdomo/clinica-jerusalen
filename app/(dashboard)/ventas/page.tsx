@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { PACIENTE_BUSQUEDA_SELECT } from '@/lib/buscar-pacientes'
 import { agruparLabPorCobrar, type LabOrdenCobroRow } from '@/lib/lab-cobro-utils'
 import CajaClient from './caja-client'
 
@@ -61,7 +62,7 @@ export default async function VentasPage() {
 
     supabase
       .from('pacientes')
-      .select('id, codigo, nombre, apellido1, apellido2, fecha_nac')
+      .select(PACIENTE_BUSQUEDA_SELECT)
       .eq('activo', true)
       .order('nombre')
       .limit(500),

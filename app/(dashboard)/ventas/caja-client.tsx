@@ -22,6 +22,8 @@ import { abrirFacturaTermica, facturaPrintDesdeRegistro } from '@/lib/factura-pr
 import { abrirCierreCajaPrint, type CajaCierrePrintData } from '@/lib/caja-cierre-print'
 import { formatearNombreMedico } from '@/lib/medico-utils'
 import { nombrePaciente, esPacienteEmpresa } from '@/lib/consultas-utils'
+import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
+import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
 import { BRAND } from '@/lib/brand'
 import {
   descuentoEdadPaciente,
@@ -61,10 +63,7 @@ interface DiaHistorialCaja {
   totalIng: number
   totalEgr: number
 }
-interface Paciente {
-  id: number; codigo: string; nombre: string; apellido1: string
-  fecha_nac?: string
-}
+type Paciente = PacienteBusqueda
 interface Sucursal {
   id: number; nombre: string; direccion?: string; telefono?: string
   rtn?: string; cai?: string; num_min?: string | number | null
@@ -243,7 +242,7 @@ export default function CajaClient({
   })
   const [guardandoCobro, setGuardandoCobro] = useState(false)
   const [isPending, startTransition] = useTransition()
-  const [busqPac,   setBusqPac]   = useState('')
+  const [pacientesExtra, setPacientesExtra] = useState<PacienteBusqueda[]>([])
   const [busqCatalogoVenta, setBusqCatalogoVenta] = useState('')
   const [tabCatalogoVenta, setTabCatalogoVenta] = useState<TabCatalogoVenta>('servicios')
   const [ventaItems, setVentaItems] = useState<VentaRapidaItem[]>([])
@@ -296,6 +295,25 @@ export default function CajaClient({
 
   const supabase = sb()
 
+  const pacientesVenta = useMemo((): PacienteBusqueda[] => {
+    const map = new Map<number, PacienteBusqueda>()
+    for (const p of pacientes) map.set(p.id, p)
+    for (const p of pacientesExtra) map.set(p.id, p)
+    return [...map.values()]
+  }, [pacientes, pacientesExtra])
+
+  const buscarPacienteRemoto = useCallback(
+    (termino: string) => buscarPacientesActivos(supabase, termino),
+    [supabase],
+  )
+
+  function registrarPacienteVenta(p: PacienteBusqueda) {
+    setPacientesExtra(prev => {
+      if (prev.some(x => x.id === p.id) || pacientes.some(x => x.id === p.id)) return prev
+      return [...prev, p]
+    })
+  }
+
   /* ── calcular edad desde fecha_nacimiento ─ */
   function calcularEdad(fechaNac: string): number {
     const hoy  = new Date()
@@ -310,7 +328,7 @@ export default function CajaClient({
   function detectarDescuento(pacienteId: string) {
     setDescuentoInfo(null)
     if (!pacienteId || !sesion) return
-    const pac = pacientes.find(p => p.id === Number(pacienteId))
+    const pac = pacientesVenta.find(p => p.id === Number(pacienteId))
     if (!pac?.fecha_nac) return
     const desc = descuentoEdadPaciente(pac.fecha_nac, sucursalActiva)
     if (desc.pct > 0) {
@@ -388,7 +406,6 @@ export default function CajaClient({
     setFormMov(formMovVacio)
     setDescuentoInfo(null)
     setBusqCatalogoVenta('')
-    setBusqPac('')
     setVentaItems([])
     setTabCatalogoVenta('servicios')
   }
@@ -419,7 +436,7 @@ export default function CajaClient({
   }
 
   function pctDescuentoMaximoVenta(): number {
-    const pac = pacientes.find(p => p.id === Number(formMov.paciente_id))
+    const pac = pacientesVenta.find(p => p.id === Number(formMov.paciente_id))
     return descuentoEdadPaciente(pac?.fecha_nac, sucursalActiva).pct
   }
 
@@ -428,8 +445,8 @@ export default function CajaClient({
     const errSesion = validarSesionOperacion(sesion, userId)
     if (errSesion) return alert(errSesion)
 
-    const paciente   = pacientes.find(p => p.id === Number(formMov.paciente_id))
-    const pacNombre  = paciente ? `${paciente.nombre} ${paciente.apellido1}` : null
+    const paciente   = pacientesVenta.find(p => p.id === Number(formMov.paciente_id))
+    const pacNombre  = paciente ? nombrePaciente(paciente) : null
     const pacienteId = formMov.paciente_id ? Number(formMov.paciente_id) : null
     const hora       = new Date().toTimeString().slice(0, 5)
     const prefijos   = { SERVICIO: 'Servicio', LAB: 'Laboratorio', MEDICAMENTO: 'Medicamento' } as const
@@ -1678,11 +1695,6 @@ export default function CajaClient({
     abrirFacturaTermica(facturaPrintDesdeRegistro(factImpresa as Record<string, unknown>), { autoPrint: true })
   }
 
-  const pacsFiltrados = pacientes.filter(p => {
-    const q = busqPac.toLowerCase()
-    return !q || `${p.nombre} ${p.apellido1} ${p.codigo}`.toLowerCase().includes(q)
-  }).slice(0, 20)
-
   const resultadosCatalogoVenta = useMemo(() => {
     const q = busqCatalogoVenta.toLowerCase().trim()
     if (tabCatalogoVenta === 'medicamentos') {
@@ -1816,7 +1828,7 @@ export default function CajaClient({
             <ModuleBtnGhost onClick={() => startTransition(() => recargar())}>
               <RefreshCw className={`w-4 h-4 ${isPending ? 'animate-spin' : ''}`} />
             </ModuleBtnGhost>
-            <ModuleBtnPrimary onClick={() => { setFormMov({ ...formMovVacio, tipo: 'INGRESO' }); setDescuentoInfo(null); setBusqPac(''); setBusqCatalogoVenta(''); setVentaItems([]); setTabCatalogoVenta('servicios'); setModalMov(true) }}>
+            <ModuleBtnPrimary onClick={() => { setFormMov({ ...formMovVacio, tipo: 'INGRESO' }); setDescuentoInfo(null); setBusqCatalogoVenta(''); setVentaItems([]); setTabCatalogoVenta('servicios'); setModalMov(true) }}>
               <Receipt className="w-4 h-4" /> Venta rápida
             </ModuleBtnPrimary>
             <ModuleBtnGhost onClick={abrirModalCierre} className="!bg-red-500/20 !border-red-300/40 !text-red-100">
@@ -2229,7 +2241,7 @@ export default function CajaClient({
         <Modal
           title={formMov.tipo === 'INGRESO' ? 'Venta rápida' : 'Registrar egreso'}
           subtitle={formMov.tipo === 'INGRESO'
-            ? 'Servicios, laboratorio y medicamentos del catálogo — sin consulta ni membresía'
+            ? 'Seleccione paciente del catálogo y agregue servicios, laboratorio o medicamentos'
             : 'Salida de efectivo o pago en contado desde caja'}
           size="xl"
           accent={formMov.tipo === 'INGRESO' ? 'green' : 'default'}
@@ -2255,6 +2267,35 @@ export default function CajaClient({
                 </button>
               ))}
             </div>
+
+            {/* paciente — catálogo completo */}
+            {formMov.tipo === 'INGRESO' && (
+              <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-4 space-y-2">
+                <label className="block text-sm font-semibold text-gray-800">
+                  Paciente {formMov.forma_pago === 'CREDITO' ? '*' : '(recomendado)'}
+                </label>
+                <BuscarPacienteInput
+                  pacientes={pacientesVenta}
+                  value={formMov.paciente_id}
+                  onChange={id => {
+                    setFormMov(prev => ({ ...prev, paciente_id: id }))
+                    detectarDescuento(id)
+                  }}
+                  onSelectPaciente={registrarPacienteVenta}
+                  buscarRemoto={buscarPacienteRemoto}
+                  placeholder="Buscar paciente: nombre, código, RTN, teléfono, empresa…"
+                  required={formMov.forma_pago === 'CREDITO'}
+                />
+                <p className="text-xs text-gray-500">
+                  Catálogo de pacientes registrados — escribe al menos 2 caracteres para buscar en todo el sistema.
+                </p>
+                {formMov.forma_pago === 'CREDITO' && !formMov.paciente_id && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Las ventas a crédito requieren seleccionar un paciente registrado.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* catálogo venta rápida */}
             {formMov.tipo === 'INGRESO' && (
@@ -2395,40 +2436,6 @@ export default function CajaClient({
                     <option key={c.id} value={c.id}>{c.nombre}</option>
                   ))}
                 </select>
-              </div>
-            )}
-
-            {/* paciente (solo ingresos) */}
-            {formMov.tipo === 'INGRESO' && formMov.forma_pago === 'CREDITO' && !formMov.paciente_id && (
-              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                Las ventas a crédito requieren seleccionar un paciente registrado.
-              </p>
-            )}
-
-            {formMov.tipo === 'INGRESO' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Paciente {formMov.forma_pago === 'CREDITO' ? '*' : '(recomendado)'}
-                </label>
-                <div className="relative mb-1">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                  <input value={busqPac} onChange={e => setBusqPac(e.target.value)}
-                    placeholder="Buscar paciente..."
-                    className="w-full border rounded-lg pl-8 pr-3 py-2 text-sm focus:outline-none" />
-                </div>
-                {busqPac && (
-                  <div className="border rounded-lg max-h-36 overflow-y-auto">
-                    {pacsFiltrados.map(p => (
-                      <button key={p.id} onClick={() => {
-                        setFormMov(prev => ({ ...prev, paciente_id: String(p.id) }))
-                        setBusqPac(`${p.nombre} ${p.apellido1}`)
-                        detectarDescuento(String(p.id))
-                      }} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 border-b last:border-0">
-                        {p.nombre} {p.apellido1} <span className="text-gray-400">— {p.codigo}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
 
