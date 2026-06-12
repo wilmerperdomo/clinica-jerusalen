@@ -96,18 +96,21 @@ function filaMonospace(izq: string, der: string, negrita = false): string {
   return `<div class="row"><${tag}>${izq}</${tag}><${tag}>${der}</${tag}></div>`
 }
 
-/** Texto bajo el logo (como factura.php del sistema viejo) */
+/** Texto bajo el logo — mismo orden que factura.php (nom, dir, RTN, Correo, Telefono) */
 function encabezadoClinica(rtn?: string | null, correo?: string | null): string {
   const rtnVal = rtn || FISCAL.rtn
   const correoVal = correo || FISCAL.correo
+  const dirHtml = [
+    `Casa Matriz: ${FISCAL.casaMatriz}`,
+    `Sucursal: ${FISCAL.sucursal1}`,
+    `Sucursal#2: ${FISCAL.sucursal2}`,
+  ].join('<br>')
   return `
-  <div class="center bold nombre-clinica">${BRAND.nombre}</div>
-  <div class="center dir">Casa Matriz: ${FISCAL.casaMatriz}</div>
-  <div class="center dir">Sucursal: ${FISCAL.sucursal1}</div>
-  <div class="center dir">Sucursal#2: ${FISCAL.sucursal2}</div>
-  <div class="center">Tel: ${FISCAL.telefonos}</div>
+  <div class="center bold nombre-clinica">CLINICA MEDICA JERUSALEN</div>
+  <div class="center dir">${dirHtml}</div>
   <div class="center bold">RTN: ${rtnVal}</div>
-  <div class="center">Correo: ${correoVal}</div>`
+  <div class="center">Correo: ${correoVal}</div>
+  <div class="center">Telefono: ${FISCAL.telefonos}</div>`
 }
 
 /** HTML del ticket térmico 80mm — formato oficial Clínica Médica Jerusalén */

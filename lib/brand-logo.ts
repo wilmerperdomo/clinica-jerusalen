@@ -22,9 +22,11 @@ export function logoTicketPx(size: LogoTicketSize): number {
 }
 
 export function logoTicketSrc(baseUrl = ''): string {
-  return baseUrl
-    ? `${baseUrl.replace(/\/$/, '')}${BRAND.logoTicket}`
-    : BRAND.logoTicket
+  const path = BRAND.logoTicket
+  if (!baseUrl) return path
+  const origin = baseUrl.replace(/\/$/, '')
+  // Evita caché viejo en ventanas de impresión (popup)
+  return `${origin}${path}?v=2`
 }
 
 /** HTML para ventanas de impresión (factura, reportes, etc.) */

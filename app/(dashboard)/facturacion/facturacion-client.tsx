@@ -40,7 +40,7 @@ interface Factura {
   cai?: string; rango_inicio?: string; rango_fin?: string
   cajero_nombre?: string; medico_nombre?: string; paciente_id?: number
   sucursal_id: number; items: ItemFactura[]
-  exento_isv: boolean; rtn_emisor?: string; fecha_limite_cai?: string
+  exento_isv: boolean; rtn_emisor?: string; correo_emisor?: string; fecha_limite_cai?: string
   sucursal?: { nombre: string } | null
 }
 interface Auditoria {
@@ -357,6 +357,7 @@ export default function FacturacionClient({
       cliente_nombre: f.cliente_nombre,
       cliente_rtn: f.cliente_rtn,
       rtn_emisor: f.rtn_emisor,
+      correo_emisor: f.correo_emisor ?? undefined,
       subtotal: f.subtotal,
       descuento_monto: f.descuento_monto,
       isv_monto: f.isv_monto,
