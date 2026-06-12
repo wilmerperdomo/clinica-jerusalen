@@ -12,15 +12,16 @@ import TopBar from '@/components/top-bar'
 
 import AppFooter from '@/components/app-footer'
 import ConfigEnvError from '@/components/config-env-error'
-import { hasPublicSupabaseEnv } from '@/lib/supabase/env'
+import { getEnvDiagnostics, hasPublicSupabaseEnv } from '@/lib/supabase/env'
 
 export const dynamic = 'force-dynamic'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  if (!hasPublicSupabaseEnv()) return <ConfigEnvError />
+  const envDiag = getEnvDiagnostics()
+  if (!hasPublicSupabaseEnv()) return <ConfigEnvError {...envDiag} />
 
   const supabase = await createClient()
-  if (!supabase) return <ConfigEnvError />
+  if (!supabase) return <ConfigEnvError {...envDiag} />
 
   const { data: { user } } = await supabase.auth.getUser()
 
