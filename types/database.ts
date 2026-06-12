@@ -66,10 +66,25 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['modulos']['Row'], 'id'>
         Update: Partial<Database['public']['Tables']['modulos']['Insert']>
       }
+      // Tablas sin tipar aún (compras, cotizaciones, etc.)
+      [key: string]: {
+        Row: { [key: string]: unknown }
+        Insert: { [key: string]: unknown }
+        Update: { [key: string]: unknown }
+      }
     }
     Views: {
       mis_permisos: {
         Row: { modulo: string; accion: string }
+      }
+      [key: string]: {
+        Row: { [key: string]: unknown }
+      }
+    }
+    Functions: {
+      [key: string]: {
+        Args: Record<string, unknown>
+        Returns: unknown
       }
     }
   }
