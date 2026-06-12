@@ -2,6 +2,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { getPublicSupabaseEnv, getServiceRoleKey } from '@/lib/supabase/env'
 
 export async function crearUsuario(data: {
   email:       string
@@ -25,14 +26,13 @@ export async function crearUsuario(data: {
     return { error: 'Debes asignar una sucursal al usuario.' }
   }
 
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const url        = process.env.NEXT_PUBLIC_SUPABASE_URL
-
-  if (!serviceKey || !url) {
-    return { error: 'Falta SUPABASE_SERVICE_ROLE_KEY en .env.local' }
+  const env = getPublicSupabaseEnv()
+  const serviceKey = getServiceRoleKey()
+  if (!env || !serviceKey) {
+    return { error: 'Falta SUPABASE_SERVICE_ROLE_KEY en Vercel → Settings → Environment Variables' }
   }
 
-  const admin = createClient(url, serviceKey, {
+  const admin = createClient(env.url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 

@@ -13,7 +13,17 @@ export default async function ConfiguracionPage() {
   if (!perfil.esSuperAdmin && !modulosAcceso.includes('configuracion')) redirect('/')
 
   const supabase    = await createClient()
+  if (!supabase) redirect('/login')
+
   const adminClient = createAdminClient()
+
+  const accesoLogsQuery = adminClient
+    ? adminClient
+        .from('acceso_logs')
+        .select('id, email, accion, ip, created_at, sucursal_id')
+        .order('created_at', { ascending: false })
+        .limit(200)
+    : Promise.resolve({ data: [] })
 
   const [
     { data: perfiles },
@@ -34,12 +44,7 @@ export default async function ConfiguracionPage() {
     supabase.from('servicios').select('*').order('nombre'),
     supabase.from('permisos').select('id, modulo_id, accion'),
     supabase.from('rol_permisos').select('rol_id, permiso_id'),
-    // logs de acceso — usamos adminClient para bypassear RLS
-    adminClient
-      .from('acceso_logs')
-      .select('id, email, accion, ip, created_at, sucursal_id')
-      .order('created_at', { ascending: false })
-      .limit(200),
+    accesoLogsQuery,
   ])
 
   return (
