@@ -17,6 +17,7 @@ export interface FacturaPrintData {
   cliente_nombre: string
   cliente_rtn?: string | null
   rtn_emisor?: string | null
+  correo_emisor?: string | null
   subtotal: number
   descuento_monto?: number
   isv_monto: number
@@ -96,15 +97,17 @@ function filaMonospace(izq: string, der: string, negrita = false): string {
 }
 
 /** Texto bajo el logo (como factura.php del sistema viejo) */
-function encabezadoClinica(rtn?: string | null): string {
+function encabezadoClinica(rtn?: string | null, correo?: string | null): string {
   const rtnVal = rtn || FISCAL.rtn
+  const correoVal = correo || FISCAL.correo
   return `
   <div class="center bold nombre-clinica">${BRAND.nombre}</div>
   <div class="center dir">Casa Matriz: ${FISCAL.casaMatriz}</div>
   <div class="center dir">Sucursal: ${FISCAL.sucursal1}</div>
   <div class="center dir">Sucursal#2: ${FISCAL.sucursal2}</div>
   <div class="center">Tel: ${FISCAL.telefonos}</div>
-  <div class="center bold">RTN: ${rtnVal}</div>`
+  <div class="center bold">RTN: ${rtnVal}</div>
+  <div class="center">Correo: ${correoVal}</div>`
 }
 
 /** HTML del ticket térmico 80mm — formato oficial Clínica Médica Jerusalén */
@@ -236,7 +239,7 @@ ${anulada ? '<div class="anulada">*** ANULADA ***</div>' : ''}
 ${mostrarBotonImprimir ? '<button class="btn no-print" onclick="window.print()">Imprimir</button>' : ''}
 
 <div class="logo-wrap">${logo}</div>
-${encabezadoClinica(f.rtn_emisor)}
+${encabezadoClinica(f.rtn_emisor, f.correo_emisor)}
 <div class="line"></div>
 
 <div class="bloque-venta">
@@ -345,6 +348,9 @@ export function facturaPrintDesdeRegistro(f: Record<string, unknown>): FacturaPr
     cliente_nombre: String(f.cliente_nombre ?? 'CONSUMIDOR FINAL'),
     cliente_rtn: f.cliente_rtn as string | undefined,
     rtn_emisor: f.rtn_emisor as string | undefined,
+    correo_emisor: (f.sucursal as { email?: string } | undefined)?.email
+      ?? (f.correo_emisor as string | undefined)
+      ?? FISCAL.correo,
     subtotal: Number(f.subtotal ?? 0),
     descuento_monto: Number(f.descuento_monto ?? 0),
     isv_monto: Number(f.isv_monto ?? 0),

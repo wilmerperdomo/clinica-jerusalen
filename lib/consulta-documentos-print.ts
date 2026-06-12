@@ -25,7 +25,7 @@ function logoHtml(baseUrl?: string): string {
   return `<div style="text-align:center;margin-bottom:12px">
     ${logoTicketHtml(origin, 'mobile')}
     <p style="font-size:12px;font-weight:bold;color:#003366;margin:6px 0 2px">${BRAND.nombre}</p>
-    <p style="font-size:10px;color:#666;margin:0">RTN: ${FISCAL.rtn} · Tel: ${FISCAL.telefonos}</p>
+    <p style="font-size:10px;color:#666;margin:0">RTN: ${FISCAL.rtn} · Correo: ${FISCAL.correo} · Tel: ${FISCAL.telefonos}</p>
   </div>`
 }
 

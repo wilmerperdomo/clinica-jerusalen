@@ -22,6 +22,7 @@ export const BRAND = {
 /** Datos fiscales y sucursales — formato ticket térmico oficial */
 export const FISCAL = {
   rtn: '06111987001162',
+  correo: 'wilmerperdomo12@gmail.com',
   telefonos: '2246-3051 | 9522-7208',
   casaMatriz: 'Barrio Caserío Suyapa, casa no.: n/a',
   sucursal1: 'Col. La Peña calle principal contiguo a Pollo Master casa 224',
