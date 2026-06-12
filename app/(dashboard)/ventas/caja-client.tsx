@@ -432,20 +432,43 @@ export default function CajaClient({
     const diferencia = diferenciaArqueo
     const { totalIng, totalEgr, ingCredito, efectivoEsperado } = arqueoSistema
 
-    const { error } = await supabase.from('caja_sesiones').update({
-      hora_cierre: horaCierre,
-      monto_efectivo_real: efectReal,
-      monto_tarjeta_real: Number(formCierre.tarjeta_real || 0),
-      monto_transfer_real: Number(formCierre.transfer_real || 0),
-      total_ingresos: totalIng,
-      total_egresos: totalEgr,
-      total_creditos: ingCredito,
-      saldo_esperado: efectivoEsperado,
-      diferencia,
-      observacion: formCierre.observacion || null,
-      estado: 'CERRADA',
-    }).eq('id', sesion.id)
-    if (error) return alert('Error al cerrar caja: ' + error.message)
+    const payloadCierre = {
+      p_sesion_id: sesion.id,
+      p_hora_cierre: horaCierre,
+      p_monto_efectivo_real: efectReal,
+      p_monto_tarjeta_real: Number(formCierre.tarjeta_real || 0),
+      p_monto_transfer_real: Number(formCierre.transfer_real || 0),
+      p_total_ingresos: totalIng,
+      p_total_egresos: totalEgr,
+      p_total_creditos: ingCredito,
+      p_saldo_esperado: efectivoEsperado,
+      p_diferencia: diferencia,
+      p_observacion: formCierre.observacion.trim() || null,
+    }
+
+    const { error: errRpc } = await supabase.rpc('fn_cerrar_caja_sesion', payloadCierre)
+    if (errRpc) {
+      // Fallback si la migración 046 aún no está en Supabase
+      const { error: errUpd } = await supabase.from('caja_sesiones').update({
+        hora_cierre: horaCierre,
+        monto_efectivo_real: efectReal,
+        monto_tarjeta_real: Number(formCierre.tarjeta_real || 0),
+        monto_transfer_real: Number(formCierre.transfer_real || 0),
+        total_ingresos: totalIng,
+        total_egresos: totalEgr,
+        total_creditos: ingCredito,
+        saldo_esperado: efectivoEsperado,
+        diferencia,
+        observacion: formCierre.observacion || null,
+        estado: 'CERRADA',
+      }).eq('id', sesion.id)
+      if (errUpd) {
+        return alert(
+          'Error al cerrar caja: ' + (errRpc.message || errUpd.message)
+          + '\n\nSi persiste, ejecute scripts/FIX-CAJA-CIERRE-RLS.sql en Supabase.',
+        )
+      }
+    }
 
     const suc = sucursales.find(s => s.id === sesion.sucursal_id)
     const printData: CajaCierrePrintData = {
