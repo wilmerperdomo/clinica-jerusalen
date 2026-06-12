@@ -80,7 +80,7 @@ export function estadoBadgeClase(estado: string): string {
 
 export function etiquetaEstadoConsulta(estado: string): string {
   const map: Record<string, string> = {
-    REGISTRO: 'Registro', SIGNOS: 'Signos vitales', ATENDIENDO: 'En consulta',
+    REGISTRO: 'Registro', SIGNOS: 'Listo para médico', ATENDIENDO: 'En consulta',
     FINALIZADO: 'Finalizada', PAGADO: 'Pagada', CANCELADO: 'Cancelada',
   }
   return map[estado] ?? estado
@@ -136,4 +136,56 @@ export function fmtFechaLarga(iso: string): string {
   return new Date(iso + 'T12:00:00').toLocaleDateString('es-HN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   })
+}
+
+function normalizarRol(rol: string): string {
+  return rol.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+/** Médico / Doctor (tolera acentos y variantes de nombre de rol) */
+export function esRolMedico(rol?: string): boolean {
+  if (!rol) return false
+  return /medico|doctor/.test(normalizarRol(rol))
+}
+
+/** Personal de enfermería / recepción (toma signos vitales) */
+export function esRolEnfermeria(rol?: string): boolean {
+  if (!rol) return false
+  return /enfermera|cajero|recepcion/.test(normalizarRol(rol))
+}
+
+export interface OpcionesAtenderConsulta {
+  esAdmin?: boolean
+  esSuperAdmin?: boolean
+  rolId?: number | null
+  rolIdsMedico?: number[]
+}
+
+/** Quién puede abrir el examen médico (no tomar signos vitales) */
+export function puedeAtenderConsulta(
+  rol?: string,
+  opciones: OpcionesAtenderConsulta = {},
+): boolean {
+  if (opciones.esSuperAdmin || opciones.esAdmin) return true
+  if (esRolMedico(rol)) return true
+  if (
+    opciones.rolId != null &&
+    opciones.rolIdsMedico?.some(id => Number(id) === Number(opciones.rolId))
+  ) {
+    return true
+  }
+  return !esRolEnfermeria(rol)
+}
+
+/**
+ * Cola de espera: quien atiende consultas ve todas las del día.
+ * Enfermería solo ve su sucursal.
+ */
+export function filtroSucursalColaConsultas<T extends { eq: (col: string, val: number) => T }>(
+  query: T,
+  sucursalId: number,
+  puedeAtender: boolean,
+): T {
+  if (puedeAtender) return query
+  return query.eq('sucursal_id', sucursalId)
 }

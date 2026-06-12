@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
-import { PACIENTE_CONSULTA_SELECT } from '@/lib/consultas-utils'
+import {
+  PACIENTE_CONSULTA_SELECT,
+  esRolMedico,
+  filtroSucursalColaConsultas,
+  puedeAtenderConsulta,
+} from '@/lib/consultas-utils'
 import { buildMembresiasMap } from '@/lib/membresia-utils'
 import ConsultasClient from './consultas-client'
 
@@ -8,7 +13,37 @@ export const dynamic = 'force-dynamic'
 
 export default async function ConsultasPage() {
   const supabase = await createClient()
-  const { sucursalId, esSuperAdmin, sucursalNombre, rol } = await getPerfilSucursal()
+  const { userId, sucursalId, esSuperAdmin, esAdmin, sucursalNombre, rol, rolId } =
+    await getPerfilSucursal()
+
+  const { data: rolesCatalogo } = await supabase.from('roles').select('id, nombre')
+  const rolIdsMedico = (rolesCatalogo ?? [])
+    .filter(r => esRolMedico(r.nombre as string))
+    .map(r => Number(r.id))
+
+  const rolesUsuario: string[] = rol ? [rol] : []
+  const rolIdsUsuario: number[] = rolId != null ? [rolId] : []
+  if (userId) {
+    const { data: perfilRoles } = await supabase
+      .from('perfil_roles')
+      .select('rol_id, roles(nombre)')
+      .eq('perfil_id', userId)
+    for (const pr of perfilRoles ?? []) {
+      const nombre = (pr.roles as { nombre?: string } | null)?.nombre
+      if (nombre && !rolesUsuario.includes(nombre)) rolesUsuario.push(nombre)
+      if (pr.rol_id != null && !rolIdsUsuario.includes(Number(pr.rol_id))) {
+        rolIdsUsuario.push(Number(pr.rol_id))
+      }
+    }
+  }
+
+  const puedeAtender =
+    esSuperAdmin ||
+    esAdmin ||
+    rolesUsuario.some(nombre =>
+      puedeAtenderConsulta(nombre, { rolIdsMedico }),
+    ) ||
+    rolIdsUsuario.some(id => rolIdsMedico.includes(id))
 
   const hoy = new Date().toISOString().split('T')[0]
 
@@ -25,7 +60,9 @@ export default async function ConsultasPage() {
     .eq('fecha', hoy)
     .in('estado', ['SIGNOS', 'ATENDIENDO', 'REGISTRO'])
     .order('hora')
-  if (!esSuperAdmin && sucursalId) consultasQ.eq('sucursal_id', sucursalId)
+  if (!esSuperAdmin && sucursalId) {
+    filtroSucursalColaConsultas(consultasQ, sucursalId, puedeAtender)
+  }
 
   const pagadasQ = supabase
     .from('consultas')
@@ -135,7 +172,12 @@ export default async function ConsultasPage() {
       sucursalNombre={sucursalNombre}
       sucursales={sucursales || []}
       esSuperAdmin={esSuperAdmin}
+      esAdmin={esAdmin}
       rolUsuario={rol}
+      rolId={rolId}
+      rolIdsMedico={rolIdsMedico}
+      puedeAtenderConsulta={puedeAtender}
+      rolesUsuario={rolesUsuario}
       membresiasMap={membresiasMap}
       listasMap={listasMap}
       labPreciosLista={labPreciosLista}

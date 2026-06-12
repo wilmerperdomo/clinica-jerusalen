@@ -22,6 +22,7 @@ import {
   PACIENTE_CONSULTA_SELECT, estadoBadgeClase, etiquetaEstadoConsulta,
   tiempoEspera, colorLabClase, validarExamenMedico, fmtFechaLarga,
   nombrePaciente, detallePaciente, textoBusquedaPaciente, esPacienteEmpresa,
+  esRolEnfermeria, filtroSucursalColaConsultas, puedeAtenderConsulta,
   type PacienteConsulta,
 } from '@/lib/consultas-utils'
 
@@ -86,7 +87,12 @@ interface Props {
   sucursalNombre?: string
   sucursales?: SucursalOpt[]
   esSuperAdmin?: boolean
+  esAdmin?: boolean
   rolUsuario?: string
+  rolId?: number | null
+  rolIdsMedico?: number[]
+  puedeAtenderConsulta?: boolean
+  rolesUsuario?: string[]
   membresiasMap?: MembresiasMap
   listasMap?: Record<number, string>
   labPreciosLista?: Record<number, Record<number, number>>
@@ -113,17 +119,29 @@ export default function ConsultasClient({
   sucursalNombre,
   sucursales = [],
   esSuperAdmin = false,
+  esAdmin = false,
   rolUsuario = '',
+  rolId = null,
+  rolIdsMedico = [],
+  puedeAtenderConsulta: puedeAtenderInicial = false,
+  rolesUsuario = [],
   membresiasMap = {},
   listasMap = {},
   labPreciosLista = {},
 }: Props) {
   const confirmDialog = useConfirm()
-  const esMedico = /médico|medico/i.test(rolUsuario)
+  const rolesActivos = rolesUsuario.length > 0 ? rolesUsuario : (rolUsuario ? [rolUsuario] : [])
+  const puedeAtender =
+    puedeAtenderInicial ||
+    esSuperAdmin ||
+    esAdmin ||
+    rolesActivos.some(nombre => puedeAtenderConsulta(nombre, { rolIdsMedico })) ||
+    (rolId != null && rolIdsMedico.includes(rolId))
+  const esEnfermeria = esRolEnfermeria(rolUsuario)
   const [fechaOperativa, setFechaOperativa] = useState(fechaHoy)
   const [tab, setTab] = useState<'citas' | 'espera'>(() => {
     const hayCola = initialEspera.some(c => c.estado === 'SIGNOS' || c.estado === 'ATENDIENDO')
-    return esMedico || hayCola ? 'espera' : 'citas'
+    return puedeAtender || hayCola ? 'espera' : 'citas'
   })
   const [citas, setCitas]       = useState<Cita[]>(initialCitas)
   const [espera, setEspera]     = useState<Consulta[]>(initialEspera)
@@ -228,14 +246,14 @@ export default function ConsultasClient({
       : sucursalId
     if (sid) {
       cq = cq.eq('sucursal_id', sid)
-      eq = eq.eq('sucursal_id', sid)
+      eq = filtroSucursalColaConsultas(eq, sid, puedeAtender)
       pq = pq.eq('sucursal_id', sid)
     }
     const [{ data: c }, { data: e }, { data: p }] = await Promise.all([cq, eq, pq])
     if (c) setCitas(c)
     if (e) setEspera(e)
     if (p) setPagadas(p)
-  }, [sb, fechaOperativa, esSuperAdmin, sucursalId, filtroSuc])
+  }, [sb, fechaOperativa, esSuperAdmin, sucursalId, filtroSuc, puedeAtender])
 
   /* ── nueva cita ── */
   async function guardarCita() {
@@ -313,6 +331,16 @@ export default function ConsultasClient({
       .maybeSingle()
 
     if (exists) {
+      if (puedeAtender && (exists.estado === 'SIGNOS' || exists.estado === 'ATENDIENDO')) {
+        setTab('espera')
+        await confirmarAtendiendo(exists.id)
+        return
+      }
+      if (puedeAtender && exists.estado === 'REGISTRO') {
+        setTab('espera')
+        await confirmarAtendiendo(exists.id)
+        return
+      }
       setConsultaActual({ ...exists } as Consulta)
       setModalSignos(true)
       return
@@ -328,7 +356,7 @@ export default function ConsultasClient({
       estado:       'REGISTRO',
       estado_pago:  'PENDIENTE',
     }
-    const sidCita = sucursalOperativa
+    const sidCita = sucursalOperativa ?? sucursales[0]?.id ?? sucursalId
     if (sidCita) payload.sucursal_id = sidCita
 
     let insertData = null
@@ -347,7 +375,11 @@ export default function ConsultasClient({
     if (insertData) {
       setConsultaActual(insertData)
       setTab('espera')
-      setModalSignos(true)
+      if (puedeAtender) {
+        await confirmarAtendiendo(insertData.id)
+      } else {
+        setModalSignos(true)
+      }
     }
     await sb.from('citas').update({ estado: 'ASISTIÓ' }).eq('id', cita.id)
     startTransition(() => { recargar() })
@@ -378,7 +410,8 @@ export default function ConsultasClient({
       estado:       'REGISTRO',
       estado_pago:  'PENDIENTE',
     }
-    if (sid) payload.sucursal_id = sid
+    const sidFinal = sid ?? sucursales[0]?.id ?? sucursalId
+    if (sidFinal) payload.sucursal_id = sidFinal
 
     const { data: dup } = await sb.from('consultas')
       .select('id')
@@ -396,13 +429,23 @@ export default function ConsultasClient({
       const { data, error } = await sb.from('consultas').insert(payload).select().single()
       if (error) throw error
       setModalConsulta(false)
-      if (data) { setConsultaActual(data); setTab('espera'); setModalSignos(true) }
+      if (data) {
+        setConsultaActual(data)
+        setTab('espera')
+        if (puedeAtender) await confirmarAtendiendo(data.id)
+        else setModalSignos(true)
+      }
     } catch {
       delete payload.consulta_valor
       const { data, error } = await sb.from('consultas').insert(payload).select().single()
       if (error) { alert('Error al crear consulta: ' + error.message); return }
       setModalConsulta(false)
-      if (data) { setConsultaActual(data); setTab('espera'); setModalSignos(true) }
+      if (data) {
+        setConsultaActual(data)
+        setTab('espera')
+        if (puedeAtender) await confirmarAtendiendo(data.id)
+        else setModalSignos(true)
+      }
     }
     startTransition(() => { recargar() })
   }
@@ -410,12 +453,16 @@ export default function ConsultasClient({
   /* ── guardar signos vitales (enfermería / recepción) ── */
   async function guardarSignos() {
     if (!consultaActual) return
-    await sb.from('consultas').update({
+    const { error } = await sb.from('consultas').update({
       ...formSignos,
       peso:   formSignos.peso  ? Number(formSignos.peso)  : null,
       talla:  formSignos.talla ? Number(formSignos.talla) : null,
       estado: 'SIGNOS',
     }).eq('id', consultaActual.id)
+    if (error) {
+      alert('Error al guardar signos vitales: ' + error.message)
+      return
+    }
     setModalSignos(false)
     setTab('espera')
     startTransition(() => { recargar() })
@@ -423,10 +470,13 @@ export default function ConsultasClient({
 
   /** Carga en memoria el examen de una consulta (desde BD, incluye borrador guardado). */
   async function cargarExamenConsulta(id: number): Promise<boolean> {
-    const { data } = await sb.from('consultas')
+    const { data, error } = await sb.from('consultas')
       .select(`*,paciente:pacientes(${PACIENTE_CONSULTA_SELECT})`)
       .eq('id', id).single()
-    if (!data) return false
+    if (error || !data) {
+      alert(error?.message ?? 'No se pudo cargar la consulta del paciente.')
+      return false
+    }
 
     setConsultaActual(data)
     setFormMedico({
@@ -505,10 +555,14 @@ export default function ConsultasClient({
     }
 
     const { data: { user } } = await sb.auth.getUser()
-    await sb.from('consultas').update({
+    const { error: errEstado } = await sb.from('consultas').update({
       estado: 'ATENDIENDO',
       ...(user?.id ? { doctor_id: user.id } : {}),
     }).eq('id', id)
+    if (errEstado) {
+      alert('No se pudo abrir la consulta: ' + errEstado.message)
+      return
+    }
 
     const ok = await cargarExamenConsulta(id)
     if (ok) {
@@ -790,8 +844,8 @@ export default function ConsultasClient({
   }), [citas, espera])
 
   const listosParaMedico = useMemo(
-    () => espera.filter(c => c.estado === 'SIGNOS').length,
-    [espera],
+    () => espera.filter(c => c.estado === 'SIGNOS' || (puedeAtender && c.estado === 'REGISTRO')).length,
+    [espera, puedeAtender],
   )
 
   /** Consultas que el médico tiene abiertas a la vez (estado ATENDIENDO). */
@@ -942,7 +996,7 @@ export default function ConsultasClient({
         {listosParaMedico > 0 && (
           <p className="mt-3 text-sm font-semibold text-violet-800 flex items-center gap-2">
             <Activity className="w-4 h-4" />
-            {listosParaMedico} paciente{listosParaMedico > 1 ? 's' : ''} con signos listos — el médico pulse <strong>Atender paciente</strong> en la cola.
+            {listosParaMedico} paciente{listosParaMedico > 1 ? 's' : ''} en cola — pulse <strong>Atender paciente</strong> para abrir la consulta.
           </p>
         )}
         {esSuperAdmin && (
@@ -1116,7 +1170,7 @@ export default function ConsultasClient({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap justify-center gap-1">
-                          {c.estado === 'REGISTRO' && (
+                          {c.estado === 'REGISTRO' && esEnfermeria && (
                             <button onClick={() => {
                               setConsultaActual(c)
                               setFormSignos({ presion: '', frecuencia: '', pulso: '', temperatura: '', peso: '', talla: '', perim_cefalico: '' })
@@ -1125,7 +1179,7 @@ export default function ConsultasClient({
                               Signos vitales
                             </button>
                           )}
-                          {c.estado === 'SIGNOS' && (
+                          {puedeAtender && (c.estado === 'SIGNOS' || c.estado === 'REGISTRO') && (
                             <button onClick={() => confirmarAtendiendo(c.id)}
                               className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-xs font-semibold hover:bg-violet-700 flex items-center gap-1">
                               <Stethoscope className="w-3.5 h-3.5" /> Atender paciente
