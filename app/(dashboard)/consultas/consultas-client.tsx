@@ -60,7 +60,7 @@ interface Consulta {
 interface Producto { id: number; codigo: string; nombre: string; tipo?: string }
 interface Servicio  { id: number; nombre: string; tipo: string; precio: number }
 interface Prueba    { id: number; nombre: string; costo: number; color?: string; dias?: number }
-interface LabItem   { prueba_id: number; no_analisis: string; valor: number; cant: number; importe: number }
+interface LabItem   { id?: number; prueba_id: number; no_analisis: string; valor: number; cant: number; importe: number; bloqueado?: boolean }
 interface ServicioItem {
   servicio_id?: number
   nombre: string
@@ -510,14 +510,16 @@ export default function ConsultasClient({
 
     const { data: labExist } = await sb
       .from('consulta_analisis')
-      .select('id, id_analisis, no_analisis, valor, cant, importe')
+      .select('id, id_analisis, no_analisis, valor, cant, importe, estado_lab, pagado')
       .eq('id_consulta', String(id))
     setLabItems((labExist ?? []).map(l => ({
-      prueba_id:   l.id_analisis,
+      id:          l.id,
+      prueba_id:   Number(l.id_analisis),
       no_analisis: l.no_analisis,
       valor:       l.valor,
       cant:        l.cant,
       importe:     l.importe,
+      bloqueado:   l.pagado === true || (!!l.estado_lab && l.estado_lab !== 'PENDIENTE_COBRO'),
     })))
     setBuscarLab('')
     setValorConsultaEdit(String(data.consulta_valor ?? 0))
@@ -647,16 +649,59 @@ export default function ConsultasClient({
       }
     }
 
-    const { error: errDelLab } = await sb.from('consulta_analisis').delete().eq('id_consulta', String(consultaActual.id))
-    if (errDelLab) {
-      if (!silencioso) alert('Error al actualizar laboratorio: ' + errDelLab.message)
+    // ── Sincronización NO destructiva de laboratorio ──
+    // Nunca borrar ni resetear órdenes ya cobradas o en proceso/con resultados.
+    const { data: ordenesLabDb, error: errLeerLab } = await sb
+      .from('consulta_analisis')
+      .select('id, estado_lab, pagado')
+      .eq('id_consulta', String(consultaActual.id))
+    if (errLeerLab) {
+      if (!silencioso) alert('Error al leer laboratorio: ' + errLeerLab.message)
       return false
     }
-    if (labItems.length > 0) {
+
+    const ordenesExistentes = ordenesLabDb ?? []
+    const esEditable = (o: { estado_lab?: string | null; pagado?: boolean | null }) =>
+      o.pagado !== true && (!o.estado_lab || o.estado_lab === 'PENDIENTE_COBRO')
+    const idsEditablesDb = new Set(ordenesExistentes.filter(esEditable).map(o => o.id))
+    const idsMantenidos = new Set(labItems.filter(l => l.id != null).map(l => l.id as number))
+
+    // Borrar solo las órdenes editables que el usuario quitó (jamás las cobradas/en proceso)
+    const idsABorrar = [...idsEditablesDb].filter(id => !idsMantenidos.has(id))
+    if (idsABorrar.length > 0) {
+      const { error: errDelLab } = await sb
+        .from('consulta_analisis')
+        .delete()
+        .in('id', idsABorrar)
+        .eq('estado_lab', 'PENDIENTE_COBRO')
+        .eq('pagado', false)
+      if (errDelLab) {
+        if (!silencioso) alert('Error al actualizar laboratorio: ' + errDelLab.message)
+        return false
+      }
+    }
+
+    // Actualizar cantidades/importe de órdenes editables que el usuario modificó
+    const editablesEditados = labItems.filter(l => l.id != null && idsEditablesDb.has(l.id))
+    for (const l of editablesEditados) {
+      const { error: errUpd } = await sb.from('consulta_analisis')
+        .update({ cant: l.cant, valor: l.valor, importe: l.importe })
+        .eq('id', l.id as number)
+        .eq('estado_lab', 'PENDIENTE_COBRO')
+        .eq('pagado', false)
+      if (errUpd) {
+        if (!silencioso) alert('Error al actualizar laboratorio: ' + errUpd.message)
+        return false
+      }
+    }
+
+    // Insertar solo las pruebas nuevas (las que aún no tienen orden creada)
+    const nuevosLab = labItems.filter(l => l.id == null)
+    if (nuevosLab.length > 0) {
       const hoy = new Date().toISOString().split('T')[0]
       const hora = new Date().toTimeString().slice(0, 8)
-      const { error: errLab } = await sb.from('consulta_analisis').insert(
-        labItems.map(l => ({
+      const { data: insertados, error: errLab } = await sb.from('consulta_analisis').insert(
+        nuevosLab.map(l => ({
           id_consulta:   String(consultaActual.id),
           id_cliente:    String(consultaActual.paciente_id),
           paciente_id:   consultaActual.paciente_id,
@@ -671,10 +716,23 @@ export default function ConsultasClient({
           estado_lab:    'PENDIENTE_COBRO',
           sucursal_id:   consultaActual.sucursal_id ?? null,
         }))
-      )
+      ).select('id, id_analisis')
       if (errLab) {
         if (!silencioso) alert('Error al guardar laboratorio: ' + errLab.message)
         return false
+      }
+      // Reasignar IDs en memoria para que el próximo guardado no los reinserte
+      if (insertados?.length) {
+        setLabItems(prev => {
+          const restantes = [...insertados]
+          return prev.map(l => {
+            if (l.id != null) return l
+            const idx = restantes.findIndex(r => Number(r.id_analisis) === l.prueba_id)
+            if (idx === -1) return l
+            const r = restantes.splice(idx, 1)[0]
+            return { ...l, id: r.id }
+          })
+        })
       }
     }
 
@@ -777,12 +835,19 @@ export default function ConsultasClient({
   }
 
   function quitarLab(idx: number) {
-    setLabItems(prev => prev.filter((_, i) => i !== idx))
+    setLabItems(prev => {
+      if (prev[idx]?.bloqueado) {
+        alert('Esta prueba ya fue cobrada o está en proceso en laboratorio; no se puede quitar desde la consulta.')
+        return prev
+      }
+      return prev.filter((_, i) => i !== idx)
+    })
   }
 
   function ajustarCantidadLab(idx: number, delta: number) {
     setLabItems(prev => prev.map((l, i) => {
       if (i !== idx) return l
+      if (l.bloqueado) return l
       const cant = Math.max(1, l.cant + delta)
       return { ...l, cant, importe: l.valor * cant }
     }))
@@ -1685,22 +1750,29 @@ export default function ConsultasClient({
               {labItems.length > 0 && (
                 <div className="space-y-1.5 mb-2">
                   {labItems.map((l, idx) => (
-                    <div key={idx} className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                      <FlaskConical className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    <div key={l.id ?? `nuevo-${idx}`} className={`flex items-center gap-2 border rounded-lg px-3 py-2 ${l.bloqueado ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50 border-blue-100'}`}>
+                      <FlaskConical className={`w-4 h-4 flex-shrink-0 ${l.bloqueado ? 'text-emerald-600' : 'text-blue-500'}`} />
                       <div className="flex-1 text-sm min-w-0">
-                        <p className="font-medium text-gray-900">{l.no_analisis}</p>
+                        <p className="font-medium text-gray-900">
+                          {l.no_analisis}
+                          {l.bloqueado && (
+                            <span className="ml-2 text-[10px] font-bold uppercase text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">Cobrada / en proceso</span>
+                          )}
+                        </p>
                         <p className="text-xs text-gray-500">L {Number(l.valor).toFixed(2)} c/u</p>
                       </div>
-                      <div className="flex items-center gap-1 bg-white rounded-lg border px-1">
-                        <button type="button" onClick={() => ajustarCantidadLab(idx, -1)} className="p-1 hover:bg-gray-100 rounded"><Minus className="w-3 h-3" /></button>
+                      <div className={`flex items-center gap-1 bg-white rounded-lg border px-1 ${l.bloqueado ? 'opacity-50' : ''}`}>
+                        <button type="button" disabled={l.bloqueado} onClick={() => ajustarCantidadLab(idx, -1)} className="p-1 hover:bg-gray-100 rounded disabled:cursor-not-allowed"><Minus className="w-3 h-3" /></button>
                         <span className="text-xs font-bold w-5 text-center">{l.cant}</span>
-                        <button type="button" onClick={() => ajustarCantidadLab(idx, 1)} className="p-1 hover:bg-gray-100 rounded"><Plus className="w-3 h-3" /></button>
+                        <button type="button" disabled={l.bloqueado} onClick={() => ajustarCantidadLab(idx, 1)} className="p-1 hover:bg-gray-100 rounded disabled:cursor-not-allowed"><Plus className="w-3 h-3" /></button>
                       </div>
                       <span className="text-sm font-semibold text-blue-700 w-16 text-right">L {Number(l.importe).toFixed(2)}</span>
                       <button
                         type="button"
                         onClick={() => quitarLab(idx)}
-                        className="p-1 rounded hover:bg-red-100 text-red-400"
+                        disabled={l.bloqueado}
+                        title={l.bloqueado ? 'Ya cobrada o en proceso; no se puede quitar' : 'Quitar'}
+                        className="p-1 rounded hover:bg-red-100 text-red-400 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

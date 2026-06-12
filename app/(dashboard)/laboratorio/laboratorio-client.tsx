@@ -346,7 +346,7 @@ export default function LaboratorioClient({
         .update({ estado_lab: 'EN_PROCESO' })
         .in('id', idsPendientes)
       const pruebaIds = grupo.ordenes.map(o => Number(o.id_analisis)).filter(Boolean)
-      const { errores } = await descontarInsumosLab(supabase, pruebaIds)
+      const { errores } = await descontarInsumosLab(supabase, pruebaIds, sucursalId)
       if (errores.length) console.warn('Insumos:', errores.join('; '))
     }
     setModalResultados(true)
@@ -472,10 +472,15 @@ export default function LaboratorioClient({
     const upd: Record<string, unknown> = { estado_lab: nuevoEstado, updated_at: new Date().toISOString() }
     if (nuevoEstado === 'ENTREGADO') { upd.entregado = true; upd.fecha_resultado = fechaHoy }
     if (nuevoEstado === 'PAGADO' || nuevoEstado === 'PENDIENTE_COBRO') upd.entregado = false
-    await supabase.from('consulta_analisis').update(upd).in('id', ids)
+    const { error } = await supabase.from('consulta_analisis').update(upd).in('id', ids)
+    if (error) {
+      alert('No se pudo mover la orden: ' + error.message)
+      return
+    }
     if (nuevoEstado === 'EN_PROCESO') {
       const pruebaIds = grupo.ordenes.map(o => Number(o.id_analisis)).filter(Boolean)
-      await descontarInsumosLab(supabase, pruebaIds)
+      const { errores } = await descontarInsumosLab(supabase, pruebaIds, sucursalId)
+      if (errores.length) console.warn('Insumos:', errores.join('; '))
     }
     startTransition(() => { recargar() })
   }

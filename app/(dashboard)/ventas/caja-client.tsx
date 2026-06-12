@@ -248,6 +248,7 @@ export default function CajaClient({
 
   const [modalCierre, setModalCierre] = useState(false)
   const [modalAbono,  setModalAbono]  = useState(false)
+  const [guardandoAbono, setGuardandoAbono] = useState(false)
   const [cxcActual,   setCxcActual]   = useState<CXC | null>(null)
 
   const [formCierre, setFormCierre] = useState({
@@ -522,6 +523,7 @@ export default function CajaClient({
 
   /* ── abonar CXC ─ */
   async function registrarAbono() {
+    if (guardandoAbono) return
     const errSesion = validarSesionOperacion(sesion, userId)
     if (errSesion) return alert(errSesion)
     if (!cxcActual || !formAbono.monto) return
@@ -532,6 +534,7 @@ export default function CajaClient({
     const errRef = validarReferenciaPago(formAbono.forma_pago, formAbono.referencia)
     if (errRef) return alert(errRef)
 
+    setGuardandoAbono(true)
     const hora = new Date().toTimeString().slice(0, 5)
     const pacNombre = cxcActual.paciente_nombre
       || `${cxcActual.paciente?.nombre || ''} ${cxcActual.paciente?.apellido1 || ''}`.trim()
@@ -551,12 +554,12 @@ export default function CajaClient({
       fecha:           fechaHoy,
       hora,
     })
-    if (errMov) return alert('Error al registrar ingreso en caja: ' + errMov.message)
+    if (errMov) { setGuardandoAbono(false); return alert('Error al registrar ingreso en caja: ' + errMov.message) }
 
     const { error: errSes } = await supabase.from('caja_sesiones').update({
       total_ingresos: (sesion.total_ingresos || 0) + montoAbono,
     }).eq('id', sesion.id)
-    if (errSes) return alert('Error al actualizar sesión: ' + errSes.message)
+    if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
 
     const { error: errAbono } = await supabase.from('cxc_abonos').insert({
       cxc_id:     cxcActual.id,
@@ -566,7 +569,7 @@ export default function CajaClient({
       nota:       formAbono.nota || null,
       cajero_id:  userId,
     })
-    if (errAbono) return alert('Error al registrar abono: ' + errAbono.message)
+    if (errAbono) { setGuardandoAbono(false); return alert('Error al registrar abono: ' + errAbono.message) }
 
     const nuevoPagado = cxcActual.monto_pagado + montoAbono
     const nuevoEstado = nuevoPagado >= cxcActual.monto_total ? 'PAGADO' : 'PARCIAL'
@@ -576,10 +579,11 @@ export default function CajaClient({
       estado:       nuevoEstado,
       fecha_pago:   nuevoEstado === 'PAGADO' ? fechaHoy : null,
     }).eq('id', cxcActual.id)
-    if (errCxc) return alert('Error al actualizar CXC: ' + errCxc.message)
+    if (errCxc) { setGuardandoAbono(false); return alert('Error al actualizar CXC: ' + errCxc.message) }
 
     setModalAbono(false)
     setFormAbono({ monto: '', forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setGuardandoAbono(false)
     startTransition(() => { recargar() })
   }
 
@@ -892,9 +896,34 @@ export default function CajaClient({
       movimientos.push({ ...movBase, concepto: `Consulta ${consultaCobro.tipo_nombre || ''}`.trim(), monto: total })
     }
 
+    // ── 1. RECLAMAR la consulta primero (anti doble-cobro) ──
+    // El update condicional solo afecta si aún no estaba cobrada; si otra
+    // caja la cobró en paralelo, no devuelve filas y abortamos sin cobrar.
+    const { data: reclamada, error: errConsulta } = await sb.from('consultas').update({
+      cobrado: true,
+      estado_pago: 'PAGADO',
+      cobrado_en: new Date().toISOString(),
+      cobrado_por: userId,
+    }).eq('id', consultaCobro.id).or('cobrado.eq.false,cobrado.is.null').select('id')
+    if (errConsulta) {
+      alert('Error al marcar consulta cobrada: ' + errConsulta.message)
+      setGuardandoCobro(false)
+      return
+    }
+    if (!reclamada || reclamada.length === 0) {
+      alert('Esta consulta ya fue cobrada por otra caja. Actualice la lista.')
+      setGuardandoCobro(false)
+      startTransition(() => recargar())
+      return
+    }
+
+    // ── 2. Registrar el dinero; si falla, revertir el claim de la consulta ──
     if (movimientos.length > 0) {
       const { error: errMovs } = await insertarMovimientosCaja(sb, movimientos, false)
       if (errMovs) {
+        await sb.from('consultas').update({
+          cobrado: false, estado_pago: 'PENDIENTE', cobrado_en: null, cobrado_por: null,
+        }).eq('id', consultaCobro.id)
         alert('Error al registrar cobro: ' + errMovs.message)
         setGuardandoCobro(false)
         return
@@ -903,23 +932,7 @@ export default function CajaClient({
       const { error: errSes } = await sb.from('caja_sesiones').update({
         total_ingresos: (sesion.total_ingresos || 0) + totalInsertado,
       }).eq('id', sesion.id)
-      if (errSes) {
-        alert('Error al actualizar sesión: ' + errSes.message)
-        setGuardandoCobro(false)
-        return
-      }
-    }
-
-    const { error: errConsulta } = await sb.from('consultas').update({
-      cobrado: true,
-      estado_pago: 'PAGADO',
-      cobrado_en: new Date().toISOString(),
-      cobrado_por: userId,
-    }).eq('id', consultaCobro.id).or('cobrado.eq.false,cobrado.is.null')
-    if (errConsulta) {
-      alert('Error al marcar consulta cobrada: ' + errConsulta.message)
-      setGuardandoCobro(false)
-      return
+      if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
     }
 
     // Órdenes de laboratorio → cola de lab tras el cobro
@@ -1139,17 +1152,37 @@ export default function CajaClient({
     const pacNombre = labGrupoCobro.pacienteNombre
     const hora = new Date().toTimeString().slice(0, 5)
 
-    if (puntosCanje > 0 && labGrupoCobro.pacienteId) {
-      const canje = await canjearPuntosLaboratorio(sb, {
-        pacienteId: labGrupoCobro.pacienteId,
-        puntos: puntosCanje,
-        nota: `Laboratorio directo — ${labGrupoCobro.ordenes.map(o => o.no_analisis).join(', ')}`,
-      })
-      if (!canje.ok) {
-        alert('Error al canjear puntos: ' + (canje.error ?? 'desconocido'))
-        setGuardandoCobroLab(false)
-        return
+    // ── 1. RECLAMAR las órdenes primero (anti doble-cobro) ──
+    // Solo afecta las que siguen PENDIENTE_COBRO; si otra caja ya cobró
+    // alguna, el conteo no coincide y se revierte.
+    const { data: reclamadas, error: errClaim } = await sb.from('consulta_analisis').update({
+      pagado: true,
+      estado_lab: 'PAGADO',
+      updated_at: new Date().toISOString(),
+    }).in('id', ordenIds).eq('estado_lab', 'PENDIENTE_COBRO').eq('pagado', false).select('id')
+    if (errClaim) {
+      alert('Error al registrar cobro de laboratorio: ' + errClaim.message)
+      setGuardandoCobroLab(false)
+      return
+    }
+    const idsReclamados = (reclamadas ?? []).map(r => r.id)
+    if (idsReclamados.length !== ordenIds.length) {
+      // revertir lo que alcanzamos a reclamar y abortar
+      if (idsReclamados.length > 0) {
+        await sb.from('consulta_analisis').update({
+          pagado: false, estado_lab: 'PENDIENTE_COBRO',
+        }).in('id', idsReclamados)
       }
+      alert('Una o más órdenes ya fueron cobradas por otra caja. Actualice la lista.')
+      setGuardandoCobroLab(false)
+      startTransition(() => recargar())
+      return
+    }
+
+    const revertirClaim = async () => {
+      await sb.from('consulta_analisis').update({
+        pagado: false, estado_lab: 'PENDIENTE_COBRO',
+      }).in('id', idsReclamados)
     }
 
     const notaPuntos = puntosCanje > 0
@@ -1159,6 +1192,7 @@ export default function CajaClient({
       ? (detDesc.motivo ? `${detDesc.motivo} + Puntos Fidelidad` : 'Puntos de Fidelidad')
       : (detDesc.motivo || null)
 
+    // ── 2. Registrar el dinero; si falla, revertir el claim ──
     const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id: sesion.id,
       cajero_id: userId,
@@ -1177,6 +1211,7 @@ export default function CajaClient({
       paciente_id: labGrupoCobro.pacienteId || null,
     })
     if (errMov) {
+      await revertirClaim()
       alert('Error al registrar cobro: ' + errMov.message)
       setGuardandoCobroLab(false)
       return
@@ -1185,21 +1220,20 @@ export default function CajaClient({
     const { error: errSes } = await sb.from('caja_sesiones').update({
       total_ingresos: (sesion.total_ingresos || 0) + total,
     }).eq('id', sesion.id)
-    if (errSes) {
-      alert('Error al actualizar sesión: ' + errSes.message)
-      setGuardandoCobroLab(false)
-      return
-    }
+    if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
 
-    const { error: errLab } = await sb.from('consulta_analisis').update({
-      pagado: true,
-      estado_lab: 'PAGADO',
-      updated_at: new Date().toISOString(),
-    }).in('id', ordenIds).eq('estado_lab', 'PENDIENTE_COBRO')
-    if (errLab) {
-      alert('Error al actualizar laboratorio: ' + errLab.message)
-      setGuardandoCobroLab(false)
-      return
+    // ── 3. Canjear puntos DESPUÉS de cobrar (irreversible va al final) ──
+    if (puntosCanje > 0 && labGrupoCobro.pacienteId) {
+      const canje = await canjearPuntosLaboratorio(sb, {
+        pacienteId: labGrupoCobro.pacienteId,
+        puntos: puntosCanje,
+        nota: `Laboratorio directo — ${labGrupoCobro.ordenes.map(o => o.no_analisis).join(', ')}`,
+      })
+      if (!canje.ok) {
+        // El cobro ya quedó registrado; avisar para ajuste manual de puntos
+        alert('El cobro se registró, pero no se pudieron descontar los puntos: ' +
+          (canje.error ?? 'desconocido') + '. Revise el saldo del paciente.')
+      }
     }
 
     if (formCobroLab.forma_pago === 'CREDITO') {
@@ -1301,6 +1335,31 @@ export default function CajaClient({
     const hora = new Date().toTimeString().slice(0, 5)
     const cajeroNombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
+    // ── 1. RECLAMAR la cuota primero (anti doble-cobro) ──
+    const { data: cuotaReclamada, error: errPago } = await sb.from('membresia_pagos').update({
+      estado:        'pagado',
+      fecha_pago:    fechaHoy,
+      forma_pago:    formCobroMembresia.forma_pago,
+      cajero_nombre: cajeroNombre,
+      notas:         formCobroMembresia.nota || null,
+    }).eq('id', pago.id).in('estado', ['pendiente', 'vencido']).select('id')
+    if (errPago) {
+      alert('Error al actualizar cuota: ' + errPago.message)
+      setGuardandoCobroMembresia(false)
+      return
+    }
+    if (!cuotaReclamada || cuotaReclamada.length === 0) {
+      alert('Esta cuota ya fue cobrada por otra caja. Actualice la lista.')
+      setGuardandoCobroMembresia(false)
+      startTransition(() => recargar())
+      return
+    }
+
+    const revertirCuota = async () => {
+      await sb.from('membresia_pagos').update({ estado: 'pendiente', fecha_pago: null }).eq('id', pago.id)
+    }
+
+    // ── 2. Registrar el dinero; si falla, revertir el claim de la cuota ──
     const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id:       sesion.id,
       sucursal_id:     sesion.sucursal_id,
@@ -1317,6 +1376,7 @@ export default function CajaClient({
       hora,
     })
     if (errMov) {
+      await revertirCuota()
       alert('Error al registrar cobro: ' + errMov.message)
       setGuardandoCobroMembresia(false)
       return
@@ -1325,24 +1385,7 @@ export default function CajaClient({
     const { error: errSes } = await sb.from('caja_sesiones').update({
       total_ingresos: (sesion.total_ingresos || 0) + total,
     }).eq('id', sesion.id)
-    if (errSes) {
-      alert('Error al actualizar sesión: ' + errSes.message)
-      setGuardandoCobroMembresia(false)
-      return
-    }
-
-    const { error: errPago } = await sb.from('membresia_pagos').update({
-      estado:        'pagado',
-      fecha_pago:    fechaHoy,
-      forma_pago:    formCobroMembresia.forma_pago,
-      cajero_nombre: cajeroNombre,
-      notas:         formCobroMembresia.nota || null,
-    }).eq('id', pago.id).in('estado', ['pendiente', 'vencido'])
-    if (errPago) {
-      alert('Error al actualizar cuota: ' + errPago.message)
-      setGuardandoCobroMembresia(false)
-      return
-    }
+    if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
 
     const { data: memb } = await sb.from('membresias')
       .select('cuotas_pagadas')
@@ -2566,9 +2609,9 @@ export default function CajaClient({
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setModalAbono(false)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
-              <button onClick={registrarAbono} disabled={!sesion}
+              <button onClick={registrarAbono} disabled={!sesion || guardandoAbono}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
-                <CheckCircle2 className="w-4 h-4 inline mr-1" /> Registrar Abono
+                <CheckCircle2 className="w-4 h-4 inline mr-1" /> {guardandoAbono ? 'Procesando...' : 'Registrar Abono'}
               </button>
             </div>
           </div>

@@ -646,7 +646,8 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
                         entregado: a.entregado,
                         tieneResultado: (a.resultados?.length ?? 0) > 0,
                       })
-                      const r = a.resultados?.[0]
+                      const resultados = a.resultados ?? []
+                      const r = resultados[0]
                       const resumen = r?.valor_resultado ?? a.resultado_resumen
                       const nombreCompleto = `${paciente.nombre} ${paciente.apellido1} ${paciente.apellido2 ?? ''}`.trim()
                       return (
@@ -661,8 +662,24 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-700">
-                          {resumen || <span className="text-gray-300">—</span>}
-                          {r?.unidad && <span className="text-gray-500 text-xs"> {r.unidad}</span>}
+                          {resultados.length > 1 ? (
+                            <div className="space-y-0.5">
+                              {resultados.map((rr, ri) => (
+                                <div key={rr.id ?? ri} className="text-xs leading-snug">
+                                  {rr.nombre_prueba && <span className="text-gray-500">{rr.nombre_prueba}: </span>}
+                                  <span className={rr.anormal ? 'font-semibold text-red-600' : 'font-medium'}>
+                                    {rr.valor_resultado || '—'}
+                                  </span>
+                                  {rr.unidad && <span className="text-gray-400"> {rr.unidad}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <>
+                              {resumen || <span className="text-gray-300">—</span>}
+                              {r?.unidad && <span className="text-gray-500 text-xs"> {r.unidad}</span>}
+                            </>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-gray-500">
                           {a.fecha_resultado ? fmtDate(a.fecha_resultado) : a.fecha ? fmtDate(a.fecha) : '—'}
