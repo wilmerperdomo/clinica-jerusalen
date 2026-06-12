@@ -78,7 +78,12 @@ export default function LoginPage() {
 
 
     if (data.user) {
-      await asegurarPerfilAlLogin(data.user.id, data.user.email ?? '')
+      const perfil = await asegurarPerfilAlLogin(data.user.id, data.user.email ?? '')
+      if (!perfil.ok && perfil.error) {
+        setError(perfil.error)
+        setLoading(false)
+        return
+      }
       await supabase.from('acceso_logs' as 'perfiles').insert({
         user_id: data.user.id,
         email:   data.user.email,
