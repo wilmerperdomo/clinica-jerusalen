@@ -89,33 +89,27 @@ export async function crearUsuario(data: {
     return { error: 'No se pudo obtener el ID del usuario creado' }
   }
 
-  const { error: perfilError } = await supabase.from('perfiles').upsert({
-    id:          nuevoUserId,
-    nombre:      data.nombre,
-    apellido:    data.apellido,
-    cedula:      data.cedula      || null,
-    telefono:    data.telefono    || null,
-    rol_id:      data.rol_id,
-    sucursal_id: data.sucursal_id,
-    activo:      true,
+  const { error: rpcError } = await supabase.rpc('fn_admin_upsert_perfil', {
+    p_user_id:     nuevoUserId,
+    p_nombre:      data.nombre,
+    p_apellido:    data.apellido,
+    p_cedula:      data.cedula      || null,
+    p_telefono:    data.telefono    || null,
+    p_rol_id:      data.rol_id,
+    p_sucursal_id: data.sucursal_id,
   })
 
-  if (perfilError) {
-    return {
-      error: serviceKey
-        ? perfilError.message
-        : `Usuario creado en Auth pero error en perfil: ${perfilError.message}. Verifique que usted es Super Administrador.`,
+  if (rpcError) {
+    const faltaSql = rpcError.message?.includes('fn_admin_upsert_perfil')
+      || rpcError.code === 'PGRST202'
+    if (faltaSql) {
+      return {
+        error: 'Ejecute en Supabase → SQL Editor el archivo scripts/FIX-RLS-PERFILES.sql y vuelva a crear el usuario.',
+      }
     }
-  }
-
-  await supabase.from('perfil_roles').delete().eq('perfil_id', nuevoUserId)
-  const { error: rolError } = await supabase.from('perfil_roles').insert({
-    perfil_id: nuevoUserId,
-    rol_id:    data.rol_id,
-  })
-
-  if (rolError) {
-    return { error: 'Usuario creado pero error al asignar rol: ' + rolError.message }
+    return {
+      error: `Usuario creado en Auth pero error en perfil: ${rpcError.message}`,
+    }
   }
 
   return { ok: true, userId: nuevoUserId }
