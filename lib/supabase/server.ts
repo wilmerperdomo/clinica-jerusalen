@@ -64,7 +64,7 @@ export function createAdminClient() {
 
   const serviceKey = getServiceRoleKey()
 
-  if (!env) return null
+  if (!env || !serviceKey) return null
 
 
 
