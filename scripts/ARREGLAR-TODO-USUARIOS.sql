@@ -38,11 +38,10 @@ END;
 $$;
 
 -- B) Confirmar TODOS los correos (permite login sin verificar email)
+-- Nota: confirmed_at es columna generada — solo actualizar email_confirmed_at
 UPDATE auth.users
-SET
-  email_confirmed_at = COALESCE(email_confirmed_at, NOW()),
-  confirmed_at       = COALESCE(confirmed_at, NOW())
-WHERE email_confirmed_at IS NULL OR confirmed_at IS NULL;
+SET email_confirmed_at = COALESCE(email_confirmed_at, NOW())
+WHERE email_confirmed_at IS NULL;
 
 -- C) Crear perfil a quien solo existe en Auth
 INSERT INTO perfiles (id, nombre, apellido, sucursal_id, rol_id, activo)
