@@ -406,7 +406,7 @@ export default function CajaClient({
     setFormCierre({
       efectivo_apertura: String(sesion.monto_inicial ?? ''),
       ventas_efectivo: '',
-      egresos_contado: '',
+      egresos_contado: arqueoSistema.totalEgr > 0 ? '' : '0',
       tarjeta_real: String(arqueoSistema.ingTarjeta || ''),
       transfer_real: String(arqueoSistema.ingTransfer || ''),
       observacion: '',
@@ -2267,18 +2267,22 @@ export default function CajaClient({
       {/* ══════════ MODAL CIERRE DE CAJA — ARQUEO + IMPRESIÓN ══════════ */}
       {modalCierre && sesion && (
         <Modal
-          title="Arqueo y Cierre de Caja"
-          subtitle="Cuente el efectivo físico y compare con el sistema antes de imprimir"
-          size="full"
+          title="Cierre de Caja"
+          subtitle={esAdmin
+            ? 'Conteo físico de la cajera — el detalle del sistema queda en el reporte impreso'
+            : 'Cuente el efectivo del cajón e ingrese los montos. El sistema verifica e imprime el cierre.'}
+          size={esAdmin ? 'full' : 'md'}
           accent="green"
           icon={LockKeyhole}
           onClose={() => setModalCierre(false)}
           footer={(
             <div className="flex flex-col-reverse sm:flex-row justify-between gap-3">
               <p className="text-xs text-gray-500 self-center">
-                {arqueoCuadrado
-                  ? '✓ Arqueo cuadrado — puede cerrar e imprimir'
-                  : 'Hay diferencia — requiere observación'}
+                {formCierre.ventas_efectivo && formCierre.egresos_contado
+                  ? arqueoCuadrado
+                    ? '✓ Conteo correcto — puede cerrar e imprimir'
+                    : 'Hay diferencia — escriba una observación'
+                  : 'Complete los 3 montos del conteo físico'}
               </p>
               <div className="flex flex-col-reverse sm:flex-row gap-2">
                 <button type="button" onClick={() => setModalCierre(false)}
@@ -2288,64 +2292,65 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={cerrarCaja}
-                  disabled={!formCierre.ventas_efectivo || !formCierre.egresos_contado}
+                  disabled={!formCierre.ventas_efectivo || formCierre.egresos_contado === ''}
                   className="flex items-center justify-center gap-2 px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm"
                 >
                   <Printer className="w-4 h-4" />
-                  Cerrar caja e imprimir reporte
+                  Cerrar caja e imprimir
                 </button>
               </div>
             </div>
           )}
         >
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 lg:gap-6">
-            {/* Sistema */}
-            <div className="space-y-4">
-              <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
-                <p className="text-xs font-bold text-blue-900 uppercase tracking-wide mb-3">Lo que dice el sistema</p>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Efectivo con que abrió caja</span>
-                    <span className="font-semibold tabular-nums">{fmt(sesion.monto_inicial)}</span>
+          <div className={`grid gap-5 lg:gap-6 ${esAdmin ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 max-w-lg mx-auto'}`}>
+            {/* Solo administración ve el resumen del sistema */}
+            {esAdmin && (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+                  <p className="text-xs font-bold text-blue-900 uppercase tracking-wide mb-3">Resumen del sistema (solo admin)</p>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Efectivo con que abrió caja</span>
+                      <span className="font-semibold tabular-nums">{fmt(sesion.monto_inicial)}</span>
+                    </div>
+                    <div className="flex justify-between text-green-700">
+                      <span>(+) Ventas en efectivo</span>
+                      <span className="font-semibold tabular-nums">{fmt(arqueoSistema.ingEfectivo)}</span>
+                    </div>
+                    <div className="flex justify-between text-red-600">
+                      <span>(−) Egresos pagados</span>
+                      <span className="font-semibold tabular-nums">{fmt(arqueoSistema.totalEgr)}</span>
+                    </div>
+                    <div className="flex justify-between pt-2 border-t border-blue-200 font-bold text-blue-900">
+                      <span>= Efectivo que debe haber</span>
+                      <span className="text-lg tabular-nums">{fmt(arqueoSistema.efectivoEsperado)}</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between text-green-700">
-                    <span>(+) Ventas en efectivo</span>
-                    <span className="font-semibold tabular-nums">{fmt(arqueoSistema.ingEfectivo)}</span>
-                  </div>
-                  <div className="flex justify-between text-red-600">
-                    <span>(−) Egresos pagados</span>
-                    <span className="font-semibold tabular-nums">{fmt(arqueoSistema.totalEgr)}</span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t border-blue-200 font-bold text-blue-900">
-                    <span>= Efectivo que debe haber</span>
-                    <span className="text-lg tabular-nums">{fmt(arqueoSistema.efectivoEsperado)}</span>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-sm">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Otros medios</p>
+                  <div className="flex justify-between"><span>Tarjetas</span><span className="font-medium">{fmt(arqueoSistema.ingTarjeta)}</span></div>
+                  <div className="flex justify-between"><span>Transferencias</span><span className="font-medium">{fmt(arqueoSistema.ingTransfer)}</span></div>
+                  <div className="flex justify-between"><span>A crédito</span><span className="font-medium">{fmt(arqueoSistema.ingCredito)}</span></div>
+                  <div className="flex justify-between pt-2 border-t font-semibold">
+                    <span>Total ingresos del día</span><span>{fmt(arqueoSistema.totalIng)}</span>
                   </div>
                 </div>
               </div>
+            )}
 
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-sm">
-                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Otros medios (no van en cajón)</p>
-                <div className="flex justify-between"><span>Tarjetas</span><span className="font-medium">{fmt(arqueoSistema.ingTarjeta)}</span></div>
-                <div className="flex justify-between"><span>Transferencias</span><span className="font-medium">{fmt(arqueoSistema.ingTransfer)}</span></div>
-                <div className="flex justify-between"><span>A crédito</span><span className="font-medium">{fmt(arqueoSistema.ingCredito)}</span></div>
-                <div className="flex justify-between pt-2 border-t font-semibold">
-                  <span>Total ingresos del día</span><span>{fmt(arqueoSistema.totalIng)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Conteo físico */}
+            {/* Conteo físico — lo único que ve la enfermera/cajero */}
             <div className="space-y-4">
               <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
-                <p className="text-xs font-bold text-amber-900 uppercase tracking-wide mb-3">Conteo físico de la cajera</p>
+                <p className="text-xs font-bold text-amber-900 uppercase tracking-wide mb-3">Su conteo físico</p>
                 <p className="text-xs text-amber-800/90 mb-4">
-                  Cuente el dinero real: cuánto había al abrir + ventas en efectivo − lo que pagó de egresos.
+                  Cuente el dinero en el cajón e ingrese los tres montos. No necesita ver los totales del sistema.
                 </p>
                 <div className="space-y-3">
                   {[
-                    { key: 'efectivo_apertura' as const, label: '1. Efectivo con que abrió caja', hint: 'Debe coincidir con apertura' },
-                    { key: 'ventas_efectivo' as const, label: '2. Ventas cobradas en efectivo', hint: 'Solo billetes/monedas de ventas' },
-                    { key: 'egresos_contado' as const, label: '3. Egresos pagados en efectivo', hint: 'Gastos, vueltos, retiros' },
+                    { key: 'efectivo_apertura' as const, label: '1. Efectivo con que abrió caja', hint: 'Mismo monto de la apertura' },
+                    { key: 'ventas_efectivo' as const, label: '2. Ventas cobradas en efectivo', hint: 'Solo billetes y monedas de ventas' },
+                    { key: 'egresos_contado' as const, label: '3. Egresos pagados en efectivo', hint: 'Gastos o retiros; ponga 0 si no hubo' },
                   ].map(f => (
                     <div key={f.key}>
                       <label className="block text-sm font-medium text-gray-800 mb-0.5">{f.label}</label>
@@ -2369,35 +2374,13 @@ export default function CajaClient({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { key: 'tarjeta_real' as const, label: 'Vouchers tarjeta', icon: CreditCard },
-                  { key: 'transfer_real' as const, label: 'Comprob. transfer.', icon: ArrowRightLeft },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label className="block text-xs text-gray-600 mb-1 flex items-center gap-1">
-                      <f.icon className="w-3 h-3" /> {f.label}
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">L.</span>
-                      <input
-                        type="number" min="0" step="0.01"
-                        value={formCierre[f.key]}
-                        onChange={e => setFormCierre(p => ({ ...p, [f.key]: e.target.value }))}
-                        className="w-full border rounded-xl pl-7 pr-2 py-2 text-sm font-semibold"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {formCierre.ventas_efectivo && formCierre.egresos_contado && (
+              {formCierre.ventas_efectivo && formCierre.egresos_contado !== '' && (
                 <div className={`rounded-xl p-4 text-center font-bold ${
                   arqueoCuadrado ? 'bg-green-50 border border-green-200 text-green-800' :
                   diferenciaArqueo > 0 ? 'bg-blue-50 border border-blue-200 text-blue-800' :
                   'bg-red-50 border border-red-200 text-red-800'
                 }`}>
-                  {arqueoCuadrado && '✓ Caja cuadrada — coincide con el sistema'}
+                  {arqueoCuadrado && '✓ Conteo correcto — coincide con el sistema'}
                   {!arqueoCuadrado && diferenciaArqueo > 0 && `Sobrante: ${fmt(diferenciaArqueo)}`}
                   {!arqueoCuadrado && diferenciaArqueo < 0 && `Faltante: ${fmt(Math.abs(diferenciaArqueo))}`}
                 </div>
@@ -2405,7 +2388,7 @@ export default function CajaClient({
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Observaciones {!arqueoCuadrado && formCierre.ventas_efectivo && <span className="text-red-500">*</span>}
+                  Observaciones {formCierre.ventas_efectivo && !arqueoCuadrado && <span className="text-red-500">*</span>}
                 </label>
                 <textarea
                   value={formCierre.observacion}
@@ -2415,6 +2398,10 @@ export default function CajaClient({
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-amber-300 outline-none"
                 />
               </div>
+
+              <p className="text-[11px] text-gray-500 text-center">
+                El reporte impreso incluye el detalle del sistema y su conteo para archivo de la clínica.
+              </p>
             </div>
           </div>
         </Modal>
