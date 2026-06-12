@@ -276,10 +276,14 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
     if (result.error) {
       setErrorNuevo(result.error)
     } else {
-      setOkNuevo('✓ Usuario creado correctamente')
+      setOkNuevo(
+        'aviso' in result && result.aviso
+          ? `✓ Usuario creado. ${result.aviso}`
+          : '✓ Usuario creado correctamente'
+      )
       setFormNuevo({ email: '', password: '', nombre: '', apellido: '', cedula: '', telefono: '', rol_id: '', sucursal_id: '' })
       startTransition(() => { recargar() })
-      setTimeout(() => { setModalNuevo(false); setOkNuevo('') }, 1500)
+      setTimeout(() => { setModalNuevo(false); setOkNuevo('') }, 'aviso' in result && result.aviso ? 8000 : 1500)
     }
   }
 

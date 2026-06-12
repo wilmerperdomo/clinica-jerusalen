@@ -112,5 +112,11 @@ export async function crearUsuario(data: {
     }
   }
 
-  return { ok: true, userId: nuevoUserId }
+  return {
+    ok: true,
+    userId: nuevoUserId,
+    aviso: serviceKey
+      ? undefined
+      : 'Si no puede entrar: ejecute scripts/ARREGLAR-TODO-USUARIOS.sql en Supabase o desactive "Confirm email".',
+  }
 }

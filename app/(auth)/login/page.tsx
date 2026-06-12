@@ -63,7 +63,7 @@ export default function LoginPage() {
 
         error.message === 'Invalid login credentials'
 
-          ? 'Correo o contraseña incorrectos.'
+          ? 'Correo o contraseña incorrectos. Si el usuario es nuevo, en Supabase desactive "Confirm email" o ejecute scripts/ARREGLAR-TODO-USUARIOS.sql.'
 
           : 'Error al iniciar sesión. Intenta de nuevo.'
 
