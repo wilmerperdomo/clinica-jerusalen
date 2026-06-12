@@ -4,11 +4,11 @@ import { useState, useTransition, useMemo, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { generarLineasProduccion } from '@/lib/planilla-utils'
 import {
-  DollarSign, TrendingUp, TrendingDown, X, Save, Plus,
+  DollarSign, TrendingUp, TrendingDown, Save, Plus,
   RefreshCw, CreditCard, Banknote, ArrowRightLeft, Clock,
   CheckCircle2, AlertCircle, Receipt, Users, ChevronDown,
-  LockKeyhole, Unlock, Search, Wallet, FileText, Printer, FlaskConical,
-  Stethoscope, Pill, ClipboardList, BadgeCheck, Trash2, type LucideIcon,
+  LockKeyhole, Unlock, Wallet, FileText, Printer, FlaskConical,
+  Stethoscope, Pill, ClipboardList, BadgeCheck, type LucideIcon,
 } from 'lucide-react'
 import {
   calcularDescuentoEdad,
@@ -21,21 +21,25 @@ import {
 import { abrirFacturaTermica, facturaPrintDesdeRegistro } from '@/lib/factura-print'
 import { abrirCierreCajaPrint, type CajaCierrePrintData } from '@/lib/caja-cierre-print'
 import { formatearNombreMedico } from '@/lib/medico-utils'
+import type { PacienteBusqueda } from '@/components/buscar-paciente-input'
 import { nombrePaciente, esPacienteEmpresa } from '@/lib/consultas-utils'
-import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
-import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
 import { BRAND } from '@/lib/brand'
+import { FORMAS_PAGO } from '@/lib/caja-constants'
+import { fmtCaja as fmt } from '@/lib/caja-format'
 import {
   descuentoEdadPaciente,
+  validarCreditoConPaciente,
   validarDescuento,
   validarReferenciaPago,
-  validarCreditoConPaciente,
   validarSesionOperacion,
-  validarItemsVentaCatalogo,
-  MAX_CANTIDAD_VENTA,
 } from '@/lib/caja-seguridad'
 import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
+import { Modal } from './components/caja-modal'
+import VentaRapidaModal from './components/venta-rapida-modal'
+import { useVentaRapida } from './hooks/use-venta-rapida'
+import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
+import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
 
 /* ─── tipos ─────────────────────────────────────────────── */
 interface Concepto { id: number; nombre: string; tipo: 'INGRESO' | 'EGRESO'; categoria?: string }
@@ -83,21 +87,6 @@ interface CXC {
 interface Servicio     { id: number; nombre: string; tipo: string; precio: number }
 interface ProductoVenta { id: number; codigo: string; nombre: string; precio_venta: number; tipo?: string }
 interface PruebaLab    { id: number; nombre: string; costo: number }
-type TabCatalogoVenta  = 'servicios' | 'laboratorio' | 'medicamentos'
-interface VentaRapidaItem {
-  key: string
-  tipo: 'SERVICIO' | 'LAB' | 'MEDICAMENTO'
-  nombre: string
-  precio: number
-  cantidad: number
-  refId: number
-}
-
-const TABS_CATALOGO_VENTA: { id: TabCatalogoVenta; label: string; icon: LucideIcon }[] = [
-  { id: 'servicios',     label: 'Servicios',     icon: Stethoscope  },
-  { id: 'laboratorio',   label: 'Laboratorio',   icon: FlaskConical },
-  { id: 'medicamentos',  label: 'Medicamentos',  icon: Pill         },
-]
 interface Correlativo  { sucursal_id: number; ultimo_numero: number }
 interface ConsultaServicio { id: number; nombre: string; precio: number; cantidad: number }
 interface ConsultaDetalle  { id: number; no_producto: string; cant: number; precio_venta?: number; producto_id?: number }
@@ -168,22 +157,11 @@ interface Props {
   correlativos:            Correlativo[]
 }
 
-const FORMAS_PAGO = [
-  { key: 'EFECTIVO',      label: 'Efectivo',      icon: Banknote },
-  { key: 'TARJETA',       label: 'Tarjeta',        icon: CreditCard },
-  { key: 'TRANSFERENCIA', label: 'Transferencia',  icon: ArrowRightLeft },
-  { key: 'CREDITO',       label: 'A Crédito',      icon: Clock },
-]
-
 function sb() {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   )
-}
-
-function fmt(n: number) {
-  return `L. ${Number(n || 0).toLocaleString('es-HN', { minimumFractionDigits: 2 })}`
 }
 
 /* ═══════════════════════════════════════════════════════ */
@@ -242,10 +220,6 @@ export default function CajaClient({
   })
   const [guardandoCobro, setGuardandoCobro] = useState(false)
   const [isPending, startTransition] = useTransition()
-  const [pacientesExtra, setPacientesExtra] = useState<PacienteBusqueda[]>([])
-  const [busqCatalogoVenta, setBusqCatalogoVenta] = useState('')
-  const [tabCatalogoVenta, setTabCatalogoVenta] = useState<TabCatalogoVenta>('servicios')
-  const [ventaItems, setVentaItems] = useState<VentaRapidaItem[]>([])
   const [errorAp,   setErrorAp]   = useState('')
   const [loadingAp, setLoadingAp] = useState(false)
 
@@ -259,26 +233,9 @@ export default function CajaClient({
     monto_inicial: '', sucursal_id: sucursalDefault,
   })
 
-  /* nuevo movimiento */
-  const [modalMov,  setModalMov]  = useState(false)
   const [modalCierre, setModalCierre] = useState(false)
   const [modalAbono,  setModalAbono]  = useState(false)
   const [cxcActual,   setCxcActual]   = useState<CXC | null>(null)
-
-  const formMovVacio = {
-    tipo: 'INGRESO' as 'INGRESO' | 'EGRESO',
-    concepto_id: '', concepto_libre: '',
-    paciente_id: '', paciente_nombre: '',
-    monto: '', forma_pago: 'EFECTIVO',
-    referencia_pago: '', nota: '',
-    descuento_pct: '0', descuento_motivo: '',
-  }
-  const [formMov, setFormMov] = useState(formMovVacio)
-
-  // ── descuento detectado al seleccionar paciente ──────
-  const [descuentoInfo, setDescuentoInfo] = useState<{
-    pct: number; motivo: string; edad: number
-  } | null>(null)
 
   const [formCierre, setFormCierre] = useState({
     efectivo_apertura: '',
@@ -293,26 +250,48 @@ export default function CajaClient({
     monto: '', forma_pago: 'EFECTIVO', referencia: '', nota: '',
   })
 
+  const [ventaRapidaCobro, setVentaRapidaCobro] = useState<VentaRapidaIngresoOk | null>(null)
+  const [modalFacturaVentaRapida, setModalFacturaVentaRapida] = useState(false)
+  const [formFacturaVentaRapida, setFormFacturaVentaRapida] = useState({
+    nombre_cliente: '', rtn_cliente: '', exento: false,
+  })
+  const [guardandoFactVentaRapida, setGuardandoFactVentaRapida] = useState(false)
+  const [factImpresaVentaRapida, setFactImpresaVentaRapida] = useState<Record<string, unknown> | null>(null)
+
   const supabase = sb()
 
-  const pacientesVenta = useMemo((): PacienteBusqueda[] => {
-    const map = new Map<number, PacienteBusqueda>()
-    for (const p of pacientes) map.set(p.id, p)
-    for (const p of pacientesExtra) map.set(p.id, p)
-    return [...map.values()]
-  }, [pacientes, pacientesExtra])
-
-  const buscarPacienteRemoto = useCallback(
-    (termino: string) => buscarPacientesActivos(supabase, termino),
-    [supabase],
-  )
-
-  function registrarPacienteVenta(p: PacienteBusqueda) {
-    setPacientesExtra(prev => {
-      if (prev.some(x => x.id === p.id) || pacientes.some(x => x.id === p.id)) return prev
-      return [...prev, p]
-    })
+  function cerrarFlujoFacturaVentaRapida() {
+    setVentaRapidaCobro(null)
+    setModalFacturaVentaRapida(false)
+    setFactImpresaVentaRapida(null)
+    setFormFacturaVentaRapida({ nombre_cliente: '', rtn_cliente: '', exento: false })
   }
+
+  const ventaRapida = useVentaRapida({
+    supabase,
+    sesion,
+    userId,
+    esAdmin,
+    fechaHoy,
+    perfilSucursalId: perfil?.sucursal_id,
+    sucursalActiva,
+    pacientesIniciales: pacientes,
+    servicios,
+    productos,
+    pruebasLab,
+    conceptos,
+    onIngresoExitoso: (data) => {
+      const factInit = datosFacturaDesdePaciente(data.paciente as ConsultaPorCobrar['paciente'])
+      setFormFacturaVentaRapida({
+        nombre_cliente: factInit.nombre_cliente,
+        rtn_cliente: factInit.rtn_cliente,
+        exento: false,
+      })
+      setVentaRapidaCobro(data)
+      startTransition(() => { recargar() })
+    },
+    onEgresoExitoso: () => startTransition(() => { recargar() }),
+  })
 
   /* ── calcular edad desde fecha_nacimiento ─ */
   function calcularEdad(fechaNac: string): number {
@@ -322,21 +301,6 @@ export default function CajaClient({
     const m    = hoy.getMonth() - nac.getMonth()
     if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) edad--
     return edad
-  }
-
-  /* ── detectar descuento cuando cambia el paciente seleccionado ─ */
-  function detectarDescuento(pacienteId: string) {
-    setDescuentoInfo(null)
-    if (!pacienteId || !sesion) return
-    const pac = pacientesVenta.find(p => p.id === Number(pacienteId))
-    if (!pac?.fecha_nac) return
-    const desc = descuentoEdadPaciente(pac.fecha_nac, sucursalActiva)
-    if (desc.pct > 0) {
-      setDescuentoInfo({ pct: desc.pct, motivo: desc.motivo, edad: desc.edad })
-      setFormMov(p => ({ ...p, descuento_pct: String(desc.pct), descuento_motivo: desc.motivo }))
-    } else {
-      setFormMov(p => ({ ...p, descuento_pct: '0', descuento_motivo: '' }))
-    }
   }
 
   /* ── recargar sesión ─ */
@@ -399,167 +363,6 @@ export default function CajaClient({
     } else if (data) {
       setSesion(data)
     }
-  }
-
-  function cerrarModalVenta() {
-    setModalMov(false)
-    setFormMov(formMovVacio)
-    setDescuentoInfo(null)
-    setBusqCatalogoVenta('')
-    setVentaItems([])
-    setTabCatalogoVenta('servicios')
-  }
-
-  function agregarVentaItem(item: Omit<VentaRapidaItem, 'key' | 'cantidad'> & { cantidad?: number }) {
-    const key = `${item.tipo}-${item.refId}`
-    setVentaItems(prev => {
-      const existing = prev.find(i => i.key === key)
-      if (existing) {
-        return prev.map(i => i.key === key ? { ...i, cantidad: i.cantidad + (item.cantidad ?? 1) } : i)
-      }
-      return [...prev, { ...item, key, cantidad: item.cantidad ?? 1 }]
-    })
-    setBusqCatalogoVenta('')
-    setFormMov(p => ({ ...p, concepto_id: '', concepto_libre: '', monto: '' }))
-  }
-
-  function quitarVentaItem(key: string) {
-    setVentaItems(prev => prev.filter(i => i.key !== key))
-  }
-
-  function ajustarCantidadVenta(key: string, delta: number) {
-    setVentaItems(prev => prev.map(i => {
-      if (i.key !== key) return i
-      const cantidad = Math.min(MAX_CANTIDAD_VENTA, Math.max(1, i.cantidad + delta))
-      return { ...i, cantidad }
-    }))
-  }
-
-  function pctDescuentoMaximoVenta(): number {
-    const pac = pacientesVenta.find(p => p.id === Number(formMov.paciente_id))
-    return descuentoEdadPaciente(pac?.fecha_nac, sucursalActiva).pct
-  }
-
-  /* ── registrar movimiento ─ */
-  async function registrarMovimiento() {
-    const errSesion = validarSesionOperacion(sesion, userId)
-    if (errSesion) return alert(errSesion)
-
-    const paciente   = pacientesVenta.find(p => p.id === Number(formMov.paciente_id))
-    const pacNombre  = paciente ? nombrePaciente(paciente) : null
-    const pacienteId = formMov.paciente_id ? Number(formMov.paciente_id) : null
-    const hora       = new Date().toTimeString().slice(0, 5)
-    const prefijos   = { SERVICIO: 'Servicio', LAB: 'Laboratorio', MEDICAMENTO: 'Medicamento' } as const
-
-    if (formMov.tipo === 'INGRESO') {
-      if (ventaItems.length === 0) {
-        return alert('Agregue ítems del catálogo. Las ventas no pueden registrarse con monto manual.')
-      }
-
-      const errRef = validarReferenciaPago(formMov.forma_pago, formMov.referencia_pago)
-      if (errRef) return alert(errRef)
-      const errCred = validarCreditoConPaciente(formMov.forma_pago, pacienteId)
-      if (errCred) return alert(errCred)
-
-      const cat = validarItemsVentaCatalogo(ventaItems, servicios, productos, pruebasLab)
-      if (!cat.ok) return alert(cat.error)
-
-      const pctMax = pctDescuentoMaximoVenta()
-      const valDesc = validarDescuento(Number(formMov.descuento_pct || 0), pctMax, esAdmin, formMov.nota)
-      if (!valDesc.ok) return alert(valDesc.error)
-      const descPct = valDesc.pctAplicar
-
-      const movBase = {
-        sesion_id:       sesion!.id,
-        sucursal_id:     sesion!.sucursal_id,
-        cajero_id:       userId,
-        tipo:            'INGRESO' as const,
-        fecha:           fechaHoy,
-        hora,
-        forma_pago:      formMov.forma_pago,
-        referencia_pago: formMov.referencia_pago || null,
-        nota:            formMov.nota || null,
-        paciente_id:     pacienteId,
-        paciente_nombre: pacNombre,
-      }
-
-      const movimientos = cat.items.map(item => {
-        const bruto = item.precio * item.cantidad
-        const descMonto = descPct > 0 ? parseFloat((bruto * descPct / 100).toFixed(2)) : 0
-        const neto = parseFloat((bruto - descMonto).toFixed(2))
-        return {
-          ...movBase,
-          concepto: `${prefijos[item.tipo]} — ${item.nombre}`,
-          monto_bruto: bruto,
-          descuento_pct: descPct,
-          descuento_monto: descMonto,
-          descuento_motivo: formMov.descuento_motivo || null,
-          monto: neto,
-        }
-      })
-
-      const totalNeto = movimientos.reduce((s, m) => s + m.monto, 0)
-
-      const { data: movs, error: errMovs } = await insertarMovimientosCaja(supabase, movimientos)
-      if (errMovs) return alert('Error al registrar cobro: ' + errMovs.message)
-
-      const { error: errSesUpd } = await supabase.from('caja_sesiones').update({
-        total_ingresos: (sesion!.total_ingresos || 0) + totalNeto,
-      }).eq('id', sesion!.id).eq('estado', 'ABIERTA')
-      if (errSesUpd) return alert('Error al actualizar sesión: ' + errSesUpd.message)
-
-      if (formMov.forma_pago === 'CREDITO' && movs?.[0]) {
-        const { error: errCxc } = await supabase.from('cxc').insert({
-          paciente_id:     pacienteId,
-          paciente_nombre: pacNombre,
-          concepto:        `Venta rápida — ${cat.items.length} ítem(s)`,
-          monto_total:     totalNeto,
-          monto_pagado:    0,
-          saldo:           totalNeto,
-          movimiento_id:   movs[0].id,
-          estado:          'PENDIENTE',
-          cajero_id:       userId,
-          sucursal_id:     sesion!.sucursal_id ?? perfil?.sucursal_id ?? null,
-        })
-        if (errCxc) return alert('Error al crear cuenta por cobrar: ' + errCxc.message)
-      }
-
-      cerrarModalVenta()
-      startTransition(() => { recargar() })
-      return
-    }
-
-    /* ── EGRESO: solo concepto del catálogo oficial ─ */
-    if (!formMov.concepto_id) return alert('Seleccione un concepto de egreso del catálogo')
-    if (!formMov.monto || Number(formMov.monto) <= 0) return alert('Ingrese un monto válido')
-
-    const concepto = conceptos.find(c => c.id === Number(formMov.concepto_id))?.nombre
-    if (!concepto) return alert('Concepto de egreso no válido')
-
-    const montoNeto = parseFloat(Number(formMov.monto).toFixed(2))
-
-    const { error: errMov } = await insertarMovimientoCaja(supabase, {
-      sesion_id:        sesion!.id,
-      sucursal_id:      sesion!.sucursal_id,
-      tipo:             'EGRESO',
-      concepto_id:      Number(formMov.concepto_id),
-      concepto,
-      monto:            montoNeto,
-      forma_pago:       'EFECTIVO',
-      nota:             formMov.nota || null,
-      cajero_id:        userId,
-      fecha:            fechaHoy,
-      hora,
-    })
-    if (errMov) return alert('Error al registrar egreso: ' + errMov.message)
-
-    const { error: errSesEgr } = await supabase.from('caja_sesiones').update({
-      total_egresos: (sesion!.total_egresos || 0) + montoNeto,
-    }).eq('id', sesion!.id).eq('estado', 'ABIERTA')
-    if (errSesEgr) return alert('Error al actualizar sesión: ' + errSesEgr.message)
-
-    cerrarModalVenta()
-    startTransition(() => { recargar() })
   }
 
   function calcularTotalesCaja(lista: Movimiento[], montoInicial: number) {
@@ -1695,36 +1498,111 @@ export default function CajaClient({
     abrirFacturaTermica(facturaPrintDesdeRegistro(factImpresa as Record<string, unknown>), { autoPrint: true })
   }
 
-  const resultadosCatalogoVenta = useMemo(() => {
-    const q = busqCatalogoVenta.toLowerCase().trim()
-    if (tabCatalogoVenta === 'medicamentos') {
-      return productos.filter(p =>
-        !q || p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q),
-      ).slice(0, 15)
+  /* ── generar factura fiscal después de venta rápida ── */
+  async function generarFacturaVentaRapida() {
+    if (!ventaRapidaCobro) return
+    setGuardandoFactVentaRapida(true)
+    const sb2 = supabase
+    const sucId = perfil?.sucursal_id ?? sesion?.sucursal_id
+    const suc = sucursales.find(s => s.id === sucId)
+    if (!suc) {
+      alert('Tu usuario no tiene sucursal asignada. Ve a Configuración → Usuarios y asigna una sucursal.')
+      setGuardandoFactVentaRapida(false)
+      return
     }
-    if (tabCatalogoVenta === 'laboratorio') {
-      return pruebasLab.filter(p =>
-        !q || p.nombre.toLowerCase().includes(q),
-      ).slice(0, 15)
+
+    const base = ventaRapidaCobro.subtotal
+    const valDesc = ventaRapidaCobro.descuentoMonto
+    const subtotalConDesc = base - valDesc
+    const isv = formFacturaVentaRapida.exento ? 0 : subtotalConDesc * 0.15
+    const total = subtotalConDesc + isv
+
+    const items = ventaRapidaCobro.items.map(item => ({
+      descripcion: `${PREFIJOS_CONCEPTO_VENTA[item.tipo]} — ${item.nombre}`,
+      cantidad: item.cantidad,
+      precio_unitario: item.precio,
+      isv_pct: formFacturaVentaRapida.exento ? 0 : 15,
+      subtotal: item.precio * item.cantidad,
+    }))
+
+    const pac = ventaRapidaCobro.paciente
+    const hora = new Date().toTimeString().slice(0, 8)
+
+    const payloadBase = {
+      fecha: fechaHoy,
+      hora,
+      sucursal_id: suc.id,
+      paciente_id: ventaRapidaCobro.pacienteId,
+      cliente_nombre: formFacturaVentaRapida.nombre_cliente.trim()
+        || ventaRapidaCobro.pacienteNombre
+        || (pac ? nombrePaciente(pac) : 'CONSUMIDOR FINAL'),
+      cliente_rtn: formFacturaVentaRapida.rtn_cliente.trim() || null,
+      items,
+      subtotal: base,
+      descuento_monto: valDesc,
+      isv_monto: isv,
+      total,
+      estado: 'emitida',
+      exento_isv: formFacturaVentaRapida.exento,
+      cai: suc.cai ?? null,
+      rtn_emisor: suc.rtn ?? null,
+      rango_inicio: suc.num_min ? String(suc.num_min) : null,
+      rango_fin: suc.num_max ? String(suc.num_max) : null,
+      fecha_limite_cai: suc.fecha_limite ?? null,
+      cajero_nombre: perfil ? `${perfil.nombre ?? ''} ${perfil.apellido ?? ''}`.trim() : '',
+      medico_nombre: null,
+      consulta_id: null,
     }
-    return servicios.filter(s =>
-      !q || s.nombre.toLowerCase().includes(q) || s.tipo.toLowerCase().includes(q),
-    ).slice(0, 15)
-  }, [busqCatalogoVenta, tabCatalogoVenta, productos, pruebasLab, servicios])
 
-  const subtotalVentaItems = useMemo(
-    () => ventaItems.reduce((s, i) => s + i.precio * i.cantidad, 0),
-    [ventaItems],
-  )
+    let fact = null
+    let numSig = 0
+    let ultimoError: string | null = null
 
-  const totalVentaRapida = useMemo(() => {
-    const pct = Math.min(Number(formMov.descuento_pct) || 0, esAdmin ? 100 : pctDescuentoMaximoVenta())
-    return subtotalVentaItems * (1 - pct / 100)
-  }, [ventaItems, subtotalVentaItems, formMov.descuento_pct, formMov.paciente_id, esAdmin, sucursalActiva])
+    for (let intento = 0; intento < 4; intento++) {
+      const reserva = await reservarSiguienteCorrelativo(
+        sb2, suc.id, suc,
+        intento > 0 ? numSig + 1 : undefined,
+      )
+      numSig = reserva.numSig
 
-  const puedeCobrarVenta = formMov.tipo === 'EGRESO'
-    ? Boolean(formMov.monto && Number(formMov.monto) > 0 && formMov.concepto_id)
-    : ventaItems.length > 0 && totalVentaRapida > 0
+      const { data, error } = await sb2.from('facturas').insert({
+        ...payloadBase,
+        numero: reserva.numero,
+      }).select().single()
+
+      if (!error) {
+        fact = data
+        await confirmarCorrelativo(sb2, suc.id, numSig)
+        break
+      }
+
+      ultimoError = error.message
+      if (!esErrorNumeroDuplicado(error)) break
+      numSig += 1
+    }
+
+    if (!fact) {
+      console.error(ultimoError)
+      alert('Error al crear factura: ' + (ultimoError ?? 'Número duplicado'))
+      setGuardandoFactVentaRapida(false)
+      return
+    }
+
+    setCorrelativos(prev => {
+      const idx = prev.findIndex(c => c.sucursal_id === suc.id)
+      if (idx >= 0) {
+        const n = [...prev]
+        n[idx] = { sucursal_id: suc.id, ultimo_numero: numSig }
+        return n
+      }
+      return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
+    })
+
+    const impresa = { ...fact!, sucursal: suc }
+    setFactImpresaVentaRapida(impresa)
+    setGuardandoFactVentaRapida(false)
+    abrirFacturaTermica(facturaPrintDesdeRegistro(impresa), { autoPrint: true })
+  }
 
   /* ══════════════════ JSX ══════════════════════════════════ */
 
@@ -1828,7 +1706,7 @@ export default function CajaClient({
             <ModuleBtnGhost onClick={() => startTransition(() => recargar())}>
               <RefreshCw className={`w-4 h-4 ${isPending ? 'animate-spin' : ''}`} />
             </ModuleBtnGhost>
-            <ModuleBtnPrimary onClick={() => { setFormMov({ ...formMovVacio, tipo: 'INGRESO' }); setDescuentoInfo(null); setBusqCatalogoVenta(''); setVentaItems([]); setTabCatalogoVenta('servicios'); setModalMov(true) }}>
+            <ModuleBtnPrimary onClick={() => ventaRapida.abrir('INGRESO')}>
               <Receipt className="w-4 h-4" /> Venta rápida
             </ModuleBtnPrimary>
             <ModuleBtnGhost onClick={abrirModalCierre} className="!bg-red-500/20 !border-red-300/40 !text-red-100">
@@ -2236,319 +2114,149 @@ export default function CajaClient({
         </div>
       </div>
 
-      {/* ══════════ MODAL VENTA RÁPIDA / EGRESO ══════════ */}
-      {modalMov && (
-        <Modal
-          title={formMov.tipo === 'INGRESO' ? 'Venta rápida' : 'Registrar egreso'}
-          subtitle={formMov.tipo === 'INGRESO'
-            ? 'Seleccione paciente del catálogo y agregue servicios, laboratorio o medicamentos'
-            : 'Salida de efectivo o pago en contado desde caja'}
-          size="xl"
-          accent={formMov.tipo === 'INGRESO' ? 'green' : 'default'}
-          icon={formMov.tipo === 'INGRESO' ? Receipt : TrendingDown}
-          onClose={cerrarModalVenta}
-        >
-          <div className="space-y-4">
-            {/* venta vs egreso */}
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                { key: 'INGRESO' as const, label: 'Venta rápida', hint: 'Cobrar al paciente' },
-                { key: 'EGRESO' as const, label: 'Egreso', hint: 'Salida de caja' },
-              ]).map(t => (
-                <button key={t.key} type="button"
-                  onClick={() => setFormMov(p => ({ ...p, tipo: t.key, concepto_id: '', concepto_libre: '' }))}
-                  className={`py-2.5 rounded-xl font-semibold text-sm border-2 transition-all text-left px-3 ${
-                    formMov.tipo === t.key
-                      ? t.key === 'INGRESO' ? 'border-green-500 bg-green-50 text-green-700' : 'border-red-500 bg-red-50 text-red-700'
-                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                  }`}>
-                  <span className="block">{t.label}</span>
-                  <span className="block text-[10px] font-normal opacity-70 mt-0.5">{t.hint}</span>
-                </button>
-              ))}
-            </div>
+      <VentaRapidaModal venta={ventaRapida} conceptos={conceptos} esAdmin={esAdmin} />
 
-            {/* paciente — catálogo completo */}
-            {formMov.tipo === 'INGRESO' && (
-              <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-4 space-y-2">
-                <label className="block text-sm font-semibold text-gray-800">
-                  Paciente {formMov.forma_pago === 'CREDITO' ? '*' : '(recomendado)'}
-                </label>
-                <BuscarPacienteInput
-                  pacientes={pacientesVenta}
-                  value={formMov.paciente_id}
-                  onChange={id => {
-                    setFormMov(prev => ({ ...prev, paciente_id: id }))
-                    detectarDescuento(id)
-                  }}
-                  onSelectPaciente={registrarPacienteVenta}
-                  buscarRemoto={buscarPacienteRemoto}
-                  placeholder="Buscar paciente: nombre, código, RTN, teléfono, empresa…"
-                  required={formMov.forma_pago === 'CREDITO'}
-                />
-                <p className="text-xs text-gray-500">
-                  Catálogo de pacientes registrados — escribe al menos 2 caracteres para buscar en todo el sistema.
+      {/* ══ VENTA RÁPIDA: COBRO EXITOSO → FACTURA FISCAL ══ */}
+      {ventaRapidaCobro && !modalFacturaVentaRapida && !factImpresaVentaRapida && (
+        <Modal title="Venta Registrada" onClose={cerrarFlujoFacturaVentaRapida} size="xl" accent="green" icon={CheckCircle2}>
+          <div className="space-y-5">
+            {ventaRapidaCobro.formaPago !== 'CREDITO' && ventaRapidaCobro.paciente ? (
+              <PagoAgradecimientoPanel
+                monto={ventaRapidaCobro.totalNeto}
+                paciente={ventaRapidaCobro.paciente}
+                subtitulo={ventaRapidaCobro.formaPago}
+              />
+            ) : (
+              <div className="text-center py-4">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 className="w-9 h-9 text-green-600" />
+                </div>
+                <p className="text-lg font-bold text-gray-900">¡Venta registrada correctamente!</p>
+                <p className="text-2xl font-extrabold text-green-700 mt-1">{fmt(ventaRapidaCobro.totalNeto)}</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  {ventaRapidaCobro.pacienteNombre || 'Sin paciente'} · {ventaRapidaCobro.formaPago}
+                  {ventaRapidaCobro.descuentoPct > 0 && ` · ${ventaRapidaCobro.descuentoPct}% dto.`}
                 </p>
-                {formMov.forma_pago === 'CREDITO' && !formMov.paciente_id && (
-                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    Las ventas a crédito requieren seleccionar un paciente registrado.
-                  </p>
-                )}
               </div>
             )}
-
-            {/* catálogo venta rápida */}
-            {formMov.tipo === 'INGRESO' && (
-              <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-4 space-y-3">
-                <label className="block text-sm font-semibold text-gray-800">Agregar del catálogo</label>
-                <div className="flex flex-wrap gap-1">
-                  {TABS_CATALOGO_VENTA.map(t => (
-                    <button key={t.id} type="button"
-                      onClick={() => { setTabCatalogoVenta(t.id); setBusqCatalogoVenta('') }}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        tabCatalogoVenta === t.id
-                          ? 'bg-teal-600 text-white'
-                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-                      }`}>
-                      <t.icon className="w-3.5 h-3.5" /> {t.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                  <input
-                    value={busqCatalogoVenta}
-                    onChange={e => setBusqCatalogoVenta(e.target.value)}
-                    placeholder={
-                      tabCatalogoVenta === 'medicamentos' ? 'Buscar medicamento por nombre o código…' :
-                      tabCatalogoVenta === 'laboratorio'  ? 'Buscar prueba de laboratorio…' :
-                      'Buscar servicio médico…'
-                    }
-                    className="w-full border rounded-lg pl-8 pr-3 py-2 text-sm bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                  />
-                </div>
-                <div className="border rounded-lg overflow-hidden max-h-44 overflow-y-auto bg-white shadow-sm">
-                  {resultadosCatalogoVenta.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-4">Sin resultados — escribe para buscar</p>
-                  ) : tabCatalogoVenta === 'medicamentos' ? (
-                    resultadosCatalogoVenta.map(p => {
-                      const prod = p as ProductoVenta
-                      return (
-                        <button key={prod.id} type="button"
-                          onClick={() => agregarVentaItem({
-                            tipo: 'MEDICAMENTO', nombre: prod.nombre, precio: Number(prod.precio_venta), refId: prod.id,
-                          })}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-green-50 border-b last:border-0 flex justify-between items-center gap-2">
-                          <span>
-                            <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs rounded mr-1">Med</span>
-                            {prod.nombre}
-                            <span className="text-gray-400 font-mono text-xs ml-1">{prod.codigo}</span>
-                          </span>
-                          <span className="font-semibold text-teal-700 shrink-0">{fmt(prod.precio_venta)}</span>
-                        </button>
-                      )
-                    })
-                  ) : tabCatalogoVenta === 'laboratorio' ? (
-                    resultadosCatalogoVenta.map(p => {
-                      const lab = p as PruebaLab
-                      return (
-                        <button key={lab.id} type="button"
-                          onClick={() => agregarVentaItem({
-                            tipo: 'LAB', nombre: lab.nombre, precio: Number(lab.costo) || 0, refId: lab.id,
-                          })}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-purple-50 border-b last:border-0 flex justify-between items-center gap-2">
-                          <span>
-                            <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-xs rounded mr-1">Lab</span>
-                            {lab.nombre}
-                          </span>
-                          <span className="font-semibold text-teal-700 shrink-0">{fmt(Number(lab.costo) || 0)}</span>
-                        </button>
-                      )
-                    })
-                  ) : (
-                    resultadosCatalogoVenta.map(s => {
-                      const serv = s as Servicio
-                      return (
-                        <button key={serv.id} type="button"
-                          onClick={() => agregarVentaItem({
-                            tipo: 'SERVICIO', nombre: serv.nombre, precio: Number(serv.precio), refId: serv.id,
-                          })}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 border-b last:border-0 flex justify-between items-center gap-2">
-                          <span>
-                            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded mr-1">Serv</span>
-                            {serv.nombre}
-                            <span className="text-gray-400 text-xs ml-1">({serv.tipo})</span>
-                          </span>
-                          <span className="font-semibold text-teal-700 shrink-0">{fmt(serv.precio)}</span>
-                        </button>
-                      )
-                    })
-                  )}
-                </div>
-
-                {ventaItems.length > 0 && (
-                  <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-                    <div className="px-3 py-2 bg-gray-50 border-b text-xs font-semibold text-gray-600 uppercase">
-                      Carrito ({ventaItems.length})
-                    </div>
-                    <div className="divide-y max-h-40 overflow-y-auto">
-                      {ventaItems.map(item => (
-                        <div key={item.key} className="px-3 py-2 flex items-center gap-2 text-sm">
-                          <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded shrink-0 ${
-                            item.tipo === 'LAB' ? 'bg-purple-100 text-purple-700'
-                              : item.tipo === 'MEDICAMENTO' ? 'bg-green-100 text-green-700'
-                                : 'bg-blue-100 text-blue-700'
-                          }`}>
-                            {item.tipo === 'LAB' ? 'Lab' : item.tipo === 'MEDICAMENTO' ? 'Med' : 'Serv'}
-                          </span>
-                          <span className="flex-1 min-w-0 truncate">{item.nombre}</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button type="button" onClick={() => ajustarCantidadVenta(item.key, -1)}
-                              className="w-6 h-6 rounded border text-xs hover:bg-gray-50">−</button>
-                            <span className="w-5 text-center text-xs font-bold">{item.cantidad}</span>
-                            <button type="button" onClick={() => ajustarCantidadVenta(item.key, 1)}
-                              className="w-6 h-6 rounded border text-xs hover:bg-gray-50">+</button>
-                          </div>
-                          <span className="font-semibold text-gray-800 w-20 text-right shrink-0">
-                            {fmt(item.precio * item.cantidad)}
-                          </span>
-                          <button type="button" onClick={() => quitarVentaItem(item.key)}
-                            className="p-1 text-red-400 hover:text-red-600 shrink-0">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* concepto egreso — solo catálogo oficial */}
-            {formMov.tipo === 'EGRESO' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Concepto de egreso *</label>
-                <select value={formMov.concepto_id}
-                  onChange={e => setFormMov(p => ({ ...p, concepto_id: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                  <option value="">— Seleccionar concepto —</option>
-                  {conceptos.filter(c => c.tipo === 'EGRESO').map(c => (
-                    <option key={c.id} value={c.id}>{c.nombre}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {formMov.tipo === 'EGRESO' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Monto del egreso *</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">L.</span>
-                  <input type="number" min="0" step="0.01" value={formMov.monto}
-                    onChange={e => setFormMov(p => ({ ...p, monto: e.target.value }))}
-                    className="w-full border rounded-lg pl-9 pr-3 py-2.5 text-lg font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none" />
-                </div>
-              </div>
-            )}
-
-            {formMov.tipo === 'INGRESO' && ventaItems.length > 0 && (
-              <div className={`rounded-xl border p-3 space-y-2 ${descuentoInfo ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">Descuento</span>
-                  {descuentoInfo && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full">
-                      {descuentoInfo.motivo} — {descuentoInfo.edad} años
-                    </span>
-                  )}
-                </div>
-                {esAdmin ? (
-                  <div className="relative">
-                    <input type="number" min="0" max="100" step="0.01"
-                      value={formMov.descuento_pct}
-                      onChange={e => setFormMov(p => ({
-                        ...p,
-                        descuento_pct: e.target.value,
-                        descuento_motivo: e.target.value === '0' ? '' : (descuentoInfo?.motivo || 'Manual admin'),
-                      }))}
-                      className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none" />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-600">
-                    {Number(formMov.descuento_pct) > 0
-                      ? `${formMov.descuento_pct}% (${formMov.descuento_motivo || 'automático'})`
-                      : 'Sin descuento — solo tercera/cuarta edad'}
-                  </p>
-                )}
-                {!esAdmin && (
-                  <p className="text-[11px] text-gray-500">Descuentos adicionales requieren administrador.</p>
-                )}
-                {subtotalVentaItems > 0 && Number(formMov.descuento_pct) > 0 && (
-                  <p className="text-xs text-amber-700">
-                    Ahorro: {fmt(subtotalVentaItems * Number(formMov.descuento_pct) / 100)}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* forma de pago */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Forma de Pago *</label>
-              <div className="grid grid-cols-2 gap-2">
-                {FORMAS_PAGO.map(fp => (
-                  <button key={fp.key}
-                    onClick={() => setFormMov(p => ({ ...p, forma_pago: fp.key }))}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
-                      formMov.forma_pago === fp.key
-                        ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
-                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                    }`}>
-                    <fp.icon className="w-4 h-4" /> {fp.label}
-                  </button>
-                ))}
-              </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="text-sm font-semibold text-amber-800 mb-1">¿Desea emitir factura fiscal?</p>
+              <p className="text-xs text-amber-600">Puede facturar ahora o hacerlo después desde el módulo de Facturación.</p>
+              {sucursalActiva
+                ? <p className="text-xs text-amber-700 mt-1 font-medium">📍 Sucursal: {sucursalActiva.nombre}</p>
+                : <p className="text-xs text-red-600 mt-1 font-semibold">⚠️ Sin sucursal asignada — no podrá facturar.</p>
+              }
             </div>
-
-            {/* referencia (tarjeta / transferencia) */}
-            {['TARJETA', 'TRANSFERENCIA'].includes(formMov.forma_pago) && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {formMov.forma_pago === 'TARJETA' ? 'Número de Voucher' : 'Referencia de Transferencia'}
-                </label>
-                <input value={formMov.referencia_pago}
-                  onChange={e => setFormMov(p => ({ ...p, referencia_pago: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nota (opcional)</label>
-              <input value={formMov.nota}
-                onChange={e => setFormMov(p => ({ ...p, nota: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm" />
-            </div>
-
-            {formMov.tipo === 'INGRESO' && totalVentaRapida > 0 && (
-              <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 flex items-center justify-between">
-                <span className="text-sm text-green-800">
-                  Total a cobrar{ventaItems.length > 0 ? ` · ${ventaItems.length} ítem(s)` : ''}
-                </span>
-                <span className="text-xl font-bold text-green-700">{fmt(totalVentaRapida)}</span>
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={cerrarModalVenta} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
-              <button type="button" onClick={registrarMovimiento}
-                disabled={!puedeCobrarVenta}
-                className={`px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50 ${
-                  formMov.tipo === 'INGRESO' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
-                }`}>
-                {formMov.tipo === 'INGRESO'
-                  ? <><DollarSign className="w-4 h-4 inline mr-1" /> Cobrar {totalVentaRapida > 0 ? fmt(totalVentaRapida) : 'venta'}</>
-                  : <><Save className="w-4 h-4 inline mr-1" /> Registrar egreso</>}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={cerrarFlujoFacturaVentaRapida}
+                className="flex-1 px-4 py-2.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cerrar sin facturar
+              </button>
+              <button
+                onClick={() => setModalFacturaVentaRapida(true)}
+                disabled={!sucursalActiva}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+              >
+                <FileText className="w-4 h-4" /> Generar Factura Fiscal
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {ventaRapidaCobro && modalFacturaVentaRapida && !factImpresaVentaRapida && (
+        <Modal title="Factura Fiscal — Venta rápida" onClose={cerrarFlujoFacturaVentaRapida} size="xl" accent="indigo" icon={FileText}>
+          <div className="space-y-4">
+            <div className="bg-indigo-50 rounded-xl p-3 text-sm space-y-1">
+              <p className="font-semibold text-indigo-800">
+                {formFacturaVentaRapida.nombre_cliente.trim()
+                  || ventaRapidaCobro.pacienteNombre
+                  || 'CONSUMIDOR FINAL'}
+              </p>
+              {formFacturaVentaRapida.rtn_cliente.trim() && (
+                <p className="text-xs font-mono text-indigo-600">RTN: {formFacturaVentaRapida.rtn_cliente}</p>
+              )}
+              <p className="text-indigo-600 font-bold text-lg">{fmt(ventaRapidaCobro.totalNeto)}</p>
+              <p className="text-xs text-indigo-500">
+                {ventaRapidaCobro.items.length} ítem(s)
+                {ventaRapidaCobro.descuentoMonto > 0 && ` · Descuento: ${fmt(ventaRapidaCobro.descuentoMonto)}`}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre a facturar</label>
+              <input
+                value={formFacturaVentaRapida.nombre_cliente}
+                onChange={e => setFormFacturaVentaRapida(p => ({ ...p, nombre_cliente: e.target.value }))}
+                placeholder="Razón social o nombre del cliente"
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">RTN del Cliente (opcional)</label>
+              <input
+                value={formFacturaVentaRapida.rtn_cliente}
+                onChange={e => setFormFacturaVentaRapida(p => ({ ...p, rtn_cliente: e.target.value }))}
+                placeholder="0000-0000-000000"
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-mono"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 p-3 border rounded-xl">
+              <input
+                id="exento-isv-vr"
+                type="checkbox"
+                checked={formFacturaVentaRapida.exento}
+                onChange={e => setFormFacturaVentaRapida(p => ({ ...p, exento: e.target.checked }))}
+                className="w-4 h-4 accent-indigo-600"
+              />
+              <label htmlFor="exento-isv-vr" className="text-sm font-medium text-gray-700 cursor-pointer">
+                Exento de ISV
+              </label>
+            </div>
+
+            <div className="flex flex-col-reverse sm:flex-row gap-2 pt-1">
+              <button
+                onClick={() => setModalFacturaVentaRapida(false)}
+                className="flex-1 px-4 py-2.5 border rounded-lg text-sm"
+              >
+                Atrás
+              </button>
+              <button
+                onClick={generarFacturaVentaRapida}
+                disabled={guardandoFactVentaRapida}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+              >
+                <FileText className="w-4 h-4" />
+                {guardandoFactVentaRapida ? 'Generando...' : 'Crear e Imprimir Factura'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {ventaRapidaCobro && factImpresaVentaRapida && (
+        <Modal title="Factura Generada" onClose={cerrarFlujoFacturaVentaRapida} size="md" accent="indigo" icon={FileText}>
+          <div className="space-y-4 text-center">
+            <p className="font-bold text-gray-900 text-xl">
+              Factura No. {(factImpresaVentaRapida as { numero?: string }).numero}
+            </p>
+            <p className="text-green-700 font-bold text-2xl">{fmt(ventaRapidaCobro.totalNeto)}</p>
+            <button
+              onClick={() => abrirFacturaTermica(
+                facturaPrintDesdeRegistro(factImpresaVentaRapida as Record<string, unknown>),
+                { autoPrint: true },
+              )}
+              className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+            >
+              <Printer className="w-4 h-4" /> Imprimir Factura
+            </button>
+            <button onClick={cerrarFlujoFacturaVentaRapida} className="w-full px-4 py-2 border rounded-lg text-sm">
+              Cerrar
+            </button>
           </div>
         </Modal>
       )}
@@ -3471,103 +3179,6 @@ export default function CajaClient({
       )}
       </ModuleContent>
     </ModuleShell>
-  )
-}
-
-/* ── Modal genérico (responsive, tamaños profesionales) ── */
-type ModalSize = 'sm' | 'md' | 'wide' | 'xl' | 'full'
-type ModalAccent = 'default' | 'green' | 'cyan' | 'indigo'
-
-const MODAL_MAX_W: Record<ModalSize, string> = {
-  sm: 'sm:max-w-md',
-  md: 'sm:max-w-lg',
-  wide: 'sm:max-w-2xl',
-  xl: 'sm:max-w-4xl',
-  full: 'sm:max-w-5xl lg:max-w-6xl xl:max-w-[min(96vw,72rem)]',
-}
-
-const MODAL_ACCENT_BG: Record<Exclude<ModalAccent, 'default'>, string> = {
-  green: `linear-gradient(135deg, ${BRAND.navy} 0%, #0d4a3a 100%)`,
-  cyan: `linear-gradient(135deg, ${BRAND.navy} 0%, #0c4a6e 100%)`,
-  indigo: `linear-gradient(135deg, ${BRAND.navy} 0%, #3730a3 100%)`,
-}
-
-function Modal({
-  title, subtitle, children, onClose, wide = false, size, accent = 'default',
-  icon: Icon, footer,
-}: {
-  title: string
-  subtitle?: string
-  children: React.ReactNode
-  onClose: () => void
-  wide?: boolean
-  size?: ModalSize
-  accent?: ModalAccent
-  icon?: LucideIcon
-  footer?: React.ReactNode
-}) {
-  const resolvedSize = size ?? (wide ? 'wide' : 'md')
-  const hasAccent = accent !== 'default'
-
-  return (
-    <div
-      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-3 md:p-4 bg-black/55 backdrop-blur-[2px]"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div
-        className={`bg-white w-full ${MODAL_MAX_W[resolvedSize]} rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[96dvh] sm:max-h-[94vh]`}
-        role="dialog"
-        aria-modal="true"
-      >
-        <div className="sm:hidden flex justify-center pt-2.5 flex-shrink-0">
-          <div className="w-10 h-1 rounded-full bg-gray-300" />
-        </div>
-
-        {hasAccent ? (
-          <div
-            className="flex items-center justify-between px-4 sm:px-6 py-4 flex-shrink-0 text-white rounded-t-2xl sm:rounded-t-2xl"
-            style={{ background: MODAL_ACCENT_BG[accent] }}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              {Icon && (
-                <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
-                  <Icon className="w-5 h-5" style={{ color: BRAND.goldLight }} />
-                </div>
-              )}
-              <div className="min-w-0">
-                <h3 className="font-bold text-base sm:text-lg truncate">{title}</h3>
-                {subtitle && <p className="text-xs sm:text-sm text-white/70 truncate mt-0.5">{subtitle}</p>}
-              </div>
-            </div>
-            <button type="button" onClick={onClose} aria-label="Cerrar"
-              className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-white/70 hover:text-white hover:bg-white/10 flex-shrink-0">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0 bg-white">
-            <div className="min-w-0 pr-2">
-              <h3 className="font-semibold text-gray-900 truncate">{title}</h3>
-              {subtitle && <p className="text-xs text-gray-500 truncate mt-0.5">{subtitle}</p>}
-            </div>
-            <button type="button" onClick={onClose} aria-label="Cerrar"
-              className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 flex-shrink-0">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        )}
-
-        <div className="px-4 sm:px-6 py-4 sm:py-5 overflow-y-auto flex-1 min-h-0 overscroll-contain scroll-touch">
-          {children}
-        </div>
-
-        {footer && (
-          <div className="flex-shrink-0 border-t border-gray-100 bg-gray-50/90 px-4 sm:px-6 py-3 sm:py-4 rounded-b-2xl">
-            {footer}
-          </div>
-        )}
-      </div>
-    </div>
   )
 }
 

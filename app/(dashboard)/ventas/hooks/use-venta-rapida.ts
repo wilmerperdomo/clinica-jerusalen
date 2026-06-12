@@ -1,0 +1,249 @@
+'use client'
+
+import { useCallback, useMemo, useState } from 'react'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
+import type { PacienteBusqueda } from '@/components/buscar-paciente-input'
+import {
+  ajustarCantidadCarrito,
+  agregarAlCarrito,
+  filtrarCatalogoVenta,
+  quitarDelCarrito,
+  subtotalCarrito,
+} from '@/lib/venta-rapida/catalogo'
+import { FORM_MOV_VACIO } from '@/lib/venta-rapida/constants'
+import {
+  pctDescuentoMaximoPaciente,
+  resolverDescuentoPaciente,
+  totalConDescuento,
+} from '@/lib/venta-rapida/descuentos'
+import { registrarVentaRapidaEgreso, registrarVentaRapidaIngreso } from '@/lib/venta-rapida/registrar'
+import type {
+  ConceptoEgreso,
+  DescuentoVentaInfo,
+  FormMovimientoVenta,
+  PruebaLabCatalogo,
+  ProductoCatalogo,
+  ServicioCatalogo,
+  SesionVenta,
+  SucursalVenta,
+  TabCatalogoVenta,
+  VentaRapidaIngresoOk,
+  VentaRapidaItem,
+} from '@/lib/venta-rapida/types'
+
+interface UseVentaRapidaParams {
+  supabase: SupabaseClient
+  sesion: SesionVenta | null
+  userId: string
+  esAdmin: boolean
+  fechaHoy: string
+  perfilSucursalId?: number | null
+  sucursalActiva?: SucursalVenta
+  pacientesIniciales: PacienteBusqueda[]
+  servicios: ServicioCatalogo[]
+  productos: ProductoCatalogo[]
+  pruebasLab: PruebaLabCatalogo[]
+  conceptos: ConceptoEgreso[]
+  onIngresoExitoso?: (data: VentaRapidaIngresoOk) => void
+  onEgresoExitoso?: () => void
+}
+
+export function useVentaRapida({
+  supabase,
+  sesion,
+  userId,
+  esAdmin,
+  fechaHoy,
+  perfilSucursalId,
+  sucursalActiva,
+  pacientesIniciales,
+  servicios,
+  productos,
+  pruebasLab,
+  conceptos,
+  onIngresoExitoso,
+  onEgresoExitoso,
+}: UseVentaRapidaParams) {
+  const [abierto, setAbierto] = useState(false)
+  const [form, setForm] = useState<FormMovimientoVenta>(FORM_MOV_VACIO)
+  const [items, setItems] = useState<VentaRapidaItem[]>([])
+  const [busquedaCatalogo, setBusquedaCatalogo] = useState('')
+  const [tabCatalogo, setTabCatalogo] = useState<TabCatalogoVenta>('servicios')
+  const [pacientesExtra, setPacientesExtra] = useState<PacienteBusqueda[]>([])
+  const [descuentoInfo, setDescuentoInfo] = useState<DescuentoVentaInfo | null>(null)
+  const [guardando, setGuardando] = useState(false)
+
+  const pacientes = useMemo(() => {
+    const map = new Map<number, PacienteBusqueda>()
+    for (const p of pacientesIniciales) map.set(p.id, p)
+    for (const p of pacientesExtra) map.set(p.id, p)
+    return [...map.values()]
+  }, [pacientesIniciales, pacientesExtra])
+
+  const buscarPacienteRemoto = useCallback(
+    (termino: string) => buscarPacientesActivos(supabase, termino),
+    [supabase],
+  )
+
+  const registrarPaciente = useCallback((p: PacienteBusqueda) => {
+    setPacientesExtra(prev => {
+      if (prev.some(x => x.id === p.id) || pacientesIniciales.some(x => x.id === p.id)) return prev
+      return [...prev, p]
+    })
+  }, [pacientesIniciales])
+
+  const resultadosCatalogo = useMemo(
+    () => filtrarCatalogoVenta(tabCatalogo, busquedaCatalogo, servicios, productos, pruebasLab),
+    [tabCatalogo, busquedaCatalogo, servicios, productos, pruebasLab],
+  )
+
+  const subtotal = useMemo(() => subtotalCarrito(items), [items])
+
+  const total = useMemo(() => {
+    const pctMax = pctDescuentoMaximoPaciente(form.paciente_id, pacientes, sucursalActiva)
+    return totalConDescuento(subtotal, Number(form.descuento_pct) || 0, pctMax, esAdmin)
+  }, [subtotal, form.descuento_pct, form.paciente_id, pacientes, sucursalActiva, esAdmin])
+
+  const puedeConfirmar = form.tipo === 'EGRESO'
+    ? Boolean(form.monto && Number(form.monto) > 0 && form.concepto_id)
+    : items.length > 0 && total > 0
+
+  const abrir = useCallback((tipo: FormMovimientoVenta['tipo'] = 'INGRESO') => {
+    setForm({ ...FORM_MOV_VACIO, tipo })
+    setDescuentoInfo(null)
+    setBusquedaCatalogo('')
+    setItems([])
+    setTabCatalogo('servicios')
+    setAbierto(true)
+  }, [])
+
+  const cerrar = useCallback(() => {
+    setAbierto(false)
+    setForm(FORM_MOV_VACIO)
+    setDescuentoInfo(null)
+    setBusquedaCatalogo('')
+    setItems([])
+    setTabCatalogo('servicios')
+  }, [])
+
+  const seleccionarPaciente = useCallback((pacienteId: string, pacienteDirecto?: PacienteBusqueda) => {
+    if (!pacienteId) {
+      setDescuentoInfo(null)
+      setForm(prev => ({
+        ...prev,
+        paciente_id: '',
+        descuento_pct: '0',
+        descuento_motivo: '',
+      }))
+      return
+    }
+
+    if (pacienteDirecto) {
+      setPacientesExtra(prev => {
+        if (prev.some(x => x.id === pacienteDirecto.id) || pacientesIniciales.some(x => x.id === pacienteDirecto.id)) {
+          return prev
+        }
+        return [...prev, pacienteDirecto]
+      })
+    }
+
+    if (!sesion) {
+      setDescuentoInfo(null)
+      setForm(prev => ({ ...prev, paciente_id: pacienteId }))
+      return
+    }
+
+    const { descuento, formPatch } = resolverDescuentoPaciente(
+      pacienteId,
+      pacientes,
+      sucursalActiva,
+      pacienteDirecto,
+    )
+    setDescuentoInfo(descuento)
+    setForm(prev => ({ ...prev, paciente_id: pacienteId, ...formPatch }))
+  }, [sesion, pacientes, pacientesIniciales, sucursalActiva])
+
+  const agregarItem = useCallback((item: Omit<VentaRapidaItem, 'key' | 'cantidad'> & { cantidad?: number }) => {
+    setItems(prev => agregarAlCarrito(prev, item))
+    setBusquedaCatalogo('')
+    setForm(prev => ({ ...prev, concepto_id: '', concepto_libre: '', monto: '' }))
+  }, [])
+
+  const confirmar = useCallback(async () => {
+    if (!sesion) return
+    setGuardando(true)
+
+    const resultado = form.tipo === 'INGRESO'
+      ? await registrarVentaRapidaIngreso({
+          supabase,
+          sesion,
+          userId,
+          esAdmin,
+          fechaHoy,
+          perfilSucursalId,
+          sucursal: sucursalActiva,
+          form,
+          items,
+          pacientes,
+          servicios,
+          productos,
+          pruebasLab,
+        })
+      : await registrarVentaRapidaEgreso({
+          supabase,
+          sesion,
+          userId,
+          form,
+          conceptos,
+          fechaHoy,
+        })
+
+    setGuardando(false)
+
+    if (!resultado.ok) {
+      alert(resultado.error)
+      return
+    }
+
+    cerrar()
+
+    if (form.tipo === 'INGRESO') {
+      onIngresoExitoso?.(resultado)
+    } else {
+      onEgresoExitoso?.()
+    }
+  }, [
+    sesion, form, items, pacientes, servicios, productos, pruebasLab, conceptos,
+    supabase, userId, esAdmin, fechaHoy, perfilSucursalId, sucursalActiva, cerrar,
+    onIngresoExitoso, onEgresoExitoso,
+  ])
+
+  return {
+    abierto,
+    abrir,
+    cerrar,
+    confirmar,
+    guardando,
+    form,
+    setForm,
+    items,
+    agregarItem,
+    quitarItem: (key: string) => setItems(prev => quitarDelCarrito(prev, key)),
+    ajustarCantidad: (key: string, delta: number) => setItems(prev => ajustarCantidadCarrito(prev, key, delta)),
+    busquedaCatalogo,
+    setBusquedaCatalogo,
+    tabCatalogo,
+    setTabCatalogo,
+    resultadosCatalogo,
+    pacientes,
+    buscarPacienteRemoto,
+    registrarPaciente,
+    seleccionarPaciente,
+    descuentoInfo,
+    subtotal,
+    total,
+    puedeConfirmar,
+  }
+}
