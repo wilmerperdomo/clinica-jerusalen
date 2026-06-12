@@ -1,0 +1,96 @@
+═══════════════════════════════════════════════════════════════
+  SUBIR CLÍNICA NUEVA A BANANAHOSTING (Node.js)
+═══════════════════════════════════════════════════════════════
+
+── PASO 1: Subir archivos ─────────────────────────────────────
+
+  Por FTP o Administrador de archivos de cPanel, suba la carpeta
+  clinica-nueva COMPLETA a su hosting, por ejemplo:
+
+    /home/suusuario/clinica-nueva/
+
+  NO suba:
+    - node_modules/     (se instala en el servidor)
+    - .next/            (se genera con npm run build)
+    - .env.local        (use variables en cPanel)
+
+  SÍ suba:
+    - app/, components/, lib/, public/, scripts/
+    - package.json, package-lock.json
+    - server.js, next.config.ts, middleware.ts, etc.
+
+
+── PASO 2: Terminal en cPanel ─────────────────────────────────
+
+  cPanel → Terminal (o SSH):
+
+    cd ~/clinica-nueva
+    npm install
+    npm run build
+
+  Si npm run build falla por memoria, pida a soporte BananaHosting
+  aumentar límite o compile en su PC y suba la carpeta .next/
+
+
+── PASO 3: Crear aplicación Node.js (formulario) ─────────────
+
+  Versión de Node.js:     20.x  (o 18.x LTS — la más alta disponible)
+
+  Modo de aplicación:     Production
+  (NODE_ENV = production)
+
+  Raíz de aplicación:     clinica-nueva
+  (ruta donde subió package.json y server.js)
+
+  URL de la aplicación:   app.sudominio.hn  (o la que cree en cPanel)
+
+  Archivo de inicio:      server.js
+
+
+── PASO 4: Variables de entorno (cPanel) ───────────────────────
+
+  Añadir una por una (ver env.bananahosting.example):
+
+  NODE_ENV                          production
+  NEXT_PUBLIC_SUPABASE_URL          https://xxx.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY     eyJ... (anon key)
+  SUPABASE_SERVICE_ROLE_KEY         sb_secret_... (SECRETO)
+
+
+── PASO 5: Supabase (importante) ─────────────────────────────
+
+  Supabase → Authentication → URL Configuration
+
+  Site URL:
+    https://app.sudominio.hn
+
+  Redirect URLs (agregar):
+    https://app.sudominio.hn/**
+    https://app.sudominio.hn/login
+
+
+── PASO 6: Iniciar y probar ───────────────────────────────────
+
+  En cPanel Node.js → botón Start / Reiniciar
+
+  Abra la URL de la aplicación → debe cargar el login
+
+  Pruebe con usuario creado en Supabase Auth
+
+
+── DATOS REALES ───────────────────────────────────────────────
+
+  La base NO va a BananaHosting — sigue en Supabase.
+
+  Antes de pruebas reales:
+    1. Migración completa (MIGRAR-COMPLETO.bat)
+    2. Laboratorio (MIGRAR-LABORATORIO.bat)
+    3. Usuarios en Supabase Auth + perfiles
+
+
+── SISTEMA VIEJO ─────────────────────────────────────────────
+
+  Puede dejar el PHP/MySQL viejo funcionando en paralelo
+  mientras prueba el nuevo en otro subdominio (ej: app. o nuevo.)
+
+═══════════════════════════════════════════════════════════════

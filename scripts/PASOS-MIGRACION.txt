@@ -1,0 +1,97 @@
+═══════════════════════════════════════════════════════════════
+  MIGRAR DATOS — BASE EN BANANAHOSTING (sistema viejo)
+═══════════════════════════════════════════════════════════════
+
+Su base NO esta en esta PC. Esta en BananaHosting (la nube).
+Hay DOS formas de migrar. Elija la mas facil para usted.
+
+
+█████████████████████████████████████████████████████████████
+  OPCION A — RECOMENDADA (mas facil, sin acceso remoto)
+█████████████████████████████████████████████████████████████
+
+  1) Entrar a cPanel de BananaHosting
+     (usuario que le dio el hosting)
+
+  2) Abrir phpMyAdmin
+
+  3) Clic en la base: tnrclham_bd (o el nombre que tenga)
+
+  4) Pestaña EXPORTAR / Export
+     - Formato: SQL
+     - Marcar "Guardar como archivo"
+     - Exportar (descarga un .sql, puede ser grande)
+
+  5) En su PC, abrir XAMPP → Start MySQL
+
+  6) http://localhost/phpmyadmin
+     - Crear base: tnrclham_bd
+     - Importar el archivo .sql que descargo
+     - Esperar a que termine
+
+  7) En scripts\migrar_config.php dejar:
+       mysql_host => 'localhost'
+       mysql_user, mysql_pass, mysql_db (como en BananaHosting)
+
+  8) Activar en C:\xampp\php\php.ini:
+       extension=pdo_pgsql
+       extension=pgsql
+
+  9) Doble clic: PROBAR-CONEXION.bat
+     Debe decir [OK] y mostrar cantidad de pacientes/productos
+
+  10) Doble clic: MIGRAR-PILOTO.bat
+
+  11) Probar app en http://localhost:3000
+
+  12) Si todo bien: MIGRAR-COMPLETO.bat
+
+
+█████████████████████████████████████████████████████████████
+  OPCION B — Directo desde BananaHosting (sin descargar SQL)
+█████████████████████████████████████████████████████████████
+
+  Requiere que BananaHosting permita conexion MySQL desde su PC.
+
+  1) cPanel → "Acceso remoto a MySQL" / Remote MySQL
+     Agregar su IP publica (Google: "cual es mi ip")
+
+  2) cPanel → Bases de datos MySQL
+     Anotar:
+       - Host del servidor (ej: srv12.bananahosting.com)
+       - Nombre base, usuario, contraseña
+     NO use "localhost" en migrar_config.php
+
+  3) Editar scripts\migrar_config.php:
+       mysql_host => 'srvXX.bananahosting.com'  (el host real)
+       mysql_db, mysql_user, mysql_pass
+
+  4) Activar pdo_pgsql en php.ini (ver opcion A paso 8)
+
+  5) PROBAR-CONEXION.bat → si OK → MIGRAR-PILOTO.bat
+
+
+═══════════════════════════════════════════════════════════════
+  QUE COPIA EL SCRIPT AL SISTEMA NUEVO
+═══════════════════════════════════════════════════════════════
+
+  Colonias, productos, servicios, pacientes, antecedentes,
+  proveedores, inventario (stock).
+
+  NO copia: usuarios/login, consultas viejas, facturas viejas.
+
+
+═══════════════════════════════════════════════════════════════
+  AYUDA RAPIDA
+═══════════════════════════════════════════════════════════════
+
+  Error "Can't connect" + BananaHosting
+    → Use OPCION A (exportar SQL) o active Acceso remoto MySQL
+
+  Error "pdo_pgsql"
+    → Edite C:\xampp\php\php.ini y active extension=pdo_pgsql
+
+  No encuentra pacientes en la app
+    → Ejecute migracion piloto primero y busque por cedula
+
+═══════════════════════════════════════════════════════════════
