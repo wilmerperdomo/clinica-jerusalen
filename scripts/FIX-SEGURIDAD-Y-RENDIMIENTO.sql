@@ -75,7 +75,13 @@ CREATE POLICY "facturas_delete_admin" ON facturas
   FOR DELETE TO authenticated
   USING (fn_usuario_es_admin());
 
-ALTER VIEW v_facturas_auditoria SET (security_invoker = on);
+-- La vista de auditoría respeta la RLS de quien consulta (solo si existe)
+DO $$
+BEGIN
+  IF to_regclass('public.v_facturas_auditoria') IS NOT NULL THEN
+    EXECUTE 'ALTER VIEW v_facturas_auditoria SET (security_invoker = on)';
+  END IF;
+END $$;
 
 DROP POLICY IF EXISTS "sistema_inserta_auditoria" ON facturas_auditoria;
 DROP POLICY IF EXISTS "auditoria_insert_admin" ON facturas_auditoria;
@@ -83,16 +89,37 @@ CREATE POLICY "auditoria_insert_admin" ON facturas_auditoria
   FOR INSERT TO authenticated
   WITH CHECK (fn_usuario_es_admin());
 
--- ════════ 054 — Índices de rendimiento ════════
+-- ════════ 054 — Índices de rendimiento (robusto) ════════
+-- Crea cada índice SOLO si la tabla y la columna existen.
 
-CREATE INDEX IF NOT EXISTS idx_caja_sesiones_sucursal ON caja_sesiones(sucursal_id);
-CREATE INDEX IF NOT EXISTS idx_caja_sesiones_estado   ON caja_sesiones(estado);
-CREATE INDEX IF NOT EXISTS idx_citas_sucursal ON citas(sucursal_id);
-CREATE INDEX IF NOT EXISTS idx_citas_estado   ON citas(estado);
-CREATE INDEX IF NOT EXISTS idx_cxc_paciente ON cxc(paciente_id);
-CREATE INDEX IF NOT EXISTS idx_cotizaciones_paciente ON cotizaciones(paciente_id);
-CREATE INDEX IF NOT EXISTS idx_consulta_documentos_paciente ON consulta_documentos(paciente_id);
-CREATE INDEX IF NOT EXISTS idx_facturas_sucursal ON facturas(sucursal_id);
-CREATE INDEX IF NOT EXISTS idx_facturas_paciente ON facturas(paciente_id);
-CREATE INDEX IF NOT EXISTS idx_facturas_fecha    ON facturas(fecha);
-CREATE INDEX IF NOT EXISTS idx_caja_movimientos_sesion ON caja_movimientos(sesion_id);
+DO $$
+DECLARE
+  d_str  TEXT;
+  parts  TEXT[];
+  defs   TEXT[] := ARRAY[
+    'idx_caja_sesiones_sucursal|caja_sesiones|sucursal_id',
+    'idx_caja_sesiones_estado|caja_sesiones|estado',
+    'idx_citas_sucursal|citas|sucursal_id',
+    'idx_citas_estado|citas|estado',
+    'idx_cxc_paciente|cxc|paciente_id',
+    'idx_cotizaciones_paciente|cotizaciones|paciente_id',
+    'idx_consulta_documentos_paciente|consulta_documentos|paciente_id',
+    'idx_facturas_sucursal|facturas|sucursal_id',
+    'idx_facturas_paciente|facturas|paciente_id',
+    'idx_facturas_fecha|facturas|fecha',
+    'idx_caja_movimientos_sesion|caja_movimientos|sesion_id'
+  ];
+BEGIN
+  FOREACH d_str IN ARRAY defs LOOP
+    parts := string_to_array(d_str, '|');
+    IF to_regclass('public.' || parts[2]) IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name   = parts[2]
+           AND column_name  = parts[3]
+       ) THEN
+      EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (%I)', parts[1], parts[2], parts[3]);
+    END IF;
+  END LOOP;
+END $$;
