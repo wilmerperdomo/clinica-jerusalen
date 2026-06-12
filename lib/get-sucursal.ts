@@ -61,6 +61,12 @@ async function primeraSucursal(supabase: Awaited<ReturnType<typeof createClient>
 
 export async function getPerfilSucursal(): Promise<PerfilSucursal> {
   const supabase = await createClient()
+  if (!supabase) {
+    return {
+      userId: '', sucursalId: null, sucursalNombre: 'Sin sucursal',
+      rolId: null, esSuperAdmin: false, esAdmin: false, nombre: '', rol: '',
+    }
+  }
 
   const vacio: PerfilSucursal = {
     userId: '', sucursalId: null, sucursalNombre: 'Sin sucursal',
@@ -87,7 +93,7 @@ export async function getPerfilSucursal(): Promise<PerfilSucursal> {
 
   p = pSesion
 
-  if (!p) {
+  if (!p && adminClient) {
     const { data: pAdmin } = await adminClient
       .from('perfiles')
       .select('nombre, apellido, sucursal_id, rol_id')
@@ -98,12 +104,14 @@ export async function getPerfilSucursal(): Promise<PerfilSucursal> {
 
   if (!p) {
     await repararPerfilUsuario(user.id, user.email ?? undefined)
-    const { data: pNuevo } = await adminClient
-      .from('perfiles')
-      .select('nombre, apellido, sucursal_id, rol_id')
-      .eq('id', user.id)
-      .maybeSingle()
-    p = pNuevo
+    if (adminClient) {
+      const { data: pNuevo } = await adminClient
+        .from('perfiles')
+        .select('nombre, apellido, sucursal_id, rol_id')
+        .eq('id', user.id)
+        .maybeSingle()
+      p = pNuevo
+    }
   }
 
   let rolId = p?.rol_id != null ? Number(p.rol_id) : null
@@ -172,10 +180,13 @@ export async function getPerfilSucursal(): Promise<PerfilSucursal> {
 
 async function listarClavesModulos(): Promise<string[]> {
   const supabase = await createClient()
+  if (!supabase) return MODULOS_SUPER_ADMIN_FALLBACK
   const adminClient = createAdminClient()
 
-  let { data: mods } = await adminClient.from('modulos').select('clave').eq('activo', true)
-  if (!mods?.length) {
+  let { data: mods } = adminClient
+    ? await adminClient.from('modulos').select('clave').eq('activo', true)
+    : { data: null as { clave: string }[] | null }
+  if (!mods?.length && supabase) {
     const { data: modsSesion } = await supabase.from('modulos').select('clave').eq('activo', true)
     mods = modsSesion
   }
@@ -201,14 +212,17 @@ export async function getModulosPermitidos(
   if (!rolId) return []
 
   const supabase = await createClient()
+  if (!supabase) return []
   const adminClient = createAdminClient()
 
-  let { data: perms } = await adminClient
-    .from('rol_permisos')
-    .select('permisos(accion, modulos(clave))')
-    .eq('rol_id', rolId)
+  let { data: perms } = adminClient
+    ? await adminClient
+        .from('rol_permisos')
+        .select('permisos(accion, modulos(clave))')
+        .eq('rol_id', rolId)
+    : { data: null as { permisos?: { accion?: string; modulos?: { clave?: string } } }[] | null }
 
-  if (!perms?.length) {
+  if (!perms?.length && supabase) {
     const { data: permsSesion } = await supabase
       .from('rol_permisos')
       .select('permisos(accion, modulos(clave))')
