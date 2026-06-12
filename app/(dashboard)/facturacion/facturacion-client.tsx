@@ -14,6 +14,7 @@ import {
   ShieldAlert, History, Lock,
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
+import { acumularPuntosPorFactura } from '@/lib/fidelidad-puntos'
 
 /* ══════════════════ TIPOS ════════════════════════════════════ */
 interface ItemFactura {
@@ -248,6 +249,11 @@ export default function FacturacionClient({
       }
 
       if (!nf) throw new Error(ultimoError ?? 'No se pudo reservar un número de factura único')
+
+      if (nf.paciente_id) {
+        const resPts = await acumularPuntosPorFactura(supabase, nf.id)
+        if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+      }
 
       setCorrs(prev => {
         const existing = prev.find(c => c.sucursal_id === form.sucursal_id)

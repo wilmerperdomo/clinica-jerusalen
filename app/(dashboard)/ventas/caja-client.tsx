@@ -8,7 +8,7 @@ import {
   RefreshCw, CreditCard, Banknote, ArrowRightLeft, Clock,
   CheckCircle2, AlertCircle, Receipt, Users, ChevronDown,
   LockKeyhole, Unlock, Wallet, FileText, Printer, FlaskConical,
-  Stethoscope, Pill, ClipboardList, BadgeCheck, type LucideIcon,
+  Stethoscope, Pill, ClipboardList, BadgeCheck, Gift, type LucideIcon,
 } from 'lucide-react'
 import {
   calcularDescuentoEdad,
@@ -41,6 +41,15 @@ import { useVentaRapida } from './hooks/use-venta-rapida'
 import { columnaConsultaDetalle, valorConsultaDetalle } from '@/lib/consulta-detalle-utils'
 import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
 import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
+import {
+  acumularPuntosPorFactura,
+  canjearPuntosLaboratorio,
+  LEMPIRAS_POR_PUNTO,
+  maxPuntosCanjeables,
+  obtenerSaldoPuntos,
+  VALOR_LEMPIRA_POR_PUNTO,
+  valorLempirasDePuntos,
+} from '@/lib/fidelidad-puntos'
 
 /* ─── tipos ─────────────────────────────────────────────── */
 interface Concepto { id: number; nombre: string; tipo: 'INGRESO' | 'EGRESO'; categoria?: string }
@@ -192,7 +201,7 @@ export default function CajaClient({
   })
   const [labGrupoCobro, setLabGrupoCobro] = useState<LabGrupoCobro | null>(null)
   const [labCobroExitoso, setLabCobroExitoso] = useState<{
-    total: number; pacNombre: string; formaPago: string
+    total: number; pacNombre: string; formaPago: string; puntosCanjeados?: number
     paciente?: { nombre: string; apellido1: string; celular?: string; telefono?: string; correo?: string }
   } | null>(null)
   const [labFacturaCtx, setLabFacturaCtx] = useState<{
@@ -203,6 +212,9 @@ export default function CajaClient({
   const [formCobroLab, setFormCobroLab] = useState({
     forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0',
   })
+  const [puntosFidelidadLab, setPuntosFidelidadLab] = useState(0)
+  const [usarPuntosLab, setUsarPuntosLab] = useState(false)
+  const [puntosCanjearLab, setPuntosCanjearLab] = useState('')
   const [loadingCobro, setLoadingCobro] = useState(false)
   const [modalCobro,     setModalCobro]     = useState(false)
   const [cobroExitoso, setCobroExitoso] = useState<{
@@ -1010,7 +1022,7 @@ export default function CajaClient({
     setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: false })
   }
 
-  function abrirModalCobroLab(grupo: LabGrupoCobro) {
+  async function abrirModalCobroLab(grupo: LabGrupoCobro) {
     const det = calcularDescuentoEdad(grupo.paciente?.fecha_nac, grupo.total, sucursalActiva)
     const factInit = datosFacturaDesdePaciente(grupo.paciente as ConsultaPorCobrar['paciente'])
     setLabGrupoCobro(grupo)
@@ -1020,6 +1032,11 @@ export default function CajaClient({
       nota: '',
       descuento_pct: String(det.pctDesc || 0),
     })
+    setUsarPuntosLab(false)
+    setPuntosCanjearLab('')
+    setPuntosFidelidadLab(
+      grupo.pacienteId ? await obtenerSaldoPuntos(supabase, grupo.pacienteId) : 0,
+    )
     setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: false })
     setLabCobroExitoso(null)
     setLabFacturaCtx(null)
@@ -1037,6 +1054,9 @@ export default function CajaClient({
     setFactImpresa(null)
     setFormCobroLab({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0' })
     setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: false })
+    setPuntosFidelidadLab(0)
+    setUsarPuntosLab(false)
+    setPuntosCanjearLab('')
   }
 
   async function procesarCobroLab() {
@@ -1085,9 +1105,32 @@ export default function CajaClient({
 
     const pct = valDescuento.pctAplicar
     const valDesc = subtotal * (pct / 100)
-    const total = subtotal - valDesc
-    if (total <= 0) {
-      alert('El monto a cobrar debe ser mayor a cero')
+    const totalDespuesEdad = subtotal - valDesc
+
+    let puntosCanje = 0
+    let descPuntos = 0
+    if (usarPuntosLab && labGrupoCobro.pacienteId) {
+      if (formCobroLab.forma_pago === 'CREDITO') {
+        alert('Los puntos de fidelidad no aplican con forma de pago Crédito.')
+        setGuardandoCobroLab(false)
+        return
+      }
+      const maxPt = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad)
+      const solicitados = puntosCanjearLab.trim() === ''
+        ? maxPt
+        : Math.min(maxPt, Math.max(0, Math.floor(Number(puntosCanjearLab) || 0)))
+      if (solicitados <= 0) {
+        alert('No hay puntos suficientes o el monto a canjear no es válido.')
+        setGuardandoCobroLab(false)
+        return
+      }
+      puntosCanje = solicitados
+      descPuntos = valorLempirasDePuntos(puntosCanje)
+    }
+
+    const total = totalDespuesEdad - descPuntos
+    if (total < 0) {
+      alert('El descuento por puntos excede el total a cobrar')
       setGuardandoCobroLab(false)
       return
     }
@@ -1096,17 +1139,41 @@ export default function CajaClient({
     const pacNombre = labGrupoCobro.pacienteNombre
     const hora = new Date().toTimeString().slice(0, 5)
 
+    if (puntosCanje > 0 && labGrupoCobro.pacienteId) {
+      const canje = await canjearPuntosLaboratorio(sb, {
+        pacienteId: labGrupoCobro.pacienteId,
+        puntos: puntosCanje,
+        nota: `Laboratorio directo — ${labGrupoCobro.ordenes.map(o => o.no_analisis).join(', ')}`,
+      })
+      if (!canje.ok) {
+        alert('Error al canjear puntos: ' + (canje.error ?? 'desconocido'))
+        setGuardandoCobroLab(false)
+        return
+      }
+    }
+
+    const notaPuntos = puntosCanje > 0
+      ? `Canje ${puntosCanje} pt fidelidad (L ${descPuntos.toFixed(2)})`
+      : null
+    const motivoDesc = descPuntos > 0
+      ? (detDesc.motivo ? `${detDesc.motivo} + Puntos Fidelidad` : 'Puntos de Fidelidad')
+      : (detDesc.motivo || null)
+
     const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id: sesion.id,
       cajero_id: userId,
       tipo: 'INGRESO',
       concepto: `Laboratorio — ${pacNombre}`,
       monto: total,
+      monto_bruto: subtotal,
+      descuento_pct: pct,
+      descuento_monto: valDesc + descPuntos,
+      descuento_motivo: motivoDesc,
       fecha: fechaHoy,
       hora,
       forma_pago: formCobroLab.forma_pago,
       referencia_pago: formCobroLab.referencia || null,
-      nota: formCobroLab.nota || null,
+      nota: formCobroLab.nota || notaPuntos,
       paciente_id: labGrupoCobro.pacienteId || null,
     })
     if (errMov) {
@@ -1156,11 +1223,12 @@ export default function CajaClient({
     }
 
     setLabPorCobrar(prev => prev.filter(g => g.grupoId !== labGrupoCobro.grupoId))
-    setLabFacturaCtx({ grupo: labGrupoCobro, subtotal, valDesc })
+    setLabFacturaCtx({ grupo: labGrupoCobro, subtotal, valDesc: valDesc + descPuntos })
     setLabCobroExitoso({
       total,
       pacNombre,
       formaPago: formCobroLab.forma_pago,
+      puntosCanjeados: puntosCanje > 0 ? puntosCanje : undefined,
       paciente: pac ? {
         nombre: pac.nombre ?? '',
         apellido1: pac.apellido1 ?? '',
@@ -1406,6 +1474,11 @@ export default function CajaClient({
       return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
     })
 
+    if (fact.paciente_id) {
+      const resPts = await acumularPuntosPorFactura(sb2, fact.id)
+      if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+    }
+
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresa(impresa)
     setGuardandoFact(false)
@@ -1511,6 +1584,11 @@ export default function CajaClient({
       }
       return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
     })
+
+    if (fact.paciente_id) {
+      const resPts = await acumularPuntosPorFactura(sb2, fact.id)
+      if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+    }
 
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresa(impresa)
@@ -1623,6 +1701,11 @@ export default function CajaClient({
       }
       return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
     })
+
+    if (fact.paciente_id) {
+      const resPts = await acumularPuntosPorFactura(sb2, fact.id)
+      if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+    }
 
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresaVentaRapida(impresa)
@@ -2589,8 +2672,18 @@ export default function CajaClient({
           ? Number(formCobroLab.descuento_pct) || detLabDesc.pctDesc
           : Math.min(Number(formCobroLab.descuento_pct) || detLabDesc.pctDesc, detLabDesc.pctDesc)
         const valDescInput = labGrupoCobro.total * (pctInput / 100)
-        const totalFinal = labGrupoCobro.total - valDescInput
+        const totalDespuesEdad = labGrupoCobro.total - valDescInput
+        const maxPtCanje = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad)
+        const ptsAplicar = usarPuntosLab && labGrupoCobro.pacienteId
+          ? (puntosCanjearLab.trim() === ''
+            ? maxPtCanje
+            : Math.min(maxPtCanje, Math.max(0, Math.floor(Number(puntosCanjearLab) || 0))))
+          : 0
+        const descPuntosUI = valorLempirasDePuntos(ptsAplicar)
+        const totalFinal = totalDespuesEdad - descPuntosUI
         const pac = labGrupoCobro.paciente
+        const puedeUsarPuntos = Boolean(labGrupoCobro.pacienteId) && puntosFidelidadLab > 0
+          && formCobroLab.forma_pago !== 'CREDITO'
         return (
           <Modal
             title="Cobro de Laboratorio"
@@ -2608,11 +2701,13 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={procesarCobroLab}
-                  disabled={guardandoCobroLab || totalFinal <= 0 || !sesion}
+                  disabled={guardandoCobroLab || totalFinal < 0 || !sesion}
                   className="flex items-center justify-center gap-2 px-6 py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm transition"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {guardandoCobroLab ? 'Procesando...' : `Cobrar L ${totalFinal.toFixed(2)}`}
+                  {guardandoCobroLab ? 'Procesando...' : totalFinal <= 0
+                    ? 'Confirmar cobro (L 0.00)'
+                    : `Cobrar L ${totalFinal.toFixed(2)}`}
                 </button>
               </div>
             )}
@@ -2673,16 +2768,86 @@ export default function CajaClient({
                   )}
                 </div>
 
+                {puedeUsarPuntos && (
+                  <div className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4 shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center shrink-0">
+                        <Gift className="w-5 h-5 text-violet-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-violet-900">Programa de Fidelidad</p>
+                        <p className="text-xs text-violet-700 mt-0.5">
+                          Saldo: <strong>{puntosFidelidadLab} punto{puntosFidelidadLab !== 1 ? 's' : ''}</strong>
+                          {' '}(equivale a L {valorLempirasDePuntos(puntosFidelidadLab).toFixed(2)} en laboratorio)
+                        </p>
+                        <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={usarPuntosLab}
+                            onChange={e => {
+                              setUsarPuntosLab(e.target.checked)
+                              if (!e.target.checked) setPuntosCanjearLab('')
+                            }}
+                            className="w-4 h-4 rounded border-violet-300 text-violet-600 focus:ring-violet-400"
+                          />
+                          <span className="text-sm font-medium text-gray-800">
+                            ¿Desea usar sus puntos en este cobro?
+                          </span>
+                        </label>
+                        {usarPuntosLab && (
+                          <div className="mt-3 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                max={maxPtCanje}
+                                value={puntosCanjearLab}
+                                onChange={e => setPuntosCanjearLab(e.target.value)}
+                                placeholder={String(maxPtCanje)}
+                                className="w-24 border border-violet-200 rounded-lg px-3 py-2 text-sm text-center font-semibold focus:ring-2 focus:ring-violet-300 outline-none"
+                              />
+                              <span className="text-xs text-gray-600">
+                                pts (máx. {maxPtCanje}) = <strong>L {descPuntosUI.toFixed(2)}</strong>
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-500 leading-relaxed">
+                              Acumula 1 punto por cada L {LEMPIRAS_POR_PUNTO} en facturas.
+                              {' '}1 punto = L {VALOR_LEMPIRA_POR_PUNTO.toFixed(2)} de descuento en laboratorio.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {labGrupoCobro.pacienteId && puntosFidelidadLab === 0 && (
+                  <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                    <Gift className="w-3.5 h-3.5 inline mr-1 text-gray-400" />
+                    Sin puntos de fidelidad. Acumule 1 punto por cada L {LEMPIRAS_POR_PUNTO} facturados.
+                  </div>
+                )}
+
                 <div className="rounded-2xl border-2 border-cyan-200 bg-gradient-to-br from-cyan-50 to-white p-5 text-center shadow-sm">
                   <p className="text-xs font-bold text-cyan-700 uppercase tracking-wider">Total a cobrar</p>
                   <p className="text-4xl sm:text-5xl font-black text-cyan-800 mt-1 tabular-nums">L {totalFinal.toFixed(2)}</p>
-                  <p className="text-xs text-gray-500 mt-2">Subtotal L {labGrupoCobro.total.toFixed(2)}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Subtotal L {labGrupoCobro.total.toFixed(2)}
+                    {valDescInput > 0 && <> · Desc. edad L {valDescInput.toFixed(2)}</>}
+                    {descPuntosUI > 0 && <> · Puntos L {descPuntosUI.toFixed(2)}</>}
+                  </p>
                 </div>
 
                 <CobroFormaPagoPanel
                   accent="cyan"
                   formaPago={formCobroLab.forma_pago}
-                  onChange={fp => setFormCobroLab(p => ({ ...p, forma_pago: fp }))}
+                  onChange={fp => {
+                    setFormCobroLab(p => ({ ...p, forma_pago: fp }))
+                    if (fp === 'CREDITO') {
+                      setUsarPuntosLab(false)
+                      setPuntosCanjearLab('')
+                    }
+                  }}
                   referencia={formCobroLab.referencia}
                   onReferencia={v => setFormCobroLab(p => ({ ...p, referencia: v }))}
                 />
@@ -2714,6 +2879,11 @@ export default function CajaClient({
                 <p className="text-lg font-bold text-gray-900">¡Cobro de laboratorio registrado!</p>
                 <p className="text-2xl font-extrabold text-cyan-700 mt-1">L {labCobroExitoso.total.toFixed(2)}</p>
                 <p className="text-sm text-gray-500 mt-1">{labCobroExitoso.pacNombre}</p>
+                {labCobroExitoso.puntosCanjeados != null && labCobroExitoso.puntosCanjeados > 0 && (
+                  <p className="text-xs text-violet-700 mt-2 font-medium">
+                    Se canjearon {labCobroExitoso.puntosCanjeados} punto{labCobroExitoso.puntosCanjeados !== 1 ? 's' : ''} de fidelidad
+                  </p>
+                )}
                 {labCobroExitoso.formaPago === 'CREDITO' && (
                   <p className="text-xs text-amber-700 mt-2">Cuenta por cobrar creada. La orden ya está en cola de laboratorio.</p>
                 )}
