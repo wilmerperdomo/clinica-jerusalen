@@ -99,6 +99,10 @@ export async function crearUsuario(data: {
     p_sucursal_id: data.sucursal_id,
   })
 
+  if (!serviceKey) {
+    await supabase.rpc('fn_confirmar_usuario_auth', { p_user_id: nuevoUserId })
+  }
+
   if (rpcError) {
     const faltaSql = rpcError.message?.includes('fn_admin_upsert_perfil')
       || rpcError.code === 'PGRST202'

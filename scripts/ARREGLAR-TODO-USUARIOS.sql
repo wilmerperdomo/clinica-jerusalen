@@ -84,8 +84,17 @@ RETURNS TABLE (
   ORDER BY p.created_at DESC NULLS LAST;
 $$;
 
+CREATE OR REPLACE FUNCTION fn_confirmar_usuario_auth(p_user_id UUID)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, auth AS $$
+BEGIN
+  IF NOT fn_usuario_es_admin() THEN RAISE EXCEPTION 'No autorizado'; END IF;
+  UPDATE auth.users SET email_confirmed_at = COALESCE(email_confirmed_at, NOW()) WHERE id = p_user_id;
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION fn_listar_perfiles_admin() TO authenticated;
 GRANT EXECUTE ON FUNCTION fn_admin_upsert_perfil(UUID,TEXT,TEXT,TEXT,TEXT,INTEGER,INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION fn_confirmar_usuario_auth(UUID) TO authenticated;
 
 -- G) VERIFICACIÓN FINAL
 SELECT u.email,

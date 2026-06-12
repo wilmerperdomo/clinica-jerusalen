@@ -75,12 +75,22 @@ export async function repararPerfilUsuario(userId: string, email?: string) {
   const supabase = await createClient()
   if (!supabase) return { ok: false as const, error: 'Sin sesión' }
 
+  const { data: perfil } = await supabase
+    .from('perfiles')
+    .select('rol_id, activo')
+    .eq('id', userId)
+    .maybeSingle()
+
   const { error } = await supabase.rpc('fn_sync_perfil_roles_login')
-  if (error) {
+  if (error && !perfil?.rol_id) {
     return {
       ok: false as const,
-      error: 'Ejecute scripts/REPARAR-USUARIOS-CREADOS.sql en Supabase SQL Editor',
+      error: 'Su cuenta no tiene perfil asignado. Pida al administrador que ejecute scripts/REPARAR-USUARIO-EMAIL.sql en Supabase.',
     }
+  }
+
+  if (perfil && perfil.activo === false) {
+    return { ok: false as const, error: 'Su cuenta está desactivada. Contacte al administrador.' }
   }
 
   return { ok: true as const }
