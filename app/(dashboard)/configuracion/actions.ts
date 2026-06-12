@@ -1,8 +1,9 @@
 'use server'
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { getPublicSupabaseEnv, getServiceRoleKey } from '@/lib/supabase/env'
+import { createClient } from '@/lib/supabase/server'
 
 export async function crearUsuario(data: {
   email:       string
@@ -27,38 +28,68 @@ export async function crearUsuario(data: {
   }
 
   const env = getPublicSupabaseEnv()
-  const serviceKey = getServiceRoleKey()
-  if (!env || !serviceKey) {
-    return { error: 'Falta SUPABASE_SERVICE_ROLE_KEY en Vercel → Settings → Environment Variables' }
+  if (!env) {
+    return { error: 'Falta configuración de Supabase' }
   }
 
-  const admin = createClient(env.url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
+  const supabase = await createClient()
+  if (!supabase) {
+    return { error: 'Sesión inválida. Vuelva a iniciar sesión.' }
+  }
 
-  const { data: rolNuevo } = await admin.from('roles').select('es_super_admin').eq('id', data.rol_id).maybeSingle()
+  const { data: rolNuevo } = await supabase
+    .from('roles')
+    .select('es_super_admin')
+    .eq('id', data.rol_id)
+    .maybeSingle()
+
   if (rolNuevo?.es_super_admin) {
     return { error: 'No se puede asignar el rol Super Administrador desde este formulario.' }
   }
 
-  // 1. Crear usuario en Supabase Auth
-  const { data: authData, error: authError } = await admin.auth.admin.createUser({
-    email:         data.email,
-    password:      data.password,
-    email_confirm: true,           // confirmar directo, sin email de verificación
-    user_metadata: {
-      nombre:   data.nombre,
-      apellido: data.apellido,
-    },
-  })
+  const serviceKey = getServiceRoleKey()
+  let nuevoUserId: string | undefined
 
-  if (authError) return { error: authError.message }
+  if (serviceKey) {
+    const admin = createSupabaseClient(env.url, serviceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
 
-  const nuevoUserId = authData.user?.id
-  if (!nuevoUserId) return { error: 'No se pudo obtener el ID del usuario creado' }
+    const { data: authData, error: authError } = await admin.auth.admin.createUser({
+      email:         data.email,
+      password:      data.password,
+      email_confirm: true,
+      user_metadata: { nombre: data.nombre, apellido: data.apellido },
+    })
 
-  // 2. Crear o actualizar su perfil
-  const { error: perfilError } = await admin.from('perfiles').upsert({
+    if (authError) return { error: authError.message }
+    nuevoUserId = authData.user?.id
+  } else {
+    const anon = createSupabaseClient(env.url, env.anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+
+    const { data: authData, error: authError } = await anon.auth.signUp({
+      email:    data.email,
+      password: data.password,
+      options:  { data: { nombre: data.nombre, apellido: data.apellido } },
+    })
+
+    if (authError) return { error: authError.message }
+
+    nuevoUserId = authData.user?.id
+    if (!nuevoUserId) {
+      return {
+        error: 'No se pudo crear el usuario. En Supabase → Authentication → Providers → Email, desactive "Confirm email" e intente de nuevo.',
+      }
+    }
+  }
+
+  if (!nuevoUserId) {
+    return { error: 'No se pudo obtener el ID del usuario creado' }
+  }
+
+  const { error: perfilError } = await supabase.from('perfiles').upsert({
     id:          nuevoUserId,
     nombre:      data.nombre,
     apellido:    data.apellido,
@@ -69,15 +100,23 @@ export async function crearUsuario(data: {
     activo:      true,
   })
 
-  if (perfilError) return { error: perfilError.message }
+  if (perfilError) {
+    return {
+      error: serviceKey
+        ? perfilError.message
+        : `Usuario creado en Auth pero error en perfil: ${perfilError.message}. Verifique que usted es Super Administrador.`,
+    }
+  }
 
-  // 3. Vincular rol en perfil_roles (usado por permisos del sidebar)
-  await admin.from('perfil_roles').delete().eq('perfil_id', nuevoUserId)
-  const { error: rolError } = await admin.from('perfil_roles').insert({
+  await supabase.from('perfil_roles').delete().eq('perfil_id', nuevoUserId)
+  const { error: rolError } = await supabase.from('perfil_roles').insert({
     perfil_id: nuevoUserId,
     rol_id:    data.rol_id,
   })
-  if (rolError) return { error: 'Usuario creado pero error al asignar rol: ' + rolError.message }
+
+  if (rolError) {
+    return { error: 'Usuario creado pero error al asignar rol: ' + rolError.message }
+  }
 
   return { ok: true, userId: nuevoUserId }
 }
