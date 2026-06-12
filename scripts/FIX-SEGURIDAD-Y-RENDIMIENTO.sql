@@ -89,6 +89,12 @@ CREATE POLICY "auditoria_insert_admin" ON facturas_auditoria
   FOR INSERT TO authenticated
   WITH CHECK (fn_usuario_es_admin());
 
+-- ════════ 055 — Reparar esquema de cxc (cobros a crédito) ════════
+-- En bases legacy cxc no tenía estas columnas y los cobros a CRÉDITO
+-- fallaban al crear la cuenta por cobrar.
+ALTER TABLE cxc ADD COLUMN IF NOT EXISTS paciente_id INTEGER;
+ALTER TABLE cxc ADD COLUMN IF NOT EXISTS sucursal_id INTEGER;
+
 -- ════════ 054 — Índices de rendimiento (robusto) ════════
 -- Crea cada índice SOLO si la tabla y la columna existen.
 
