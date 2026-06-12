@@ -25,6 +25,12 @@ import {
   esRolEnfermeria, filtroSucursalColaConsultas, puedeAtenderConsulta,
   type PacienteConsulta,
 } from '@/lib/consultas-utils'
+import {
+  columnaConsultaDetalle,
+  filasInsertConsultaDetalle,
+  normalizarConsultaDetalle,
+  valorConsultaDetalle,
+} from '@/lib/consulta-detalle-utils'
 
 /* ─── tipos locales ─────────────────────────────────────── */
 type Paciente = PacienteConsulta & { id: number; codigo: string }
@@ -492,8 +498,9 @@ export default function ConsultasClient({
       dias_reposo: String(data.dias_reposo || 0), nota: data.nota || '',
     })
 
-    const { data: detalle } = await sb.from('consulta_detalle').select('*').eq('consulta_id', id)
-    setRecetaItems(detalle ?? [])
+    const { data: detalle } = await sb.from('consulta_detalle').select('*')
+      .eq(columnaConsultaDetalle(), valorConsultaDetalle(id))
+    setRecetaItems((detalle ?? []).map(r => normalizarConsultaDetalle(r as Record<string, unknown>)))
     setBuscarMed('')
     setMedForm({ no_producto: '', indicacion: '', cant: 1, via: 'Oral' })
 
@@ -602,22 +609,16 @@ export default function ConsultasClient({
       return false
     }
 
-    const { error: errDelMed } = await sb.from('consulta_detalle').delete().eq('consulta_id', consultaActual.id)
+    const { error: errDelMed } = await sb.from('consulta_detalle').delete()
+      .eq(columnaConsultaDetalle(), valorConsultaDetalle(consultaActual.id))
     if (errDelMed) {
       if (!silencioso) alert('Error al actualizar medicamentos: ' + errDelMed.message)
       return false
     }
     if (recetaItems.length > 0) {
+      const { data: { user } } = await sb.auth.getUser()
       const { error: errMed } = await sb.from('consulta_detalle').insert(
-        recetaItems.map(it => ({
-          consulta_id: consultaActual.id,
-          paciente_id: consultaActual.paciente_id,
-          producto_id: it.producto_id ?? null,
-          no_producto: it.no_producto,
-          indicacion:  it.indicacion,
-          cant:        it.cant,
-          via:         it.via,
-        }))
+        filasInsertConsultaDetalle(consultaActual.id, recetaItems, user?.id),
       )
       if (errMed) {
         if (!silencioso) alert('Error al guardar medicamentos: ' + errMed.message)
@@ -814,8 +815,9 @@ export default function ConsultasClient({
       impresion: consulta.impresion || '',
       dias_reposo: String(consulta.dias_reposo ?? 0),
     }))
-    const { data: detalle } = await sb.from('consulta_detalle').select('*').eq('consulta_id', c.id)
-    setRecetaItems(detalle ?? [])
+    const { data: detalle } = await sb.from('consulta_detalle').select('*')
+      .eq(columnaConsultaDetalle(), valorConsultaDetalle(c.id))
+    setRecetaItems((detalle ?? []).map(r => normalizarConsultaDetalle(r as Record<string, unknown>)))
     setModalDocs(true)
   }
 

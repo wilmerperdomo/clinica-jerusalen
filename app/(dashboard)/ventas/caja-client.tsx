@@ -38,6 +38,7 @@ import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhos
 import { Modal } from './components/caja-modal'
 import VentaRapidaModal from './components/venta-rapida-modal'
 import { useVentaRapida } from './hooks/use-venta-rapida'
+import { columnaConsultaDetalle, valorConsultaDetalle } from '@/lib/consulta-detalle-utils'
 import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
 import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
 
@@ -701,8 +702,8 @@ export default function CajaClient({
       // Medicamentos recetados — unir con productos para obtener precio_venta
       const { data: dets } = await sb
         .from('consulta_detalle')
-        .select('id, no_producto, cant, producto_id, productos(precio_venta)')
-        .eq('consulta_id', c.id)
+        .select('id, no_producto, cant, id_producto, productos(precio_venta)')
+        .eq(columnaConsultaDetalle(), valorConsultaDetalle(c.id))
 
       // Análisis de laboratorio — id_consulta es TEXT en esa tabla
       const { data: labs, error: errLabs } = await sb
@@ -715,11 +716,13 @@ export default function CajaClient({
       const { data: extra }   = await sb.from('consultas').select('tipo_nombre, consulta_valor, cobrado, doctor_id, sucursal_id').eq('id', c.id).single()
 
       // aplanar precio_venta del join anidado
-      const detsFlat = (dets ?? []).map((d: any) => ({
+      const detsFlat = (dets ?? []).map((d: Record<string, unknown> & {
+        productos?: { precio_venta?: number }
+      }) => ({
         id:          d.id,
         no_producto: d.no_producto,
         cant:        d.cant,
-        producto_id: d.producto_id,
+        producto_id: d.id_producto ?? d.producto_id,
         precio_venta: d.productos?.precio_venta ?? 0,
       }))
 
