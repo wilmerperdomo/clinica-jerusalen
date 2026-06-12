@@ -148,6 +148,7 @@ export default function LaboratorioClient({
 
   function registrarPacienteSeleccionado(p: PacienteBusqueda) {
     const row = p as PacienteLab
+    setFormOrden(prev => ({ ...prev, paciente_id: String(row.id) }))
     setPacientesExtra(prev => {
       if (prev.some(x => x.id === row.id) || pacientes.some(x => x.id === row.id)) return prev
       return [...prev, row]
@@ -207,10 +208,30 @@ export default function LaboratorioClient({
   }
 
   async function crearOrden() {
-    if (!formOrden.paciente_id || formOrden.pruebas_ids.length === 0) return
-    const paciente = pacientesMerged.find(p => String(p.id) === formOrden.paciente_id)
+    if (!formOrden.paciente_id || formOrden.pruebas_ids.length === 0) {
+      alert('Seleccione un paciente y al menos una prueba de laboratorio')
+      return
+    }
+
+    let paciente = pacientesMerged.find(p => String(p.id) === formOrden.paciente_id)
+    if (!paciente?.id) {
+      const { data: pDb } = await supabase
+        .from('pacientes')
+        .select('id, codigo, tipo, nombre, apellido1, apellido2, nombre_empresa, fecha_nac, lista_id, celular, telefono, genero')
+        .eq('id', Number(formOrden.paciente_id))
+        .maybeSingle()
+      if (pDb) {
+        paciente = pDb as PacienteLab
+        setPacientesExtra(prev => prev.some(x => x.id === pDb.id) ? prev : [...prev, paciente!])
+      }
+    }
     if (!paciente?.id) {
       alert('Seleccione un paciente válido')
+      return
+    }
+
+    if (!sucursalId) {
+      alert('Su usuario no tiene sucursal asignada. Asigne una en Configuración → Usuarios.')
       return
     }
 
@@ -236,7 +257,7 @@ export default function LaboratorioClient({
         estado_lab: 'PENDIENTE_COBRO',
         lab_grupo_id: grupoId,
         fecha_prometida: computeFechaPrometida(fechaHoy, prueba.dias ?? 1),
-        sucursal_id: sucursalId ?? null,
+        sucursal_id: sucursalId,
       }]
     })
 
@@ -246,7 +267,13 @@ export default function LaboratorioClient({
     }
 
     setGuardandoOrden(true)
-    const { error } = await supabase.from('consulta_analisis').insert(filas)
+    let error = (await supabase.from('consulta_analisis').insert(filas)).error
+
+    if (error && /lab_grupo_id|fecha_prometida|estado_lab|paciente_id|sucursal_id|schema cache/i.test(error.message)) {
+      const filasBase = filas.map(({ lab_grupo_id, fecha_prometida, estado_lab, paciente_id, sucursal_id, ...rest }) => rest)
+      error = (await supabase.from('consulta_analisis').insert(filasBase)).error
+    }
+
     setGuardandoOrden(false)
 
     if (error) {

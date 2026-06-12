@@ -165,11 +165,8 @@ export default function BuscarPacienteInput({
     setCacheSel(p)
     setQ('')
     setAbierto(false)
-    if (onSelectPaciente) {
-      onSelectPaciente(p)
-    } else {
-      onChange(String(p.id))
-    }
+    onChange(String(p.id))
+    onSelectPaciente?.(p)
   }
 
 
