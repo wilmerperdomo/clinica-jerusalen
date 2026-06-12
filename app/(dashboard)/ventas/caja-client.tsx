@@ -32,6 +32,7 @@ import {
   validarItemsVentaCatalogo,
   MAX_CANTIDAD_VENTA,
 } from '@/lib/caja-seguridad'
+import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 
 /* ─── tipos ─────────────────────────────────────────────── */
@@ -482,7 +483,7 @@ export default function CajaClient({
 
       const totalNeto = movimientos.reduce((s, m) => s + m.monto, 0)
 
-      const { data: movs, error: errMovs } = await supabase.from('caja_movimientos').insert(movimientos).select()
+      const { data: movs, error: errMovs } = await insertarMovimientosCaja(supabase, movimientos)
       if (errMovs) return alert('Error al registrar cobro: ' + errMovs.message)
 
       const { error: errSesUpd } = await supabase.from('caja_sesiones').update({
@@ -520,7 +521,7 @@ export default function CajaClient({
 
     const montoNeto = parseFloat(Number(formMov.monto).toFixed(2))
 
-    const { error: errMov } = await supabase.from('caja_movimientos').insert({
+    const { error: errMov } = await insertarMovimientoCaja(supabase, {
       sesion_id:        sesion!.id,
       sucursal_id:      sesion!.sucursal_id,
       tipo:             'EGRESO',
@@ -679,7 +680,7 @@ export default function CajaClient({
     const pacNombre = cxcActual.paciente_nombre
       || `${cxcActual.paciente?.nombre || ''} ${cxcActual.paciente?.apellido1 || ''}`.trim()
 
-    const { error: errMov } = await supabase.from('caja_movimientos').insert({
+    const { error: errMov } = await insertarMovimientoCaja(supabase, {
       sesion_id:       sesion.id,
       sucursal_id:     sesion.sucursal_id,
       cajero_id:       userId,
@@ -1034,7 +1035,7 @@ export default function CajaClient({
     }
 
     if (movimientos.length > 0) {
-      const { error: errMovs } = await sb.from('caja_movimientos').insert(movimientos)
+      const { error: errMovs } = await insertarMovimientosCaja(sb, movimientos, false)
       if (errMovs) {
         alert('Error al registrar cobro: ' + errMovs.message)
         setGuardandoCobro(false)
@@ -1249,7 +1250,7 @@ export default function CajaClient({
     const pacNombre = labGrupoCobro.pacienteNombre
     const hora = new Date().toTimeString().slice(0, 5)
 
-    const { error: errMov } = await sb.from('caja_movimientos').insert({
+    const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id: sesion.id,
       cajero_id: userId,
       tipo: 'INGRESO',
@@ -1386,7 +1387,7 @@ export default function CajaClient({
     const hora = new Date().toTimeString().slice(0, 5)
     const cajeroNombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
-    const { error: errMov } = await sb.from('caja_movimientos').insert({
+    const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id:       sesion.id,
       sucursal_id:     sesion.sucursal_id,
       cajero_id:       userId,
