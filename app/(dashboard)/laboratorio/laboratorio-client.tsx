@@ -44,6 +44,7 @@ interface Props {
   preciosLista: Record<number, Record<number, number>>
   productos: { id: number; nombre: string; codigo?: string }[]
   sucursalId?: number
+  esSuperAdmin?: boolean
 }
 
 type TabLab = 'cola' | 'ordenes' | 'catalogo' | 'reportes'
@@ -68,7 +69,7 @@ function sb() {
 export default function LaboratorioClient({
   ordenes: init, pruebas, pacientes, fechaHoy,
   rangos, panelCampos: initPanelCampos, insumos: initInsumos,
-  preciosLista, productos, sucursalId,
+  preciosLista, productos, sucursalId, esSuperAdmin = false,
 }: Props) {
   const [tab, setTab] = useState<TabLab>('cola')
   const [filtroLab, setFiltroLab] = useState<FiltroLab>('procesar')
@@ -91,6 +92,7 @@ export default function LaboratorioClient({
   const [insumosPrueba, setInsumosPrueba] = useState<{ producto_id: string; cantidad: string }[]>([])
   const [pruebasCatalogo, setPruebasCatalogo] = useState<PruebaLab[]>(pruebas)
   const [loadingCatalogo, setLoadingCatalogo] = useState(false)
+  const [guardandoOrden, setGuardandoOrden] = useState(false)
   const [pacientesExtra, setPacientesExtra] = useState<PacienteLab[]>([])
 
   const supabase = useMemo(() => sb(), [])
@@ -159,13 +161,19 @@ export default function LaboratorioClient({
   }, [])
 
   const recargar = useCallback(async () => {
-    const { data } = await supabase
+    let q = supabase
       .from('consulta_analisis')
       .select('*, resultados:lab_resultados(*)')
       .gte('fecha', hace7)
       .order('id', { ascending: false })
+    if (!esSuperAdmin && sucursalId) q = q.eq('sucursal_id', sucursalId)
+    const { data, error } = await q
+    if (error) {
+      console.warn('recargar lab:', error.message)
+      return
+    }
     if (data) setOrdenes(data as OrdenLab[])
-  }, [supabase, hace7])
+  }, [supabase, hace7, sucursalId, esSuperAdmin])
 
   const recargarRef = useRef(recargar)
   recargarRef.current = recargar
@@ -201,17 +209,21 @@ export default function LaboratorioClient({
   async function crearOrden() {
     if (!formOrden.paciente_id || formOrden.pruebas_ids.length === 0) return
     const paciente = pacientesMerged.find(p => String(p.id) === formOrden.paciente_id)
-    const grupoId = crypto.randomUUID()
-    const now = new Date()
-    const hora = now.toTimeString().slice(0, 8)
+    if (!paciente?.id) {
+      alert('Seleccione un paciente válido')
+      return
+    }
 
-    await Promise.all(formOrden.pruebas_ids.map(pid => {
+    const grupoId = crypto.randomUUID()
+    const hora = new Date().toTimeString().slice(0, 8)
+    const filas = formOrden.pruebas_ids.flatMap(pid => {
       const prueba = pruebasCatalogo.find(p => p.id === pid)
-      if (!prueba) return Promise.resolve()
+      if (!prueba) return []
       const precio = precioPruebaParaPaciente(pid, formOrden.paciente_id)
-      return supabase.from('consulta_analisis').insert({
-        id_cliente: String(paciente?.id),
-        paciente_id: paciente?.id,
+      return [{
+        id_consulta: null as null,
+        id_cliente: String(paciente.id),
+        paciente_id: paciente.id,
         id_analisis: String(pid),
         no_analisis: prueba.nombre,
         valor: precio,
@@ -225,10 +237,31 @@ export default function LaboratorioClient({
         lab_grupo_id: grupoId,
         fecha_prometida: computeFechaPrometida(fechaHoy, prueba.dias ?? 1),
         sucursal_id: sucursalId ?? null,
-      })
-    }))
+      }]
+    })
+
+    if (filas.length === 0) {
+      alert('No se encontraron pruebas válidas en el catálogo')
+      return
+    }
+
+    setGuardandoOrden(true)
+    const { error } = await supabase.from('consulta_analisis').insert(filas)
+    setGuardandoOrden(false)
+
+    if (error) {
+      alert('Error al generar la orden: ' + error.message)
+      return
+    }
+
     cerrarModalOrden()
-    startTransition(() => { recargar() })
+    setTab('cola')
+    setFiltroLab('todas')
+    await recargar()
+    alert(
+      `Orden generada correctamente (${filas.length} prueba${filas.length !== 1 ? 's' : ''}).\n\n` +
+      'Aparece en la columna «Sin cobrar» del Kanban. Cobre en Ventas → Lab por cobrar.',
+    )
   }
 
   function claveCampo(ordenId: number, campoId?: number | null) {
@@ -476,18 +509,25 @@ export default function LaboratorioClient({
     setFormOrden({ paciente_id: '', pruebas_ids: [] })
   }
 
-  const gruposFiltrados = useMemo(() => {
+  const gruposBusqueda = useMemo(() => {
     const q = busqueda.toLowerCase()
-    return grupos.filter(g => {
+    if (!q) return grupos
+    return grupos.filter(g =>
+      g.pacienteNombre.toLowerCase().includes(q) ||
+      g.pruebas.some(p => p.toLowerCase().includes(q)) ||
+      g.pacienteCodigo.toLowerCase().includes(q),
+    )
+  }, [grupos, busqueda])
+
+  const gruposFiltrados = useMemo(() => {
+    return gruposBusqueda.filter(g => {
       if (filtroLab === 'procesar' && !['PAGADO', 'EN_PROCESO', 'BORRADOR', 'RESULTADO_LISTO', 'VALIDADO'].includes(g.estado)) return false
       if (filtroLab === 'pendiente_cobro' && g.estado !== 'PENDIENTE_COBRO') return false
       if (filtroLab === 'completadas' && g.estado !== 'ENTREGADO') return false
       if (filtroLab === 'atrasadas' && !g.atrasado) return false
-      return !q || g.pacienteNombre.toLowerCase().includes(q) ||
-        g.pruebas.some(p => p.toLowerCase().includes(q)) ||
-        g.pacienteCodigo.toLowerCase().includes(q)
+      return true
     })
-  }, [grupos, filtroLab, busqueda])
+  }, [gruposBusqueda, filtroLab])
 
   const fechaLabel = new Date(fechaHoy + 'T12:00:00').toLocaleDateString('es-HN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -549,7 +589,7 @@ export default function LaboratorioClient({
 
             {tab === 'cola' && (
               <LabKanban
-                grupos={gruposFiltrados}
+                grupos={gruposBusqueda}
                 onAbrirGrupo={abrirGrupo}
                 onEtiquetas={g => imprimirEtiquetasTubo(g, pruebasCatalogo)}
                 onMoverGrupo={moverGrupo}
@@ -763,9 +803,11 @@ export default function LaboratorioClient({
                 </div>
                 <div className="flex gap-2">
                   <button onClick={cerrarModalOrden} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
-                  <button onClick={crearOrden} disabled={!formOrden.paciente_id || formOrden.pruebas_ids.length === 0}
+                  <button onClick={crearOrden}
+                    disabled={guardandoOrden || !formOrden.paciente_id || formOrden.pruebas_ids.length === 0}
                     className="px-5 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 shadow-sm">
-                    <FlaskConical className="w-4 h-4 inline mr-1" /> Generar Orden
+                    <FlaskConical className="w-4 h-4 inline mr-1" />
+                    {guardandoOrden ? 'Generando…' : 'Generar Orden'}
                   </button>
                 </div>
               </div>

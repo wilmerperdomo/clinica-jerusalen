@@ -93,6 +93,7 @@ export default async function LaboratorioPage() {
       preciosLista={preciosLista}
       productos={productos || []}
       sucursalId={sucursalId ?? undefined}
+      esSuperAdmin={esSuperAdmin}
     />
   )
 }
