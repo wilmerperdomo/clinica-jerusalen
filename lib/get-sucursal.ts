@@ -17,7 +17,7 @@ const MODULOS_SUPER_ADMIN_FALLBACK = [
   'dashboard', 'agenda', 'notificaciones', 'consultas', 'pacientes', 'laboratorio', 'expediente',
   'ventas', 'compras', 'cxp', 'proveedores', 'inventario', 'productos',
   'membresias', 'cotizaciones', 'facturacion', 'reportes', 'planilla', 'control-financiero',
-  'configuracion',
+  'usuarios', 'configuracion',
 ]
 
 type RolData = { nombre: string; es_admin: boolean; es_super_admin?: boolean }

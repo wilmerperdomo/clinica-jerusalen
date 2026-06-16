@@ -63,6 +63,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
         sinPerfil={sinPerfil}
 
+        esAdmin={perfilAuth.esAdmin}
+
       />
 
       <div className="flex-1 md:ml-[260px] flex flex-col min-h-screen min-w-0 w-full overflow-x-hidden">

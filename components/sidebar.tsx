@@ -65,10 +65,11 @@ interface SidebarProps {
   sucursalNombre?:   string
   modulosPermitidos?: string[]
   sinPerfil?:        boolean
+  esAdmin?:          boolean
 }
 
 export default function Sidebar({
-  userName = 'Usuario', userRole = '', userInitials, sucursalNombre, modulosPermitidos, sinPerfil,
+  userName = 'Usuario', userRole = '', userInitials, sucursalNombre, modulosPermitidos, sinPerfil, esAdmin,
 }: SidebarProps) {
   const pathname = usePathname()
   const router   = useRouter()
@@ -184,6 +185,9 @@ export default function Sidebar({
 
       {/* ---- Footer ---- */}
       <div className="border-t border-slate-100 px-3 py-3 space-y-0.5 flex-shrink-0">
+        {(esAdmin || puedeVer('/usuarios')) && (
+          <NavLink href="/usuarios" label="Usuarios" icon={Users} active={isActive('/usuarios')} />
+        )}
         {puedeVer('/configuracion') && (
           <NavLink href="/configuracion" label="Configuración" icon={Settings} active={isActive('/configuracion')} />
         )}

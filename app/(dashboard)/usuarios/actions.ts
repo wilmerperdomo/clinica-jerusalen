@@ -5,6 +5,21 @@ import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { getPublicSupabaseEnv, getServiceRoleKey } from '@/lib/supabase/env'
 import { createClient } from '@/lib/supabase/server'
 
+/** Traduce errores crudos de Supabase Auth a mensajes accionables en español. */
+function traducirErrorAuth(msg: string): string {
+  const m = msg.toLowerCase()
+  if (m.includes('rate limit') || (m.includes('email') && m.includes('limit'))) {
+    return 'Límite de correos de Supabase alcanzado. Para crear usuarios sin enviar correos, configure SUPABASE_SERVICE_ROLE_KEY en el entorno (Vercel → Variables) o desactive "Confirm email" en Supabase → Authentication → Providers → Email. El límite se reinicia en ~1 hora.'
+  }
+  if (m.includes('already registered') || m.includes('already been registered') || m.includes('user already')) {
+    return 'Ya existe un usuario con ese correo electrónico.'
+  }
+  if (m.includes('password')) {
+    return 'La contraseña no cumple los requisitos (mínimo 6 caracteres).'
+  }
+  return msg
+}
+
 export async function crearUsuario(data: {
   email:       string
   password:    string
@@ -15,9 +30,9 @@ export async function crearUsuario(data: {
   rol_id?:     number
   sucursal_id?: number
 }) {
-  const { esSuperAdmin, userId: adminUserId } = await getPerfilSucursal()
-  if (!adminUserId || !esSuperAdmin) {
-    return { error: 'No autorizado. Solo el Super Administrador puede crear usuarios.' }
+  const { esAdmin, esSuperAdmin, userId: adminUserId } = await getPerfilSucursal()
+  if (!adminUserId || !esAdmin) {
+    return { error: 'No autorizado. Solo administradores pueden crear usuarios.' }
   }
 
   if (!data.rol_id) {
@@ -43,7 +58,8 @@ export async function crearUsuario(data: {
     .eq('id', data.rol_id)
     .maybeSingle()
 
-  if (rolNuevo?.es_super_admin) {
+  // Solo un super admin puede crear otro super admin
+  if (rolNuevo?.es_super_admin && !esSuperAdmin) {
     return { error: 'No se puede asignar el rol Super Administrador desde este formulario.' }
   }
 
@@ -51,6 +67,7 @@ export async function crearUsuario(data: {
   let nuevoUserId: string | undefined
 
   if (serviceKey) {
+    // Camino recomendado: crea el usuario ya confirmado y NO envía ningún correo.
     const admin = createSupabaseClient(env.url, serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
@@ -62,9 +79,10 @@ export async function crearUsuario(data: {
       user_metadata: { nombre: data.nombre, apellido: data.apellido },
     })
 
-    if (authError) return { error: authError.message }
+    if (authError) return { error: traducirErrorAuth(authError.message) }
     nuevoUserId = authData.user?.id
   } else {
+    // Sin service key: signUp envía correo de confirmación (sujeto a rate limit).
     const anon = createSupabaseClient(env.url, env.anonKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
@@ -75,12 +93,12 @@ export async function crearUsuario(data: {
       options:  { data: { nombre: data.nombre, apellido: data.apellido } },
     })
 
-    if (authError) return { error: authError.message }
+    if (authError) return { error: traducirErrorAuth(authError.message) }
 
     nuevoUserId = authData.user?.id
     if (!nuevoUserId) {
       return {
-        error: 'No se pudo crear el usuario. En Supabase → Authentication → Providers → Email, desactive "Confirm email" e intente de nuevo.',
+        error: 'No se pudo crear el usuario. Configure SUPABASE_SERVICE_ROLE_KEY o desactive "Confirm email" en Supabase → Authentication → Providers → Email.',
       }
     }
   }
