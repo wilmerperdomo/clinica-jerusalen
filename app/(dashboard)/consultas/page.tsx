@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { getPerfilSucursal, rolesTienenPermisoAccion } from '@/lib/get-sucursal'
 import {
   PACIENTE_CONSULTA_SELECT,
   esRolMedico,
@@ -44,6 +44,13 @@ export default async function ConsultasPage() {
       puedeAtenderConsulta(nombre, { rolIdsMedico }),
     ) ||
     rolIdsUsuario.some(id => rolIdsMedico.includes(id))
+
+  // Crear "Nueva Consulta" es configurable por rol desde Configuración → Permisos.
+  // Admin / Super Admin siempre pueden.
+  const puedeCrearConsulta =
+    esSuperAdmin ||
+    esAdmin ||
+    (await rolesTienenPermisoAccion(rolIdsUsuario, 'consultas', 'crear'))
 
   const hoy = new Date().toISOString().split('T')[0]
 
@@ -177,6 +184,7 @@ export default async function ConsultasPage() {
       rolId={rolId}
       rolIdsMedico={rolIdsMedico}
       puedeAtenderConsulta={puedeAtender}
+      puedeCrearConsulta={puedeCrearConsulta}
       rolesUsuario={rolesUsuario}
       membresiasMap={membresiasMap}
       listasMap={listasMap}

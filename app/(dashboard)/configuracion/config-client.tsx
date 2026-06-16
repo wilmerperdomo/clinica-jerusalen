@@ -531,6 +531,46 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
           return rolPermisos.some(rp => rp.rol_id === rolId && rp.permiso_id === perm.id)
         }
 
+        // helper genérico: ¿el rol tiene permiso de una acción concreta?
+        function tienePermAccion(rolId: number, moduloClave: string, accion: string) {
+          const mod = modulos.find(m => m.clave === moduloClave)
+          if (!mod) return false
+          const perm = permisos.find(p => p.modulo_id === mod.id && p.accion === accion)
+          if (!perm) return false
+          return rolPermisos.some(rp => rp.rol_id === rolId && rp.permiso_id === perm.id)
+        }
+
+        async function togglePermAccion(rolId: number, moduloClave: string, accion: string, activo: boolean) {
+          if (!esSuperAdmin) return alert('Solo el Super Administrador puede modificar permisos.')
+          const mod = modulos.find(m => m.clave === moduloClave)
+          if (!mod) return
+          const perm = permisos.find(p => p.modulo_id === mod.id && p.accion === accion)
+          if (!perm) return alert('Falta el permiso en la base de datos. Aplica la migración de permisos.')
+          setGuardandoPerm(true)
+          const supabase = sb()
+          if (activo) {
+            const { error } = await supabase.from('rol_permisos').delete()
+              .eq('rol_id', rolId).eq('permiso_id', perm.id)
+            if (error) { alert('Error: ' + error.message); setGuardandoPerm(false); return }
+            setRolPermisos(prev => prev.filter(rp => !(rp.rol_id === rolId && rp.permiso_id === perm.id)))
+          } else {
+            const { error } = await supabase.from('rol_permisos').insert({ rol_id: rolId, permiso_id: perm.id })
+            if (error) { alert('Error: ' + error.message); setGuardandoPerm(false); return }
+            setRolPermisos(prev => [...prev, { rol_id: rolId, permiso_id: perm.id }])
+          }
+          setGuardandoPerm(false)
+        }
+
+        // acciones especiales configurables (más allá de la simple visibilidad del módulo)
+        const accionesEspeciales = [
+          {
+            modulo: 'consultas',
+            accion: 'crear',
+            label: 'Crear nueva consulta',
+            desc: 'Permite iniciar consultas sin cita previa (botón "Nueva Consulta").',
+          },
+        ]
+
         async function togglePerm(rolId: number, moduloClave: string, activo: boolean) {
           if (!esSuperAdmin) return alert('Solo el Super Administrador puede modificar permisos.')
           const mod  = modulos.find(m => m.clave === moduloClave)
@@ -633,6 +673,71 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
               <span className="flex items-center gap-1.5"><Unlock className="w-3.5 h-3.5 text-green-500" /> Con acceso</span>
               <span className="flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-gray-400" /> Sin acceso</span>
               <span className="text-gray-400">· Los cambios se guardan automáticamente al hacer clic.</span>
+            </div>
+
+            {/* ── Acciones especiales por rol ── */}
+            <div className="pt-2">
+              <p className="font-semibold text-gray-800">Acciones especiales</p>
+              <p className="text-xs text-gray-500 mt-0.5 mb-3">
+                Permisos finos dentro de un módulo. El Super Administrador y el Administrador siempre los tienen.
+              </p>
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="text-left px-4 py-3 font-medium text-gray-700 w-64">Acción</th>
+                      {rolSuper && (
+                        <th className="text-center px-3 py-3 min-w-[100px]">
+                          <span className="text-xs font-semibold text-blue-700">👑 {rolSuper.nombre}</span>
+                        </th>
+                      )}
+                      {rolesEdit.map(r => (
+                        <th key={r.id} className="text-center px-3 py-3 min-w-[100px]">
+                          <span className="text-xs font-semibold" style={{ color: r.color }}>{r.nombre}</span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {accionesEspeciales.map(a => (
+                      <tr key={`${a.modulo}.${a.accion}`} className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-gray-800 text-sm">{a.label}</p>
+                          <p className="text-[11px] text-gray-500">{a.desc}</p>
+                        </td>
+                        {rolSuper && (
+                          <td className="text-center px-3 py-3">
+                            <CheckCircle2 className="w-5 h-5 text-blue-500 mx-auto" />
+                          </td>
+                        )}
+                        {rolesEdit.map(r => {
+                          const activo = r.es_admin || tienePermAccion(r.id, a.modulo, a.accion)
+                          const fijo = r.es_admin
+                          return (
+                            <td key={r.id} className="text-center px-3 py-3">
+                              {fijo ? (
+                                <CheckCircle2 className="w-5 h-5 text-blue-400 mx-auto" />
+                              ) : (
+                                <button
+                                  onClick={() => togglePermAccion(r.id, a.modulo, a.accion, activo)}
+                                  className={`w-9 h-9 rounded-lg border-2 flex items-center justify-center mx-auto transition-all ${
+                                    activo
+                                      ? 'bg-green-50 border-green-400 text-green-600 hover:bg-green-100'
+                                      : 'bg-gray-50 border-gray-200 text-gray-300 hover:border-gray-300'
+                                  }`}
+                                  title={activo ? 'Quitar permiso' : 'Dar permiso'}
+                                >
+                                  {activo ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                                </button>
+                              )}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )

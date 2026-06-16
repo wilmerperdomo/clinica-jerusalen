@@ -98,6 +98,7 @@ interface Props {
   rolId?: number | null
   rolIdsMedico?: number[]
   puedeAtenderConsulta?: boolean
+  puedeCrearConsulta?: boolean
   rolesUsuario?: string[]
   membresiasMap?: MembresiasMap
   listasMap?: Record<number, string>
@@ -130,6 +131,7 @@ export default function ConsultasClient({
   rolId = null,
   rolIdsMedico = [],
   puedeAtenderConsulta: puedeAtenderInicial = false,
+  puedeCrearConsulta = false,
   rolesUsuario = [],
   membresiasMap = {},
   listasMap = {},
@@ -393,6 +395,10 @@ export default function ConsultasClient({
 
   /* ── nueva consulta directa ── */
   async function crearConsulta() {
+    if (!puedeCrearConsulta) {
+      alert('No tienes permiso para crear consultas. Solicítalo al administrador.')
+      return
+    }
     if (!formConsulta.paciente_id) return
     if (!formConsulta.servicio_id) {
       alert('Seleccione el tipo de consulta del catálogo de servicios.')
@@ -1010,19 +1016,21 @@ export default function ConsultasClient({
                 className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/15 hover:bg-white/25 border border-white/20 text-white flex items-center gap-1.5">
                 <Calendar className="w-4 h-4" /> Agendar
               </button>
-              <button onClick={() => {
-                const def = serviciosConsulta[0]
-                setFormConsulta({
-                  paciente_id: '', servicio_id: def ? String(def.id) : '',
-                  fecha: fechaOperativa, hora: '',
-                  sucursal_id: String(sucursalOperativa ?? sucursales[0]?.id ?? ''),
-                })
-                setModalConsulta(true)
-              }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg hover:scale-[1.02] transition"
-                style={{ backgroundColor: BRAND.gold, color: BRAND.navy }}>
-                <Plus className="w-4 h-4" /> Nueva Consulta
-              </button>
+              {puedeCrearConsulta && (
+                <button onClick={() => {
+                  const def = serviciosConsulta[0]
+                  setFormConsulta({
+                    paciente_id: '', servicio_id: def ? String(def.id) : '',
+                    fecha: fechaOperativa, hora: '',
+                    sucursal_id: String(sucursalOperativa ?? sucursales[0]?.id ?? ''),
+                  })
+                  setModalConsulta(true)
+                }}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg hover:scale-[1.02] transition"
+                  style={{ backgroundColor: BRAND.gold, color: BRAND.navy }}>
+                  <Plus className="w-4 h-4" /> Nueva Consulta
+                </button>
+              )}
             </div>
           </div>
 

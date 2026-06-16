@@ -235,6 +235,49 @@ export async function getModulosPermitidos(
   return claves
 }
 
+/**
+ * ¿Alguno de los roles indicados tiene un permiso de acción concreto
+ * (p. ej. modulo='consultas', accion='crear')?
+ * Los admins / super admins se resuelven en la página que llama.
+ */
+export async function rolesTienenPermisoAccion(
+  rolIds: number[],
+  moduloClave: string,
+  accion: string,
+): Promise<boolean> {
+  const ids = rolIds.filter(id => id != null)
+  if (ids.length === 0) return false
+
+  const supabase = await createClient()
+  if (!supabase) return false
+  const adminClient = createAdminClient()
+  const client = adminClient ?? supabase
+
+  const { data: mod } = await client
+    .from('modulos')
+    .select('id')
+    .eq('clave', moduloClave)
+    .maybeSingle()
+  if (!mod) return false
+
+  const { data: perm } = await client
+    .from('permisos')
+    .select('id')
+    .eq('modulo_id', mod.id)
+    .eq('accion', accion)
+    .maybeSingle()
+  if (!perm) return false
+
+  const { data } = await client
+    .from('rol_permisos')
+    .select('rol_id')
+    .eq('permiso_id', perm.id)
+    .in('rol_id', ids)
+    .limit(1)
+
+  return !!(data && data.length > 0)
+}
+
 export function buscarSucursal<T extends { id: number }>(
   sucursales: T[],
   sucursalId: number | null | undefined,
