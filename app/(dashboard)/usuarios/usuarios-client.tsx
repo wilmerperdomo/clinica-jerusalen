@@ -146,17 +146,21 @@ export default function UsuariosClient({
 
   async function guardarUsuario() {
     if (!perfilActual) return
-    const { error } = await supabase.from('perfiles').update({
+    const payload: Record<string, unknown> = {
       nombre:      formUsuario.nombre      || null,
       apellido:    formUsuario.apellido    || null,
       cedula:      formUsuario.cedula      || null,
       telefono:    formUsuario.telefono    || null,
-      rol_id:      formUsuario.rol_id      ? Number(formUsuario.rol_id)      : null,
       sucursal_id: formUsuario.sucursal_id ? Number(formUsuario.sucursal_id) : null,
       activo:      formUsuario.activo,
       sueldo_fijo: formUsuario.sueldo_fijo ? Number(formUsuario.sueldo_fijo) : 0,
       tipo_nomina: formUsuario.tipo_nomina || 'NINGUNO',
-    }).eq('id', perfilActual.id)
+    }
+    // Solo el super administrador puede cambiar el rol
+    if (esSuperAdmin) {
+      payload.rol_id = formUsuario.rol_id ? Number(formUsuario.rol_id) : null
+    }
+    const { error } = await supabase.from('perfiles').update(payload).eq('id', perfilActual.id)
     if (error) return alert('Error al guardar usuario: ' + error.message)
     setModalUsuario(false)
     startTransition(() => { recargar() })
@@ -191,7 +195,7 @@ export default function UsuariosClient({
       return
     }
     if (!formNuevo.sucursal_id) { setErrorNuevo('Debes asignar una sucursal al usuario'); return }
-    if (!formNuevo.rol_id)      { setErrorNuevo('Debes asignar un rol al usuario'); return }
+    if (esSuperAdmin && !formNuevo.rol_id) { setErrorNuevo('Debes asignar un rol al usuario'); return }
 
     setCreando(true)
     const result = await crearUsuario({
@@ -299,10 +303,12 @@ export default function UsuariosClient({
                             <span className="text-xs text-red-500 bg-red-50 px-2 py-0.5 rounded-full">Sin rol</span>
                           )}
                         </div>
-                        <button onClick={() => abrirModalRoles(p)}
-                          className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline">
-                          <Shield className="w-3 h-3" /> Asignar roles
-                        </button>
+                        {esSuperAdmin && (
+                          <button onClick={() => abrirModalRoles(p)}
+                            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 hover:underline">
+                            <Shield className="w-3 h-3" /> Asignar roles
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">
@@ -381,20 +387,31 @@ export default function UsuariosClient({
                   className="w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Rol *</label>
-              <select value={formUsuario.rol_id}
-                onChange={e => {
-                  const rolId = e.target.value
-                  setFormUsuario(p => ({ ...p, rol_id: rolId, tipo_nomina: p.tipo_nomina === 'NINGUNO' ? inferirTipoNomina(rolId) : p.tipo_nomina }))
-                }}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                <option value="">— Sin rol —</option>
-                {roles.filter(r => esSuperAdmin || !r.es_super_admin).map(r => (
-                  <option key={r.id} value={r.id}>{r.es_admin ? '👑 ' : ''}{r.nombre}</option>
-                ))}
-              </select>
-            </div>
+            {esSuperAdmin ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol *</label>
+                <select value={formUsuario.rol_id}
+                  onChange={e => {
+                    const rolId = e.target.value
+                    setFormUsuario(p => ({ ...p, rol_id: rolId, tipo_nomina: p.tipo_nomina === 'NINGUNO' ? inferirTipoNomina(rolId) : p.tipo_nomina }))
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                  <option value="">— Sin rol —</option>
+                  {roles.map(r => (
+                    <option key={r.id} value={r.id}>{r.es_admin ? '👑 ' : ''}{r.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+                <div className="w-full border rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-600 flex items-center gap-2">
+                  <Shield className="w-3.5 h-3.5 text-gray-400" />
+                  {roles.find(r => r.id === Number(formUsuario.rol_id))?.nombre || 'Sin rol'}
+                  <span className="ml-auto text-xs text-gray-400">Solo el super administrador asigna roles</span>
+                </div>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Sucursal</label>
               <select value={formUsuario.sucursal_id} onChange={e => setFormUsuario(p => ({ ...p, sucursal_id: e.target.value }))}
@@ -515,16 +532,23 @@ export default function UsuariosClient({
                   className="w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Rol <span className="text-red-500">*</span></label>
-              <select value={formNuevo.rol_id} onChange={e => setFormNuevo(p => ({ ...p, rol_id: e.target.value }))}
-                className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${!formNuevo.rol_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
-                <option value="">— Selecciona rol —</option>
-                {roles.filter(r => !r.es_super_admin).map(r => (
-                  <option key={r.id} value={r.id}>{r.es_admin ? '👑 ' : ''}{r.nombre}</option>
-                ))}
-              </select>
-            </div>
+            {esSuperAdmin ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol <span className="text-red-500">*</span></label>
+                <select value={formNuevo.rol_id} onChange={e => setFormNuevo(p => ({ ...p, rol_id: e.target.value }))}
+                  className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${!formNuevo.rol_id ? 'border-red-300 bg-red-50' : 'border-gray-300'}`}>
+                  <option value="">— Selecciona rol —</option>
+                  {roles.filter(r => !r.es_super_admin).map(r => (
+                    <option key={r.id} value={r.id}>{r.es_admin ? '👑 ' : ''}{r.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 bg-amber-50 text-amber-800 text-xs rounded-lg px-3 py-2 border border-amber-200">
+                <Shield className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>El usuario se creará <strong>sin rol</strong>. Un super administrador deberá asignarle el rol para que tenga acceso.</span>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Sucursal <span className="text-red-500">*</span></label>
               <select value={formNuevo.sucursal_id} onChange={e => setFormNuevo(p => ({ ...p, sucursal_id: e.target.value }))}

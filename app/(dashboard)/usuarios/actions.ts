@@ -35,7 +35,11 @@ export async function crearUsuario(data: {
     return { error: 'No autorizado. Solo administradores pueden crear usuarios.' }
   }
 
-  if (!data.rol_id) {
+  // Solo el super administrador puede asignar roles. Un admin normal crea
+  // el usuario sin rol; el super admin se lo asigna después.
+  const rolIdFinal = esSuperAdmin ? data.rol_id : null
+
+  if (esSuperAdmin && !rolIdFinal) {
     return { error: 'Debes asignar un rol al usuario.' }
   }
   if (!data.sucursal_id) {
@@ -52,15 +56,17 @@ export async function crearUsuario(data: {
     return { error: 'Sesión inválida. Vuelva a iniciar sesión.' }
   }
 
-  const { data: rolNuevo } = await supabase
-    .from('roles')
-    .select('es_super_admin')
-    .eq('id', data.rol_id)
-    .maybeSingle()
+  if (rolIdFinal) {
+    const { data: rolNuevo } = await supabase
+      .from('roles')
+      .select('es_super_admin')
+      .eq('id', rolIdFinal)
+      .maybeSingle()
 
-  // Solo un super admin puede crear otro super admin
-  if (rolNuevo?.es_super_admin && !esSuperAdmin) {
-    return { error: 'No se puede asignar el rol Super Administrador desde este formulario.' }
+    // Solo un super admin puede crear otro super admin
+    if (rolNuevo?.es_super_admin && !esSuperAdmin) {
+      return { error: 'No se puede asignar el rol Super Administrador desde este formulario.' }
+    }
   }
 
   const serviceKey = getServiceRoleKey()
@@ -113,7 +119,7 @@ export async function crearUsuario(data: {
     p_apellido:    data.apellido,
     p_cedula:      data.cedula      || null,
     p_telefono:    data.telefono    || null,
-    p_rol_id:      data.rol_id,
+    p_rol_id:      rolIdFinal,
     p_sucursal_id: data.sucursal_id,
   })
 
