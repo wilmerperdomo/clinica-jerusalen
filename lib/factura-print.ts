@@ -167,9 +167,10 @@ export function htmlFacturaTermica(f: FacturaPrintData, opts: FacturaPrintOption
   }
   @page { size: 80mm auto; margin: 2mm 1.5mm; }
   body {
-    font-family: 'Courier New', Courier, monospace;
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
     font-size: 11px;
-    font-weight: bold;
+    font-weight: 600;
+    letter-spacing: 0.1px;
     color: #000;
     width: 76mm;
     max-width: 76mm;
