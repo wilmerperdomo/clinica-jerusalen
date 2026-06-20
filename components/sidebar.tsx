@@ -8,7 +8,7 @@ import {
   Package, Pill, ShoppingCart, Receipt, CreditCard,
   BarChart3, Settings, LogOut, ChevronRight,
   FileText, BookOpen, CalendarDays, Building2, KeyRound, X, Eye, EyeOff, Truck, Menu, Bell, ClipboardList,
-  Wallet, PieChart, MapPin,
+  Wallet, PieChart, MapPin, ShieldCheck,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, getInitials } from '@/lib/utils'
@@ -66,10 +66,11 @@ interface SidebarProps {
   modulosPermitidos?: string[]
   sinPerfil?:        boolean
   esAdmin?:          boolean
+  esSuperAdmin?:     boolean
 }
 
 export default function Sidebar({
-  userName = 'Usuario', userRole = '', userInitials, sucursalNombre, modulosPermitidos, sinPerfil, esAdmin,
+  userName = 'Usuario', userRole = '', userInitials, sucursalNombre, modulosPermitidos, sinPerfil, esAdmin, esSuperAdmin,
 }: SidebarProps) {
   const pathname = usePathname()
   const router   = useRouter()
@@ -190,6 +191,9 @@ export default function Sidebar({
         )}
         {puedeVer('/configuracion') && (
           <NavLink href="/configuracion" label="Configuración" icon={Settings} active={isActive('/configuracion')} />
+        )}
+        {esSuperAdmin && (
+          <NavLink href="/auditoria" label="Auditoría y Respaldos" icon={ShieldCheck} active={isActive('/auditoria')} />
         )}
 
         {/* Sucursal activa — lectura directa desde el navegador */}
