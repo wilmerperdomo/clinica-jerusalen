@@ -151,7 +151,9 @@ BEGIN
 
   LOOP
     v_codigo := LPAD((FLOOR(RANDOM() * 1000000))::INTEGER::TEXT, 6, '0');
-    EXIT WHEN NOT EXISTS (SELECT 1 FROM autorizaciones WHERE codigo = v_codigo AND estado = 'ACTIVO');
+    EXIT WHEN NOT EXISTS (
+      SELECT 1 FROM autorizaciones a WHERE a.codigo = v_codigo AND a.estado = 'ACTIVO'
+    );
     v_intentos := v_intentos + 1;
     IF v_intentos > 20 THEN RAISE EXCEPTION 'No se pudo generar un código único'; END IF;
   END LOOP;
