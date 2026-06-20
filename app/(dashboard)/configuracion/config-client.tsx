@@ -569,6 +569,12 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
             label: 'Crear nueva consulta',
             desc: 'Permite iniciar consultas sin cita previa (botón "Nueva Consulta").',
           },
+          {
+            modulo: 'facturacion',
+            accion: 'devolver',
+            label: 'Devoluciones y notas de crédito',
+            desc: 'Permite registrar devoluciones/anulaciones de facturas (requiere código del super usuario).',
+          },
         ]
 
         async function togglePerm(rolId: number, moduloClave: string, activo: boolean) {

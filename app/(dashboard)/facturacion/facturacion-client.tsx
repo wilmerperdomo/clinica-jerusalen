@@ -11,10 +11,11 @@ import {
   FileText, Plus, Search, Printer, X, RefreshCw,
   CheckCircle, XCircle, AlertTriangle, Hash, Building2,
   User, DollarSign, Trash2, ChevronDown, ChevronUp, Eye,
-  ShieldAlert, History, Lock,
+  ShieldAlert, History, Lock, RotateCcw, KeyRound, Receipt, Copy,
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 import { acumularPuntosPorFactura } from '@/lib/fidelidad-puntos'
+import { abrirNotaCredito } from '@/lib/nota-credito-print'
 
 /* ══════════════════ TIPOS ════════════════════════════════════ */
 interface ItemFactura {
@@ -42,12 +43,32 @@ interface Factura {
   cajero_nombre?: string; medico_nombre?: string; paciente_id?: number
   sucursal_id: number; items: ItemFactura[]
   exento_isv: boolean; rtn_emisor?: string; correo_emisor?: string; fecha_limite_cai?: string
+  monto_devuelto?: number
   sucursal?: { nombre: string } | null
 }
 interface Auditoria {
   id: number; factura_id: number; numero?: string
   accion: string; motivo: string; usuario_nombre?: string
   fecha: string; datos_antes?: Record<string, unknown>
+}
+interface DevolucionItem {
+  factura_item_idx: number; descripcion: string; cantidad: number
+  precio_unitario: number; isv_pct: number; subtotal: number
+  producto_id?: number | null; reingresa_stock?: boolean
+}
+interface Devolucion {
+  id: number; numero: string; factura_id: number; factura_numero?: string
+  paciente_nombre?: string; sucursal_id: number
+  subtotal: number; isv_monto: number; total: number
+  motivo?: string; tipo_reembolso: string; es_anulacion: boolean; estado: string
+  cajero_nombre?: string; items: DevolucionItem[]; fecha: string; hora?: string
+}
+interface Producto { id: number; nombre: string; codigo?: string }
+interface DevLinea {
+  idx: number; descripcion: string; precio_unitario: number; isv_pct: number
+  cantOriginal: number; cantDisponible: number
+  seleccionada: boolean; cantidad: number
+  reingresa: boolean; producto_id: number | ''
 }
 interface Props {
   facturas:        Factura[]
@@ -58,8 +79,11 @@ interface Props {
   cajeroNombre:    string
   hoy:             string
   esSuperAdmin:    boolean
+  puedeDevolver:   boolean
   userId:          string
   auditoria:       Auditoria[]
+  devoluciones:    Devolucion[]
+  productos:       Producto[]
 }
 
 /* ══════════════════ HELPERS ══════════════════════════════════ */
@@ -84,7 +108,8 @@ function formatearNumero(num: number, suc: Sucursal): string {
 export default function FacturacionClient({
   facturas: init, sucursales, pacientes, correlativos,
   sucursalDefault, cajeroNombre, hoy,
-  esSuperAdmin, userId, auditoria: initAuditoria,
+  esSuperAdmin, puedeDevolver, userId, auditoria: initAuditoria,
+  devoluciones: initDevoluciones, productos,
 }: Props) {
   const supabase = createClient()
 
@@ -118,18 +143,32 @@ export default function FacturacionClient({
   })
   const [items, setItems] = useState<ItemFactura[]>([{ ...itemVacio }])
 
-  /* ── modal anular ── */
-  const [anularFact,    setAnularFact]    = useState<Factura | null>(null)
-  const [motivoAnulacion, setMotivoAnulacion] = useState('')
-  const [loadingAnular, setLoadingAnular] = useState(false)
-
   /* ── modal eliminar (solo super admin) ── */
   const [eliminarFact,   setEliminarFact]   = useState<Factura | null>(null)
   const [motivoEliminar, setMotivoEliminar] = useState('')
   const [loadingEliminar, setLoadingEliminar] = useState(false)
 
+  /* ── devoluciones / notas de crédito ── */
+  const [devoluciones, setDevoluciones] = useState<Devolucion[]>(initDevoluciones)
+  const [devFact,      setDevFact]      = useState<Factura | null>(null)
+  const [devEsAnula,   setDevEsAnula]   = useState(false)
+  const [devLineas,    setDevLineas]    = useState<DevLinea[]>([])
+  const [devReembolso, setDevReembolso] = useState<'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA' | 'SALDO_FAVOR'>('EFECTIVO')
+  const [devReferencia,setDevReferencia]= useState('')
+  const [devMotivo,    setDevMotivo]    = useState('')
+  const [devCodigo,    setDevCodigo]    = useState('')
+  const [devSesionId,  setDevSesionId]  = useState<number | null>(null)
+  const [devSinCaja,   setDevSinCaja]   = useState(false)
+  const [loadingDev,   setLoadingDev]   = useState(false)
+  const [errorDev,     setErrorDev]     = useState('')
+
+  /* ── generar código (super admin) ── */
+  const [codFact,    setCodFact]    = useState<Factura | null>(null)
+  const [codGenerado,setCodGenerado]= useState<{ codigo: string; expira: string; max: number } | null>(null)
+  const [loadingCod, setLoadingCod] = useState(false)
+
   /* ── tab auditoría ── */
-  const [tabActivo, setTabActivo]   = useState<'facturas' | 'auditoria'>('facturas')
+  const [tabActivo, setTabActivo]   = useState<'facturas' | 'auditoria' | 'notas'>('facturas')
   const [auditoria, setAuditoria]   = useState<Auditoria[]>(initAuditoria)
   const [verAudit,  setVerAudit]    = useState<Auditoria | null>(null)
 
@@ -276,46 +315,174 @@ export default function FacturacionClient({
     setBuscarPac('')
   }
 
-  /* ════════ ANULAR FACTURA (solo super admin) ════════════════ */
-  async function anularFactura() {
-    if (!anularFact) return
-    if (!motivoAnulacion.trim()) return alert('Ingresa el motivo de anulación')
-    if (!esSuperAdmin) return alert('Solo el Super Administrador puede anular facturas')
-    setLoadingAnular(true)
+  /* ════════ DEVOLUCIÓN / ANULACIÓN (motor unificado) ═════════ */
+  // Cantidad ya devuelta por línea (devoluciones no anuladas)
+  function devueltasPorIdx(facturaId: number): Record<number, number> {
+    const acc: Record<number, number> = {}
+    for (const d of devoluciones) {
+      if (d.factura_id !== facturaId || d.estado === 'ANULADA') continue
+      const its = Array.isArray(d.items) ? d.items : []
+      for (const it of its) {
+        const i = Number(it.factura_item_idx)
+        acc[i] = (acc[i] ?? 0) + Number(it.cantidad ?? 0)
+      }
+    }
+    return acc
+  }
+
+  function sugerirProducto(desc: string): number | '' {
+    const limpio = desc.trim().toLowerCase()
+    if (!limpio) return ''
+    const exacto = productos.find(p => p.nombre.trim().toLowerCase() === limpio)
+    if (exacto) return exacto.id
+    const parcial = productos.find(p => limpio.includes(p.nombre.trim().toLowerCase()) || p.nombre.trim().toLowerCase().includes(limpio))
+    return parcial ? parcial.id : ''
+  }
+
+  async function abrirDevolucion(f: Factura, anula: boolean) {
+    const items = (f.items as ItemFactura[]) ?? []
+    const yaDev = devueltasPorIdx(f.id)
+    const lineas: DevLinea[] = items.map((it, idx) => {
+      const disp = Math.max(it.cantidad - (yaDev[idx] ?? 0), 0)
+      const sug = sugerirProducto(it.descripcion)
+      return {
+        idx, descripcion: it.descripcion,
+        precio_unitario: it.precio_unitario, isv_pct: it.isv_pct,
+        cantOriginal: it.cantidad, cantDisponible: disp,
+        seleccionada: anula && disp > 0, cantidad: disp,
+        reingresa: sug !== '', producto_id: sug,
+      }
+    })
+    setDevFact(f); setDevEsAnula(anula); setDevLineas(lineas)
+    setDevReembolso('EFECTIVO'); setDevReferencia(''); setDevMotivo('')
+    setDevCodigo(''); setErrorDev(''); setDevSesionId(null); setDevSinCaja(false)
+
+    // Buscar caja abierta de la sucursal de la factura (para reembolso en efectivo)
+    const { data: ses } = await supabase
+      .from('caja_sesiones')
+      .select('id')
+      .eq('sucursal_id', f.sucursal_id)
+      .eq('estado', 'ABIERTA')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (ses?.id) { setDevSesionId(Number(ses.id)); setDevSinCaja(false) }
+    else { setDevSesionId(null); setDevSinCaja(true) }
+  }
+
+  const devTotal = useMemo(() => {
+    return devLineas.reduce((s, l) => {
+      if (!l.seleccionada || l.cantidad <= 0) return s
+      const sub = l.cantidad * l.precio_unitario
+      return s + sub + sub * (l.isv_pct / 100)
+    }, 0)
+  }, [devLineas])
+
+  function setLinea(idx: number, patch: Partial<DevLinea>) {
+    setDevLineas(prev => prev.map(l => l.idx === idx ? { ...l, ...patch } : l))
+  }
+
+  async function procesarDevolucion() {
+    if (!devFact) return
+    const seleccion = devLineas.filter(l => l.seleccionada && l.cantidad > 0)
+    if (seleccion.length === 0) return setErrorDev('Selecciona al menos una línea a devolver')
+    for (const l of seleccion) {
+      if (l.cantidad > l.cantDisponible) return setErrorDev(`La línea "${l.descripcion}" supera lo disponible (${l.cantDisponible})`)
+    }
+    if (!devMotivo.trim()) return setErrorDev('Ingresa el motivo')
+    if (devReembolso === 'SALDO_FAVOR' && !devFact.paciente_id) return setErrorDev('La factura no tiene paciente: no se puede dar saldo a favor')
+    if (devReembolso !== 'SALDO_FAVOR' && !devSesionId) return setErrorDev('No hay caja abierta en la sucursal. Abre caja o usa "Saldo a favor".')
+    if (!esSuperAdmin && !devCodigo.trim()) return setErrorDev('Ingresa el código de autorización del super usuario')
+
+    setLoadingDev(true); setErrorDev('')
     try {
-      // Pasar el nombre del usuario al trigger via configuración de sesión
-      await supabase.rpc('set_config', { key: 'app.usuario_nombre', value: cajeroNombre }).catch(() => null)
+      const pItems = seleccion.map(l => ({
+        factura_item_idx: l.idx,
+        descripcion:      l.descripcion,
+        cantidad:         l.cantidad,
+        precio_unitario:  l.precio_unitario,
+        isv_pct:          l.isv_pct,
+        subtotal:         Number((l.cantidad * l.precio_unitario).toFixed(2)),
+        producto_id:      l.reingresa && l.producto_id !== '' ? Number(l.producto_id) : null,
+        reingresa_stock:  l.reingresa && l.producto_id !== '',
+      }))
 
-      const { error: e } = await supabase.from('facturas').update({
-        estado: 'anulada',
-        motivo_anulacion: motivoAnulacion.trim(),
-        fecha_anulacion: new Date().toISOString(),
-      }).eq('id', anularFact.id)
+      const { data, error: e } = await supabase.rpc('fn_registrar_devolucion', {
+        p_factura_id:     devFact.id,
+        p_items:          pItems,
+        p_motivo:         devMotivo.trim(),
+        p_tipo_reembolso: devReembolso,
+        p_referencia:     devReferencia.trim() || null,
+        p_sesion_id:      devReembolso === 'SALDO_FAVOR' ? null : devSesionId,
+        p_codigo:         esSuperAdmin ? null : devCodigo.trim(),
+        p_anula:          devEsAnula,
+        p_cajero_nombre:  cajeroNombre,
+      })
       if (e) throw e
+      const dev = (Array.isArray(data) ? data[0] : data) as Devolucion
 
-      // Registrar en auditoría también desde el cliente (redundancia)
-      await supabase.from('facturas_auditoria').insert({
-        factura_id:    anularFact.id,
-        numero:        anularFact.numero,
-        accion:        'ANULADA',
-        motivo:        motivoAnulacion.trim(),
-        datos_antes:   anularFact as unknown as Record<string, unknown>,
-        usuario_id:    userId,
-        usuario_nombre: cajeroNombre,
+      // Imprimir nota de crédito
+      abrirNotaCredito({
+        numero: dev.numero, factura_numero: devFact.numero,
+        fecha: dev.fecha, hora: dev.hora,
+        cliente_nombre: devFact.cliente_nombre,
+        sucursal_nombre: sucursales.find(s => s.id === devFact.sucursal_id)?.nombre ?? null,
+        cajero_nombre: cajeroNombre, motivo: devMotivo.trim(),
+        tipo_reembolso: devReembolso, es_anulacion: devEsAnula,
+        subtotal: dev.subtotal, isv_monto: dev.isv_monto, total: dev.total,
+        items: pItems,
       })
 
-      setFacturas(prev => prev.map(f => f.id === anularFact.id
-        ? { ...f, estado: 'anulada', motivo_anulacion: motivoAnulacion.trim() } : f
-      ))
-      // Agregar al log local
-      setAuditoria(prev => [{
-        id: Date.now(), factura_id: anularFact.id, numero: anularFact.numero,
-        accion: 'ANULADA', motivo: motivoAnulacion.trim(),
-        usuario_nombre: cajeroNombre, fecha: new Date().toISOString(),
-      }, ...prev])
-      setAnularFact(null); setMotivoAnulacion('')
-    } catch (err) { alert('Error al anular: ' + (err instanceof Error ? err.message : err)) }
-    finally { setLoadingAnular(false) }
+      // Refrescar estado local
+      setDevoluciones(prev => [dev, ...prev])
+      setFacturas(prev => prev.map(f => f.id === devFact.id ? {
+        ...f,
+        monto_devuelto: (f.monto_devuelto ?? 0) + dev.total,
+        estado: devEsAnula ? 'anulada' : f.estado,
+        motivo_anulacion: devEsAnula ? devMotivo.trim() : f.motivo_anulacion,
+      } : f))
+      if (devEsAnula) {
+        setAuditoria(prev => [{
+          id: Date.now(), factura_id: devFact.id, numero: devFact.numero,
+          accion: 'ANULADA', motivo: devMotivo.trim(),
+          usuario_nombre: cajeroNombre, fecha: new Date().toISOString(),
+        }, ...prev])
+      }
+      setDevFact(null)
+    } catch (err) {
+      setErrorDev('Error: ' + (err instanceof Error ? err.message : String(err)))
+    } finally { setLoadingDev(false) }
+  }
+
+  async function anularDevolucion(d: Devolucion) {
+    if (!esSuperAdmin) return alert('Solo el super administrador puede anular una nota de crédito')
+    if (!confirm(`¿Anular la nota de crédito ${d.numero}? Se revertirá el reembolso, los puntos y el stock reingresado.`)) return
+    try {
+      const { data, error: e } = await supabase.rpc('fn_anular_devolucion', { p_id: d.id, p_motivo: 'Anulada desde Facturación' })
+      if (e) throw e
+      const upd = (Array.isArray(data) ? data[0] : data) as Devolucion
+      setDevoluciones(prev => prev.map(x => x.id === d.id ? { ...x, estado: 'ANULADA' } : x))
+      setFacturas(prev => prev.map(f => f.id === d.factura_id ? {
+        ...f,
+        monto_devuelto: Math.max((f.monto_devuelto ?? 0) - d.total, 0),
+        estado: d.es_anulacion ? 'emitida' : f.estado,
+      } : f))
+      void upd
+    } catch (err) { alert('Error al anular nota: ' + (err instanceof Error ? err.message : err)) }
+  }
+
+  /* ════════ GENERAR CÓDIGO (super admin) ═════════════════════ */
+  async function generarCodigo(f: Factura, proposito: 'DEVOLUCION' | 'ANULACION') {
+    setLoadingCod(true)
+    try {
+      const { data, error: e } = await supabase.rpc('fn_generar_autorizacion', {
+        p_factura_id: f.id, p_proposito: proposito, p_minutos: 60,
+      })
+      if (e) throw e
+      const row = (Array.isArray(data) ? data[0] : data) as { codigo: string; expira_at: string; monto_max: number }
+      setCodGenerado({ codigo: row.codigo, expira: row.expira_at, max: Number(row.monto_max) })
+    } catch (err) { alert('Error al generar código: ' + (err instanceof Error ? err.message : err)) }
+    finally { setLoadingCod(false) }
   }
 
   /* ════════ ELIMINAR FACTURA (solo super admin) ══════════════ */
@@ -397,6 +564,15 @@ export default function FacturacionClient({
         ]}
         actions={
           <>
+            {puedeDevolver && (
+              <ModuleBtnGhost onClick={() => setTabActivo(t => t === 'notas' ? 'facturas' : 'notas')}>
+                <Receipt className="w-4 h-4" />
+                {tabActivo === 'notas' ? 'Ver Facturas' : 'Notas de crédito'}
+                {devoluciones.filter(d => d.estado !== 'ANULADA').length > 0 && tabActivo !== 'notas' && (
+                  <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1">{devoluciones.filter(d => d.estado !== 'ANULADA').length}</span>
+                )}
+              </ModuleBtnGhost>
+            )}
             {esSuperAdmin && (
               <ModuleBtnGhost onClick={() => setTabActivo(t => t === 'auditoria' ? 'facturas' : 'auditoria')}>
                 <History className="w-4 h-4" />
@@ -529,6 +705,9 @@ export default function FacturacionClient({
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${f.estado === 'emitida' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                       {f.estado === 'emitida' ? 'Emitida' : 'Anulada'}
                     </span>
+                    {f.estado === 'emitida' && (f.monto_devuelto ?? 0) > 0.01 && (
+                      <span className="block mt-1 text-[10px] text-orange-600 font-medium">Devuelto {fmt(f.monto_devuelto ?? 0)}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex items-center justify-center gap-1.5">
@@ -540,9 +719,23 @@ export default function FacturacionClient({
                         className="p-1.5 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100">
                         <Printer className="w-3.5 h-3.5"/>
                       </button>
-                      {/* Anular — solo super admin */}
-                      {f.estado === 'emitida' && esSuperAdmin && (
-                        <button onClick={() => { setAnularFact(f); setMotivoAnulacion('') }} title="Anular factura"
+                      {/* Generar código de autorización — solo super admin */}
+                      {f.estado === 'emitida' && esSuperAdmin && (f.total - (f.monto_devuelto ?? 0)) > 0.01 && (
+                        <button onClick={() => { setCodFact(f); setCodGenerado(null) }} title="Generar código de autorización"
+                          className="p-1.5 rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100">
+                          <KeyRound className="w-3.5 h-3.5"/>
+                        </button>
+                      )}
+                      {/* Devolver — devolución parcial/total */}
+                      {f.estado === 'emitida' && puedeDevolver && (f.total - (f.monto_devuelto ?? 0)) > 0.01 && (
+                        <button onClick={() => abrirDevolucion(f, false)} title="Devolución / nota de crédito"
+                          className="p-1.5 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100">
+                          <RotateCcw className="w-3.5 h-3.5"/>
+                        </button>
+                      )}
+                      {/* Anular — anulación total por el mismo motor */}
+                      {f.estado === 'emitida' && puedeDevolver && (
+                        <button onClick={() => abrirDevolucion(f, true)} title="Anular factura (reversa total)"
                           className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100">
                           <XCircle className="w-3.5 h-3.5"/>
                         </button>
@@ -554,9 +747,9 @@ export default function FacturacionClient({
                           <Trash2 className="w-3.5 h-3.5"/>
                         </button>
                       )}
-                      {/* Candado para usuarios normales */}
-                      {!esSuperAdmin && f.estado === 'emitida' && (
-                        <span title="Solo el Super Admin puede anular/eliminar facturas"
+                      {/* Candado para usuarios sin permiso */}
+                      {!esSuperAdmin && !puedeDevolver && f.estado === 'emitida' && (
+                        <span title="No tienes permiso para devolver/anular facturas"
                           className="p-1.5 text-gray-300 cursor-not-allowed">
                           <Lock className="w-3.5 h-3.5"/>
                         </span>
@@ -629,6 +822,87 @@ export default function FacturacionClient({
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══ TAB NOTAS DE CRÉDITO ══ */}
+      {puedeDevolver && tabActivo === 'notas' && (
+        <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 border-b bg-orange-50">
+            <Receipt className="w-5 h-5 text-orange-600" />
+            <div>
+              <h2 className="font-bold text-gray-900">Notas de crédito (devoluciones y anulaciones)</h2>
+              <p className="text-xs text-gray-500">Reversas registradas este mes</p>
+            </div>
+            <span className="ml-auto bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium">
+              {devoluciones.length} notas
+            </span>
+          </div>
+          {devoluciones.length === 0 ? (
+            <div className="py-16 text-center text-gray-400">
+              <Receipt className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p>Sin notas de crédito este mes</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-xs text-gray-500 uppercase">
+                    <th className="px-4 py-3 text-left">N° Nota</th>
+                    <th className="px-4 py-3 text-left">Factura</th>
+                    <th className="px-4 py-3 text-left">Cliente</th>
+                    <th className="px-4 py-3 text-center">Tipo</th>
+                    <th className="px-4 py-3 text-left">Reembolso</th>
+                    <th className="px-4 py-3 text-right">Total</th>
+                    <th className="px-4 py-3 text-center">Estado</th>
+                    <th className="px-4 py-3 text-center w-24">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {devoluciones.map(d => (
+                    <tr key={d.id} className={`hover:bg-gray-50 ${d.estado === 'ANULADA' ? 'opacity-50' : ''}`}>
+                      <td className="px-4 py-3 font-mono text-orange-700 font-semibold">{d.numero}</td>
+                      <td className="px-4 py-3 font-mono text-gray-600 text-xs">{d.factura_numero || `#${d.factura_id}`}</td>
+                      <td className="px-4 py-3 text-gray-700">{d.paciente_nombre || '—'}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${d.es_anulacion ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {d.es_anulacion ? 'Anulación' : 'Devolución'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{d.tipo_reembolso === 'SALDO_FAVOR' ? 'Saldo a favor' : d.tipo_reembolso}</td>
+                      <td className="px-4 py-3 text-right font-bold text-gray-900">{fmt(d.total)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${d.estado === 'ANULADA' ? 'bg-gray-200 text-gray-600' : 'bg-green-100 text-green-700'}`}>
+                          {d.estado === 'ANULADA' ? 'Anulada' : 'Emitida'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button onClick={() => abrirNotaCredito({
+                            numero: d.numero, factura_numero: d.factura_numero, fecha: d.fecha, hora: d.hora,
+                            cliente_nombre: d.paciente_nombre,
+                            sucursal_nombre: sucursales.find(s => s.id === d.sucursal_id)?.nombre ?? null,
+                            cajero_nombre: d.cajero_nombre, motivo: d.motivo,
+                            tipo_reembolso: d.tipo_reembolso, es_anulacion: d.es_anulacion,
+                            subtotal: d.subtotal, isv_monto: d.isv_monto, total: d.total, items: d.items,
+                          })} title="Imprimir nota"
+                            className="p-1.5 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100">
+                            <Printer className="w-3.5 h-3.5"/>
+                          </button>
+                          {esSuperAdmin && d.estado !== 'ANULADA' && (
+                            <button onClick={() => anularDevolucion(d)} title="Anular nota de crédito"
+                              className="p-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100">
+                              <XCircle className="w-3.5 h-3.5"/>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -876,43 +1150,179 @@ export default function FacturacionClient({
         </div>
       )}
 
-      {/* ══ MODAL ANULAR (super admin) ══ */}
-      {anularFact && esSuperAdmin && (
+      {/* ══ MODAL DEVOLUCIÓN / ANULACIÓN (motor unificado) ══ */}
+      {devFact && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h2 className="font-bold text-red-700 flex items-center gap-2">
-                <XCircle className="w-5 h-5"/> Anular Factura {anularFact.numero}
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+            <div className={`flex items-center justify-between px-6 py-4 border-b ${devEsAnula ? 'bg-red-50' : 'bg-orange-50'}`}>
+              <h2 className={`font-bold flex items-center gap-2 ${devEsAnula ? 'text-red-700' : 'text-orange-700'}`}>
+                {devEsAnula ? <XCircle className="w-5 h-5"/> : <RotateCcw className="w-5 h-5"/>}
+                {devEsAnula ? 'Anular' : 'Devolver'} — Factura {devFact.numero}
               </h2>
-              <button onClick={() => setAnularFact(null)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
+              <button onClick={() => setDevFact(null)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
             </div>
-            <div className="px-6 py-5 space-y-4">
-              <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-                <ShieldAlert className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
-                <p className="text-sm text-gray-700">
-                  Esta acción quedará registrada en el <strong>historial de auditoría</strong> con tu nombre y el motivo. La factura quedará marcada como <strong>ANULADA</strong>.
+            <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+              {errorDev && <p className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">{errorDev}</p>}
+
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-gray-700">
+                  {devEsAnula
+                    ? 'La anulación reembolsa el total restante, revierte puntos y, si lo marcas, reingresa inventario. La factura quedará ANULADA.'
+                    : 'Selecciona las líneas y cantidades a devolver. Se generará una nota de crédito con el reembolso y los reversos correspondientes.'}
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-xs text-gray-500 bg-gray-50 rounded-lg p-3">
-                <div><span className="font-medium">Cliente:</span> {anularFact.cliente_nombre}</div>
-                <div><span className="font-medium">Total:</span> {fmt(anularFact.total)}</div>
-                <div><span className="font-medium">Fecha:</span> {anularFact.fecha}</div>
-                <div><span className="font-medium">Cajero:</span> {anularFact.cajero_nombre}</div>
+
+              {/* líneas */}
+              <div className="border rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b text-xs text-gray-500">
+                      <th className="px-2 py-2 w-8"></th>
+                      <th className="px-2 py-2 text-left">Descripción</th>
+                      <th className="px-2 py-2 text-center w-20">Devolver</th>
+                      <th className="px-2 py-2 text-right w-24">P. Unit</th>
+                      <th className="px-2 py-2 text-left w-44">Reingresar a stock</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {devLineas.map(l => (
+                      <tr key={l.idx} className={l.cantDisponible <= 0 ? 'opacity-40' : ''}>
+                        <td className="px-2 py-2 text-center">
+                          <input type="checkbox" checked={l.seleccionada} disabled={devEsAnula || l.cantDisponible <= 0}
+                            onChange={e => setLinea(l.idx, { seleccionada: e.target.checked })}/>
+                        </td>
+                        <td className="px-2 py-2">
+                          <p className="text-gray-800">{l.descripcion}</p>
+                          <p className="text-[10px] text-gray-400">Disponible: {l.cantDisponible} de {l.cantOriginal}</p>
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          <input type="number" min={0} max={l.cantDisponible} value={l.cantidad}
+                            disabled={devEsAnula || !l.seleccionada || l.cantDisponible <= 0}
+                            onChange={e => setLinea(l.idx, { cantidad: Math.min(Number(e.target.value), l.cantDisponible) })}
+                            className="w-16 text-center border rounded px-1 py-0.5 text-sm disabled:bg-gray-50"/>
+                        </td>
+                        <td className="px-2 py-2 text-right text-gray-600">{fmt(l.precio_unitario)}</td>
+                        <td className="px-2 py-2">
+                          <div className="flex items-center gap-1">
+                            <input type="checkbox" checked={l.reingresa} disabled={!l.seleccionada}
+                              onChange={e => setLinea(l.idx, { reingresa: e.target.checked })}/>
+                            <select value={l.producto_id} disabled={!l.seleccionada || !l.reingresa}
+                              onChange={e => setLinea(l.idx, { producto_id: e.target.value === '' ? '' : Number(e.target.value) })}
+                              className="flex-1 border rounded px-1 py-0.5 text-xs disabled:bg-gray-50 max-w-[150px]">
+                              <option value="">— sin stock —</option>
+                              {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                            </select>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+
+              {/* reembolso */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Tipo de reembolso</label>
+                  <select value={devReembolso} onChange={e => setDevReembolso(e.target.value as typeof devReembolso)}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300">
+                    <option value="EFECTIVO">Efectivo (egreso de caja)</option>
+                    <option value="TARJETA">Tarjeta (egreso de caja)</option>
+                    <option value="TRANSFERENCIA">Transferencia (egreso de caja)</option>
+                    <option value="SALDO_FAVOR" disabled={!devFact.paciente_id}>Saldo a favor del paciente</option>
+                  </select>
+                  {devReembolso !== 'SALDO_FAVOR' && devSinCaja && (
+                    <p className="text-[11px] text-red-600 mt-1">No hay caja abierta en esta sucursal. Abre caja o usa saldo a favor.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Referencia (opcional)</label>
+                  <input value={devReferencia} onChange={e => setDevReferencia(e.target.value)}
+                    placeholder="N° de voucher, transferencia…"
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"/>
+                </div>
+              </div>
+
               <div>
-                <label className="text-xs font-semibold text-gray-700 uppercase mb-1 block">Motivo de anulación *</label>
-                <textarea value={motivoAnulacion} onChange={e => setMotivoAnulacion(e.target.value)} rows={3}
-                  placeholder="Ej: Error en datos del cliente, duplicado, precio incorrecto…"
-                  className="w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-300"/>
+                <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Motivo *</label>
+                <textarea value={devMotivo} onChange={e => setDevMotivo(e.target.value)} rows={2}
+                  placeholder="Ej: El paciente devuelve el medicamento sin abrir…"
+                  className="w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-300"/>
+              </div>
+
+              {!esSuperAdmin && (
+                <div>
+                  <label className="text-xs font-semibold text-violet-700 uppercase mb-1 block flex items-center gap-1">
+                    <KeyRound className="w-3.5 h-3.5"/> Código de autorización del super usuario *
+                  </label>
+                  <input value={devCodigo} onChange={e => setDevCodigo(e.target.value)} maxLength={6}
+                    placeholder="000000"
+                    className="w-40 border-2 border-violet-200 rounded-lg px-3 py-2 text-lg font-mono tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-violet-300"/>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t flex items-center justify-between">
+              <div className="text-sm">
+                <span className="text-gray-500">Total a reembolsar: </span>
+                <span className={`font-bold text-lg ${devEsAnula ? 'text-red-700' : 'text-orange-700'}`}>{fmt(devTotal)}</span>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setDevFact(null)} className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
+                <button onClick={procesarDevolucion} disabled={loadingDev || devTotal <= 0}
+                  className={`px-5 py-2 text-white rounded-xl text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${devEsAnula ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}`}>
+                  {loadingDev ? <RefreshCw className="w-3.5 h-3.5 animate-spin"/> : <CheckCircle className="w-4 h-4"/>}
+                  {devEsAnula ? 'Confirmar Anulación' : 'Confirmar Devolución'}
+                </button>
               </div>
             </div>
-            <div className="px-6 py-4 border-t flex gap-3 justify-end">
-              <button onClick={() => setAnularFact(null)} className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
-              <button onClick={anularFactura} disabled={loadingAnular || !motivoAnulacion.trim()}
-                className="px-5 py-2 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 disabled:opacity-50 flex items-center gap-2">
-                {loadingAnular && <RefreshCw className="w-3.5 h-3.5 animate-spin"/>}
-                <XCircle className="w-3.5 h-3.5" /> Confirmar Anulación
-              </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MODAL GENERAR CÓDIGO (super admin) ══ */}
+      {codFact && esSuperAdmin && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-violet-50">
+              <h2 className="font-bold text-violet-700 flex items-center gap-2">
+                <KeyRound className="w-5 h-5"/> Código de autorización
+              </h2>
+              <button onClick={() => { setCodFact(null); setCodGenerado(null) }} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-gray-600">
+                Factura <strong>{codFact.numero}</strong> — saldo disponible {fmt(codFact.total - (codFact.monto_devuelto ?? 0))}.
+                Genera un código de un solo uso para que el cajero registre la operación.
+              </p>
+              {!codGenerado ? (
+                <div className="flex gap-3">
+                  <button onClick={() => generarCodigo(codFact, 'DEVOLUCION')} disabled={loadingCod}
+                    className="flex-1 px-4 py-3 bg-orange-600 text-white rounded-xl text-sm font-medium hover:bg-orange-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                    {loadingCod ? <RefreshCw className="w-4 h-4 animate-spin"/> : <RotateCcw className="w-4 h-4"/>} Para devolución
+                  </button>
+                  <button onClick={() => generarCodigo(codFact, 'ANULACION')} disabled={loadingCod}
+                    className="flex-1 px-4 py-3 bg-red-600 text-white rounded-xl text-sm font-medium hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2">
+                    {loadingCod ? <RefreshCw className="w-4 h-4 animate-spin"/> : <XCircle className="w-4 h-4"/>} Para anulación
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center space-y-2 bg-violet-50 border border-violet-200 rounded-xl py-5">
+                  <p className="text-xs text-violet-600 uppercase font-semibold">Código (válido 60 min · un solo uso)</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-4xl font-mono font-bold tracking-widest text-violet-800">{codGenerado.codigo}</span>
+                    <button onClick={() => navigator.clipboard?.writeText(codGenerado.codigo)} title="Copiar"
+                      className="p-2 rounded-lg bg-white border text-violet-600 hover:bg-violet-100">
+                      <Copy className="w-4 h-4"/>
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500">Monto máximo autorizado: <strong>{fmt(codGenerado.max)}</strong></p>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t flex justify-end">
+              <button onClick={() => { setCodFact(null); setCodGenerado(null) }} className="px-4 py-2 bg-gray-100 rounded-xl text-sm">Cerrar</button>
             </div>
           </div>
         </div>
