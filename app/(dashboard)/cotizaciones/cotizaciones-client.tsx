@@ -147,7 +147,7 @@ export default function CotizacionesClient({
     cliente_rtn:    '',
     cliente_email:  '',
     paciente_id:    0,
-    exento_isv:     false,
+    exento_isv:     true,
     por_descuento:  0,
     nota:           '',
     validez_dias:   VALIDEZ_DIAS_DEFAULT,
@@ -295,7 +295,7 @@ export default function CotizacionesClient({
     setForm({
       sucursal_id: sucDefault?.id ?? 0, cliente_nombre: 'CLIENTE GENERAL',
       cliente_rtn: '', cliente_email: '', paciente_id: 0,
-      exento_isv: false, por_descuento: 0, nota: '', validez_dias: VALIDEZ_DIAS_DEFAULT,
+      exento_isv: true, por_descuento: 0, nota: '', validez_dias: VALIDEZ_DIAS_DEFAULT,
     })
     setItems([{ ...itemVacio }])
     setBuscarPac(''); setBuscarCatalogo('')
@@ -827,8 +827,8 @@ export default function CotizacionesClient({
                     <select value={form.exento_isv ? 'exento' : 'gravado'}
                       onChange={e => setForm(p => ({ ...p, exento_isv: e.target.value === 'exento' }))}
                       className="w-full border rounded-lg px-3 py-2 text-sm">
+                      <option value="exento">Exento de ISV (medicina)</option>
                       <option value="gravado">Gravado (15%)</option>
-                      <option value="exento">Exento de ISV</option>
                     </select>
                   </div>
                 </div>
