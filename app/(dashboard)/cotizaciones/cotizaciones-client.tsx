@@ -333,7 +333,7 @@ export default function CotizacionesClient({
       const { data: nc, error: e } = await supabase
         .from('cotizaciones')
         .insert(payload)
-        .select(`id, numero, fecha, hora, cliente_nombre, cliente_rtn, subtotal, por_descuento, descuento_monto, isv_monto, total, estado, nota, validez_dias, fecha_vencimiento, factura_id, paciente_id, sucursal_id, items, exento_isv, cajero_nombre, sucursal:sucursales(nombre)`)
+        .select(`id, numero, fecha, hora, cliente_nombre, cliente_rtn, subtotal, por_descuento, descuento_monto, isv_monto, total, estado, nota, validez_dias, fecha_vencimiento, factura_id, paciente_id, sucursal_id, items, exento_isv, cajero_nombre`)
         .single()
       if (e) throw new Error(e.message)
 
@@ -586,7 +586,7 @@ export default function CotizacionesClient({
                       <p className="font-medium text-gray-900">{c.cliente_nombre}</p>
                       {c.cliente_rtn && <p className="text-xs text-gray-400">RTN: {c.cliente_rtn}</p>}
                     </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{c.sucursal?.nombre ?? '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{c.sucursal?.nombre ?? sucursales.find(s => Number(s.id) === Number(c.sucursal_id))?.nombre ?? '—'}</td>
                     <td className="px-4 py-3 text-right font-bold">{fmtCot(c.total)}</td>
                     <td className="px-4 py-3 text-center text-xs text-gray-500">{c.fecha_vencimiento}</td>
                     <td className="px-4 py-3 text-center">

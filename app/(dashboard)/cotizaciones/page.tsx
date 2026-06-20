@@ -17,8 +17,7 @@ export default async function CotizacionesPage() {
       id, numero, fecha, hora, cliente_nombre, cliente_rtn, cliente_email,
       subtotal, por_descuento, descuento_monto, isv_monto, total,
       estado, nota, validez_dias, fecha_vencimiento, factura_id,
-      paciente_id, consulta_id, sucursal_id, items, exento_isv, cajero_nombre,
-      sucursal:sucursales(nombre)
+      paciente_id, consulta_id, sucursal_id, items, exento_isv, cajero_nombre
     `)
     .gte('fecha', mesInicio)
     .order('fecha', { ascending: false })
