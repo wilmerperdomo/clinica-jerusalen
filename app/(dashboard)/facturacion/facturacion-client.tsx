@@ -104,6 +104,16 @@ function formatearNumero(num: number, suc: Sucursal): string {
   return formatearNumeroFactura(num, suc)
 }
 
+/** Extrae un mensaje legible de cualquier error (Error, PostgrestError, etc.) */
+function msgError(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; details?: string; hint?: string; code?: string }
+    return e.message || e.details || e.hint || e.code || JSON.stringify(err)
+  }
+  return String(err)
+}
+
 /* ════════════════════════════════════════════════════════════ */
 export default function FacturacionClient({
   facturas: init, sucursales, pacientes, correlativos,
@@ -450,7 +460,7 @@ export default function FacturacionClient({
       }
       setDevFact(null)
     } catch (err) {
-      setErrorDev('Error: ' + (err instanceof Error ? err.message : String(err)))
+      setErrorDev('Error: ' + msgError(err))
     } finally { setLoadingDev(false) }
   }
 
@@ -468,7 +478,7 @@ export default function FacturacionClient({
         estado: d.es_anulacion ? 'emitida' : f.estado,
       } : f))
       void upd
-    } catch (err) { alert('Error al anular nota: ' + (err instanceof Error ? err.message : err)) }
+    } catch (err) { alert('Error al anular nota: ' + msgError(err)) }
   }
 
   /* ════════ GENERAR CÓDIGO (super admin) ═════════════════════ */
@@ -481,7 +491,7 @@ export default function FacturacionClient({
       if (e) throw e
       const row = (Array.isArray(data) ? data[0] : data) as { codigo: string; expira_at: string; monto_max: number }
       setCodGenerado({ codigo: row.codigo, expira: row.expira_at, max: Number(row.monto_max) })
-    } catch (err) { alert('Error al generar código: ' + (err instanceof Error ? err.message : err)) }
+    } catch (err) { alert('Error al generar código: ' + msgError(err)) }
     finally { setLoadingCod(false) }
   }
 
