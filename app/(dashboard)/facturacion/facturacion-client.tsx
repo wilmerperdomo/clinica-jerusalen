@@ -381,12 +381,16 @@ export default function FacturacionClient({
   }
 
   const devTotal = useMemo(() => {
-    return devLineas.reduce((s, l) => {
+    const bruto = devLineas.reduce((s, l) => {
       if (!l.seleccionada || l.cantidad <= 0) return s
       const sub = l.cantidad * l.precio_unitario
       return s + sub + sub * (l.isv_pct / 100)
     }, 0)
-  }, [devLineas])
+    // Reparte proporcionalmente el descuento global de la factura
+    const base = devFact ? devFact.subtotal + devFact.isv_monto : 0
+    const factor = devFact && base > 0 ? Math.min(devFact.total / base, 1) : 1
+    return Math.round(bruto * factor * 100) / 100
+  }, [devLineas, devFact])
 
   function setLinea(idx: number, patch: Partial<DevLinea>) {
     setDevLineas(prev => prev.map(l => l.idx === idx ? { ...l, ...patch } : l))

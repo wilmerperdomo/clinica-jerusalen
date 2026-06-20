@@ -74,13 +74,18 @@ BEGIN
   END IF;
   v_nombre := COALESCE(v_nombre, NULLIF(current_setting('app.usuario_nombre', TRUE), ''));
 
-  INSERT INTO auditoria_general (
-    tabla, registro_id, operacion, datos_antes, datos_despues,
-    campos_cambiados, usuario_id, usuario_email, usuario_nombre
-  ) VALUES (
-    TG_TABLE_NAME, v_reg, TG_OP, v_antes, v_despues,
-    v_cambios, v_uid, v_email, v_nombre
-  );
+  -- La auditoría es "best-effort": nunca debe bloquear la operación de negocio.
+  BEGIN
+    INSERT INTO auditoria_general (
+      tabla, registro_id, operacion, datos_antes, datos_despues,
+      campos_cambiados, usuario_id, usuario_email, usuario_nombre
+    ) VALUES (
+      TG_TABLE_NAME, v_reg, TG_OP, v_antes, v_despues,
+      v_cambios, v_uid, v_email, v_nombre
+    );
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
 
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;

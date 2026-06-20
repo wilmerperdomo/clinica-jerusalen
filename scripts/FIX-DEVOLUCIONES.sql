@@ -200,7 +200,10 @@ DECLARE
   v_prev     NUMERIC;
   v_subtotal NUMERIC := 0;
   v_isv      NUMERIC := 0;
+  v_bruto    NUMERIC := 0;
+  v_factor   NUMERIC := 1;
   v_total    NUMERIC := 0;
+  v_descuento NUMERIC := 0;
   v_restante NUMERIC;
   v_sucursal INTEGER;
   v_paciente INTEGER;
@@ -246,7 +249,15 @@ BEGIN
     END IF;
   END LOOP;
 
-  v_total := ROUND(v_subtotal + v_isv, 2);
+  -- Si la factura tuvo descuento global, repartirlo proporcionalmente
+  -- sobre las líneas devueltas (para no exceder el saldo neto).
+  v_bruto := v_subtotal + v_isv;
+  IF (COALESCE(v_fact.subtotal,0) + COALESCE(v_fact.isv_monto,0)) > 0 THEN
+    v_factor := COALESCE(v_fact.total,0) / (v_fact.subtotal + v_fact.isv_monto);
+  END IF;
+  IF v_factor > 1 THEN v_factor := 1; END IF;
+  v_total := ROUND(v_bruto * v_factor, 2);
+  v_descuento := ROUND(v_bruto - v_total, 2);
   IF v_total <= 0 THEN RAISE EXCEPTION 'El total a reembolsar debe ser mayor a cero'; END IF;
 
   v_restante := GREATEST(COALESCE(v_fact.total,0) - COALESCE(v_fact.monto_devuelto,0), 0);
@@ -322,7 +333,7 @@ BEGIN
     es_anulacion, estado, cajero_nombre, usuario_id
   ) VALUES (
     v_numero, p_factura_id, v_fact.numero, v_paciente, v_fact.cliente_nombre, v_sucursal,
-    p_items, ROUND(v_subtotal,2), 0, ROUND(v_isv,2), v_total, p_motivo,
+    p_items, ROUND(v_subtotal,2), v_descuento, ROUND(v_isv,2), v_total, p_motivo,
     p_tipo_reembolso, p_referencia, v_mov_id, p_sesion_id,
     p_anula, 'EMITIDA', p_cajero_nombre, auth.uid()
   ) RETURNING * INTO v_dev;
