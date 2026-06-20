@@ -114,7 +114,7 @@ export default function FacturacionClient({
     cliente_rtn:     '',
     cliente_email:   '',
     paciente_id:     0,
-    exento_isv:      false,
+    exento_isv:      true,
   })
   const [items, setItems] = useState<ItemFactura[]>([{ ...itemVacio }])
 
@@ -271,7 +271,7 @@ export default function FacturacionClient({
   }
 
   function resetForm() {
-    setForm({ sucursal_id: sucDefault?.id ?? 0, cliente_nombre: 'CLIENTE GENERAL', cliente_rtn: '', cliente_email: '', paciente_id: 0, exento_isv: false })
+    setForm({ sucursal_id: sucDefault?.id ?? 0, cliente_nombre: 'CLIENTE GENERAL', cliente_rtn: '', cliente_email: '', paciente_id: 0, exento_isv: true })
     setItems([{ ...itemVacio }])
     setBuscarPac('')
   }
@@ -680,8 +680,8 @@ export default function FacturacionClient({
                   <select value={form.exento_isv ? 'exento' : 'gravado'}
                     onChange={e => setForm(p => ({ ...p, exento_isv: e.target.value === 'exento' }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                    <option value="exento">Exento de ISV (medicina)</option>
                     <option value="gravado">Gravado (15%)</option>
-                    <option value="exento">Exento de ISV</option>
                   </select>
                 </div>
               </div>

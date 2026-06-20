@@ -250,7 +250,7 @@ export default function CajaClient({
   const [consultaCobro,  setConsultaCobro]  = useState<ConsultaPorCobrar | null>(null)
   const [correlativos,   setCorrelativos]   = useState(initCorrelativos)
   const [modalFactura,   setModalFactura]   = useState(false)
-  const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: false })
+  const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: true })
   const [guardandoFact,  setGuardandoFact]  = useState(false)
   const [factImpresa,    setFactImpresa]    = useState<Record<string, unknown> | null>(null)
   const [formCobro, setFormCobro] = useState({
@@ -293,7 +293,7 @@ export default function CajaClient({
   const [ventaRapidaCobro, setVentaRapidaCobro] = useState<VentaRapidaIngresoOk | null>(null)
   const [modalFacturaVentaRapida, setModalFacturaVentaRapida] = useState(false)
   const [formFacturaVentaRapida, setFormFacturaVentaRapida] = useState({
-    nombre_cliente: '', rtn_cliente: '', exento: false,
+    nombre_cliente: '', rtn_cliente: '', exento: true,
   })
   const [guardandoFactVentaRapida, setGuardandoFactVentaRapida] = useState(false)
   const [factImpresaVentaRapida, setFactImpresaVentaRapida] = useState<Record<string, unknown> | null>(null)
@@ -304,7 +304,7 @@ export default function CajaClient({
     setVentaRapidaCobro(null)
     setModalFacturaVentaRapida(false)
     setFactImpresaVentaRapida(null)
-    setFormFacturaVentaRapida({ nombre_cliente: '', rtn_cliente: '', exento: false })
+    setFormFacturaVentaRapida({ nombre_cliente: '', rtn_cliente: '', exento: true })
   }
 
   const ventaRapida = useVentaRapida({
@@ -325,7 +325,7 @@ export default function CajaClient({
       setFormFacturaVentaRapida({
         nombre_cliente: factInit.nombre_cliente,
         rtn_cliente: factInit.rtn_cliente,
-        exento: false,
+        exento: true,
       })
       setVentaRapidaCobro(data)
       startTransition(() => { recargar() })
@@ -819,7 +819,7 @@ export default function CajaClient({
       const factInit = datosFacturaDesdePaciente(pac ?? undefined)
       setConsultaCobro(full)
       setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: String(det.pctDesc), monto_manual: '' })
-      setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: false })
+      setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true })
       setModalCobro(true)
     } finally {
       setLoadingCobro(false)
@@ -1069,7 +1069,7 @@ export default function CajaClient({
     setModalFactura(false)
     setFactImpresa(null)
     setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '' })
-    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: false })
+    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true })
   }
 
   async function abrirModalCobroLab(grupo: LabGrupoCobro) {
@@ -1087,7 +1087,7 @@ export default function CajaClient({
     setPuntosFidelidadLab(
       grupo.pacienteId ? await obtenerSaldoPuntos(supabase, grupo.pacienteId) : 0,
     )
-    setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: false })
+    setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true })
     setLabCobroExitoso(null)
     setLabFacturaCtx(null)
     setModalFacturaLab(false)
@@ -1103,7 +1103,7 @@ export default function CajaClient({
     setModalFacturaLab(false)
     setFactImpresa(null)
     setFormCobroLab({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0' })
-    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: false })
+    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true })
     setPuntosFidelidadLab(0)
     setUsarPuntosLab(false)
     setPuntosCanjearLab('')
@@ -2660,7 +2660,7 @@ export default function CajaClient({
                 className="w-4 h-4 accent-indigo-600"
               />
               <label htmlFor="exento-isv-vr" className="text-sm font-medium text-gray-700 cursor-pointer">
-                Exento de ISV
+                Exento de ISV (medicina)
               </label>
             </div>
 
@@ -3392,7 +3392,7 @@ export default function CajaClient({
                 className="w-4 h-4 accent-indigo-600"
               />
               <label htmlFor="exento-isv-lab" className="text-sm font-medium text-gray-700 cursor-pointer">
-                Exento de ISV
+                Exento de ISV (medicina)
               </label>
               {!formFactura.exento && (
                 <span className="ml-auto text-xs text-gray-500">ISV 15% = L {(labCobroExitoso.total * 0.15 / 1.15).toFixed(2)} incluido</span>
@@ -3736,7 +3736,7 @@ export default function CajaClient({
                 className="w-4 h-4 accent-indigo-600"
               />
               <label htmlFor="exento-isv" className="text-sm font-medium text-gray-700 cursor-pointer">
-                Exento de ISV
+                Exento de ISV (medicina)
               </label>
               {!formFactura.exento && (
                 <span className="ml-auto text-xs text-gray-500">ISV 15% = L {(cobroExitoso.total * 0.15 / 1.15).toFixed(2)} incluido</span>
