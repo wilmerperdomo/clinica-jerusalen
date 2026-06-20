@@ -3,27 +3,15 @@
 --   Al convertir una cotización ya no se emite la factura directo:
 --   se envía a caja con estado POR_COBRAR; caja cobra y emite la
 --   factura fiscal. Aquí se agrega el estado al CHECK constraint.
+--
+--   El CHECK de estado se creó inline en 026 (estado VARCHAR ... CHECK),
+--   por lo que su nombre es determinístico: cotizaciones_estado_check.
+--   Se usa SQL plano para evitar que el SQL Editor de Supabase inyecte
+--   un "ENABLE ROW LEVEL SECURITY" al detectar variables DECLARE.
 -- ═══════════════════════════════════════════════════════════════
 
-DO $$
-DECLARE cname text;
-BEGIN
-  IF to_regclass('public.cotizaciones') IS NULL THEN
-    RETURN;
-  END IF;
+ALTER TABLE cotizaciones DROP CONSTRAINT IF EXISTS cotizaciones_estado_check;
 
-  -- Quitar el CHECK de estado existente (nombre puede variar)
-  SELECT conname INTO cname
-  FROM pg_constraint
-  WHERE conrelid = 'public.cotizaciones'::regclass
-    AND contype = 'c'
-    AND pg_get_constraintdef(oid) ILIKE '%estado%';
-
-  IF cname IS NOT NULL THEN
-    EXECUTE format('ALTER TABLE cotizaciones DROP CONSTRAINT %I', cname);
-  END IF;
-
-  ALTER TABLE cotizaciones
-    ADD CONSTRAINT cotizaciones_estado_check
-    CHECK (estado IN ('PENDIENTE','ACEPTADA','VENCIDA','POR_COBRAR','CONVERTIDA','ANULADA'));
-END $$;
+ALTER TABLE cotizaciones
+  ADD CONSTRAINT cotizaciones_estado_check
+  CHECK (estado IN ('PENDIENTE','ACEPTADA','VENCIDA','POR_COBRAR','CONVERTIDA','ANULADA'));
