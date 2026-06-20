@@ -68,8 +68,18 @@ const ESTADO_STYLE: Record<string, string> = {
   PENDIENTE:  'bg-amber-100 text-amber-800',
   ACEPTADA:   'bg-green-100 text-green-800',
   VENCIDA:    'bg-gray-100 text-gray-600',
+  POR_COBRAR: 'bg-orange-100 text-orange-800',
   CONVERTIDA: 'bg-blue-100 text-blue-800',
   ANULADA:    'bg-red-100 text-red-700',
+}
+
+const ESTADO_LABEL: Record<string, string> = {
+  PENDIENTE:  'PENDIENTE',
+  ACEPTADA:   'ACEPTADA',
+  VENCIDA:    'VENCIDA',
+  POR_COBRAR: 'EN CAJA',
+  CONVERTIDA: 'CONVERTIDA',
+  ANULADA:    'ANULADA',
 }
 
 /* ── helpers correlativo fiscal (mismo patrón que facturación) ─ */
@@ -385,17 +395,17 @@ export default function CotizacionesClient({
     if (est === 'VENCIDA') {
       const { confirmed } = await confirmDialog({
         title: 'Cotización vencida',
-        message: 'Esta cotización está vencida. ¿Desea convertirla en factura de todas formas?',
+        message: 'Esta cotización está vencida. ¿Desea enviarla a caja para cobro de todas formas?',
         variant: 'warning',
-        confirmLabel: 'Convertir igualmente',
+        confirmLabel: 'Enviar a caja igualmente',
       })
       if (!confirmed) return
     } else {
       const { confirmed } = await confirmDialog({
-        title: 'Convertir en factura',
-        message: `¿Convertir cotización ${cot.numero} en factura fiscal?`,
+        title: 'Enviar a caja para cobro',
+        message: `¿Enviar la cotización ${cot.numero} a caja? El cajero la cobrará y emitirá la factura fiscal.`,
         variant: 'info',
-        confirmLabel: 'Convertir',
+        confirmLabel: 'Enviar a caja',
         details: [
           { label: 'Cliente', value: cot.cliente_nombre },
           { label: 'Total', value: fmtCot(cot.total) },
@@ -413,68 +423,26 @@ export default function CotizacionesClient({
 
     setLoadingConv(true)
     try {
-      const numSig = siguienteNumeroFact(suc, factCorrs)
-      const numero = formatearNumeroFact(numSig, suc)
-
-      if (suc.num_max) {
-        const maxNum = Number(String(suc.num_max).replace(/\D/g, ''))
-        if (numSig > maxNum) throw new Error(`Número fiscal excede el rango del CAI. Renueva el CAI.`)
-      }
-
-      const payload = {
-        numero,
-        sucursal_id:     cot.sucursal_id,
-        fecha:           hoy,
-        hora:            new Date().toTimeString().slice(0, 8),
-        cliente_nombre:  cot.cliente_nombre,
-        cliente_rtn:     cot.cliente_rtn || null,
-        cliente_email:   cot.cliente_email || null,
-        items:           cot.items,
-        subtotal:        cot.subtotal,
-        descuento_monto: cot.descuento_monto,
-        isv_monto:       cot.isv_monto,
-        total:           cot.total,
-        exento_isv:      cot.exento_isv,
-        paciente_id:     cot.paciente_id || null,
-        cotizacion_id:   cot.id,
-        cajero_nombre:   cajeroNombre,
-        cai:             suc.cai || null,
-        rtn_emisor:      suc.rtn || null,
-        rango_inicio:    suc.num_min || null,
-        rango_fin:       suc.num_max || null,
-        fecha_limite_cai:suc.fecha_limite || null,
-      }
-
-      const { data: nf, error: e } = await supabase
-        .from('facturas')
-        .insert(payload)
-        .select('id, numero')
-        .single()
-      if (e) throw new Error(e.message)
-
-      await supabase.from('factura_correlativos').upsert(
-        { sucursal_id: cot.sucursal_id, ultimo_numero: numSig },
-        { onConflict: 'sucursal_id' },
-      )
-
-      await supabase
+      // No se emite factura aquí: se envía a caja. El cajero cobra y
+      // genera la factura fiscal con su correlativo (claim-first).
+      const { data: enviada, error: e } = await supabase
         .from('cotizaciones')
-        .update({ estado: 'CONVERTIDA', factura_id: nf?.id })
+        .update({ estado: 'POR_COBRAR' })
         .eq('id', cot.id)
+        .in('estado', ['PENDIENTE', 'ACEPTADA', 'VENCIDA'])
+        .select('id')
+      if (e) throw new Error(e.message)
+      if (!enviada || enviada.length === 0) {
+        throw new Error('La cotización ya fue enviada a caja o cambió de estado. Actualiza la lista.')
+      }
 
-      setFactCorrs(prev => {
-        const ex = prev.find(c => c.sucursal_id === cot.sucursal_id)
-        if (ex) return prev.map(c => c.sucursal_id === cot.sucursal_id ? { ...c, ultimo_numero: numSig } : c)
-        return [...prev, { sucursal_id: cot.sucursal_id, ultimo_numero: numSig }]
-      })
-
-      const actualizada = { ...cot, estado: 'CONVERTIDA', factura_id: nf?.id }
+      const actualizada = { ...cot, estado: 'POR_COBRAR' }
       setLista(prev => prev.map(c => c.id === cot.id ? actualizada : c))
       if (verCot?.id === cot.id) setVerCot(actualizada)
 
-      alert(`✅ Factura ${nf?.numero} creada exitosamente.\n\nPuedes verla e imprimirla en el módulo de Facturación.`)
+      alert(`✅ Cotización ${cot.numero} enviada a caja.\n\nEl cajero la cobrará en el módulo de Caja → pestaña "Cotizaciones" y emitirá la factura.`)
     } catch (err: unknown) {
-      alert('Error al convertir: ' + (err instanceof Error ? err.message : err))
+      alert('Error al enviar a caja: ' + (err instanceof Error ? err.message : err))
     } finally { setLoadingConv(false) }
   }
 
@@ -577,7 +545,7 @@ export default function CotizacionesClient({
               )}
               {listaFiltrada.map(c => {
                 const est = estadoEfectivo(c.estado, c.fecha_vencimiento, hoy)
-                const puedeConvertir = est !== 'CONVERTIDA' && est !== 'ANULADA'
+                const puedeConvertir = est !== 'CONVERTIDA' && est !== 'ANULADA' && est !== 'POR_COBRAR'
                 return (
                   <tr key={c.id} className={`hover:bg-gray-50 ${est === 'ANULADA' ? 'opacity-50' : ''}`}>
                     <td className="px-4 py-3 font-mono text-sm font-bold text-teal-700">{c.numero}</td>
@@ -591,7 +559,7 @@ export default function CotizacionesClient({
                     <td className="px-4 py-3 text-center text-xs text-gray-500">{c.fecha_vencimiento}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ESTADO_STYLE[est] ?? 'bg-gray-100'}`}>
-                        {est}
+                        {ESTADO_LABEL[est] ?? est}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -611,11 +579,14 @@ export default function CotizacionesClient({
                           </button>
                         )}
                         {puedeConvertir && (
-                          <button onClick={() => convertirEnFactura(c)} disabled={loadingConv} title="Convertir en factura"
+                          <button onClick={() => convertirEnFactura(c)} disabled={loadingConv} title="Enviar a caja para cobro"
                             className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50">
                             <ArrowRightCircle className="w-3.5 h-3.5" />
-                            Factura
+                            A caja
                           </button>
+                        )}
+                        {est === 'POR_COBRAR' && (
+                          <span className="text-xs text-orange-600 font-medium">En caja</span>
                         )}
                         {c.estado === 'CONVERTIDA' && c.factura_id && (
                           <span className="text-xs text-blue-600 font-mono">#{c.factura_id}</span>
@@ -906,10 +877,10 @@ export default function CotizacionesClient({
                   className="flex items-center gap-1.5 px-3 py-2 bg-teal-600 text-white rounded-xl text-sm hover:bg-teal-700">
                   <Printer className="w-4 h-4" /> Imprimir
                 </button>
-                {verCot.estado !== 'CONVERTIDA' && verCot.estado !== 'ANULADA' && (
+                {verCot.estado !== 'CONVERTIDA' && verCot.estado !== 'ANULADA' && verCot.estado !== 'POR_COBRAR' && (
                   <button onClick={() => convertirEnFactura(verCot)} disabled={loadingConv}
                     className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700 disabled:opacity-50">
-                    <ArrowRightCircle className="w-4 h-4" /> Convertir en Factura
+                    <ArrowRightCircle className="w-4 h-4" /> Enviar a caja
                   </button>
                 )}
                 <button onClick={() => setVerCot(null)} className="text-gray-400 hover:text-gray-600 p-1">
@@ -920,7 +891,7 @@ export default function CotizacionesClient({
             <div className="px-6 py-5 space-y-3 text-sm">
               <div className="flex items-center gap-2">
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ESTADO_STYLE[estadoEfectivo(verCot.estado, verCot.fecha_vencimiento, hoy)]}`}>
-                  {estadoEfectivo(verCot.estado, verCot.fecha_vencimiento, hoy)}
+                  {ESTADO_LABEL[estadoEfectivo(verCot.estado, verCot.fecha_vencimiento, hoy)] ?? estadoEfectivo(verCot.estado, verCot.fecha_vencimiento, hoy)}
                 </span>
                 <span className="text-xs text-gray-400 flex items-center gap-1">
                   <Clock className="w-3 h-3" /> Vence: {verCot.fecha_vencimiento}

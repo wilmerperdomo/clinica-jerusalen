@@ -6,7 +6,7 @@ import { X } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 
 export type CajaModalSize = 'sm' | 'md' | 'wide' | 'xl' | 'full'
-export type CajaModalAccent = 'default' | 'green' | 'cyan' | 'indigo'
+export type CajaModalAccent = 'default' | 'green' | 'cyan' | 'indigo' | 'amber'
 
 const MODAL_MAX_W: Record<CajaModalSize, string> = {
   sm: 'sm:max-w-md',
@@ -20,6 +20,7 @@ const MODAL_ACCENT_BG: Record<Exclude<CajaModalAccent, 'default'>, string> = {
   green: `linear-gradient(135deg, ${BRAND.navy} 0%, #0d4a3a 100%)`,
   cyan: `linear-gradient(135deg, ${BRAND.navy} 0%, #0c4a6e 100%)`,
   indigo: `linear-gradient(135deg, ${BRAND.navy} 0%, #3730a3 100%)`,
+  amber: `linear-gradient(135deg, ${BRAND.navy} 0%, #9a3412 100%)`,
 }
 
 interface CajaModalProps {

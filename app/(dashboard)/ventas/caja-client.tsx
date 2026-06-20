@@ -148,6 +148,23 @@ interface MembresiaPagoCobro {
   }
 }
 
+interface CotizacionPorCobrar {
+  id: number
+  numero: string
+  sucursal_id: number
+  cliente_nombre: string
+  cliente_rtn?: string | null
+  cliente_email?: string | null
+  paciente_id?: number | null
+  items: unknown
+  subtotal: number
+  descuento_monto: number
+  isv_monto: number
+  total: number
+  exento_isv: boolean
+  fecha: string
+}
+
 interface Props {
   sesionActual:       Sesion | null
   conceptos:          Concepto[]
@@ -164,6 +181,7 @@ interface Props {
   consultasPorCobrar:      ConsultaPorCobrar[]
   labGruposPorCobrar:      LabGrupoCobro[]
   membresiaPagosPorCobrar: MembresiaPagoCobro[]
+  cotizacionesPorCobrar:   CotizacionPorCobrar[]
   correlativos:            Correlativo[]
 }
 
@@ -181,17 +199,25 @@ export default function CajaClient({
   consultasPorCobrar: initConsultasPorCobrar,
   labGruposPorCobrar: initLabGruposPorCobrar,
   membresiaPagosPorCobrar: initMembresiaPagosPorCobrar,
+  cotizacionesPorCobrar: initCotizacionesPorCobrar,
   correlativos: initCorrelativos,
 }: Props) {
   const [sesion,   setSesion]   = useState<Sesion | null>(initSesion)
   const [cxc,      setCxc]      = useState<CXC[]>(initCxc)
-  const [tab, setTab] = useState<'movimientos' | 'cxc' | 'cobrar' | 'lab_cobrar' | 'membresias_cobrar'>('movimientos')
+  const [tab, setTab] = useState<'movimientos' | 'cxc' | 'cobrar' | 'lab_cobrar' | 'membresias_cobrar' | 'cot_cobrar'>('movimientos')
   const [vistaMovs, setVistaMovs] = useState<'hoy' | 'historial'>('hoy')
   const [historialDias, setHistorialDias] = useState<DiaHistorialCaja[]>([])
   const [cargandoHistorial, setCargandoHistorial] = useState(false)
   const [consultasPorCobrar, setConsultasPorCobrar] = useState<ConsultaPorCobrar[]>(initConsultasPorCobrar ?? [])
   const [labPorCobrar, setLabPorCobrar] = useState<LabGrupoCobro[]>(initLabGruposPorCobrar ?? [])
   const [membresiaPorCobrar, setMembresiaPorCobrar] = useState<MembresiaPagoCobro[]>(initMembresiaPagosPorCobrar ?? [])
+  const [cotPorCobrar, setCotPorCobrar] = useState<CotizacionPorCobrar[]>(initCotizacionesPorCobrar ?? [])
+  const [cotCobro, setCotCobro] = useState<CotizacionPorCobrar | null>(null)
+  const [modalCobroCot, setModalCobroCot] = useState(false)
+  const [guardandoCobroCot, setGuardandoCobroCot] = useState(false)
+  const [formCobroCot, setFormCobroCot] = useState({
+    forma_pago: 'EFECTIVO', referencia: '', nota: '',
+  })
   const [modalCobroLab, setModalCobroLab] = useState(false)
   const [modalCobroMembresia, setModalCobroMembresia] = useState(false)
   const [membresiaPagoCobro, setMembresiaPagoCobro] = useState<MembresiaPagoCobro | null>(null)
@@ -350,6 +376,17 @@ export default function CajaClient({
       .order('fecha_vencimiento')
       .limit(100)
     if (mp) setMembresiaPorCobrar(mp as MembresiaPagoCobro[])
+
+    const cotQuery = supabase
+      .from('cotizaciones')
+      .select('id, numero, sucursal_id, cliente_nombre, cliente_rtn, cliente_email, paciente_id, items, subtotal, descuento_monto, isv_monto, total, exento_isv, fecha')
+      .eq('estado', 'POR_COBRAR')
+      .order('fecha', { ascending: false })
+      .limit(100)
+    const { data: cotRows } = (!esAdmin && perfil?.sucursal_id)
+      ? await cotQuery.eq('sucursal_id', perfil.sucursal_id)
+      : await cotQuery
+    if (cotRows) setCotPorCobrar(cotRows as CotizacionPorCobrar[])
   }
 
   /* ── apertura de caja ─ */
@@ -1409,6 +1446,216 @@ export default function CajaClient({
     })
   }
 
+  /* ════════ COBRO DE COTIZACIÓN (enviada desde Cotizaciones) ════════ */
+  function abrirModalCobroCot(c: CotizacionPorCobrar) {
+    if (!sesion) {
+      alert('Debes abrir la caja del día antes de cobrar cotizaciones')
+      return
+    }
+    setCotCobro(c)
+    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setModalCobroCot(true)
+  }
+
+  function cerrarModalCobroCot() {
+    setModalCobroCot(false)
+    setCotCobro(null)
+    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+  }
+
+  async function procesarCobroCotizacion() {
+    if (!cotCobro || !sesion) return
+    const errSesion = validarSesionOperacion(sesion, userId)
+    if (errSesion) { alert(errSesion); return }
+
+    setGuardandoCobroCot(true)
+    const sb2 = supabase
+    const cot = cotCobro
+
+    const suc = sucursales.find(s => s.id === cot.sucursal_id) ?? sucursalActiva
+    if (!suc) {
+      alert('No se encontró la sucursal de la cotización.')
+      setGuardandoCobroCot(false)
+      return
+    }
+    if (suc.fecha_limite && suc.fecha_limite < fechaHoy) {
+      alert(`El CAI de ${suc.nombre} venció el ${suc.fecha_limite}. Renueva el CAI en Configuración.`)
+      setGuardandoCobroCot(false)
+      return
+    }
+
+    const total = Number(cot.total)
+    if (total <= 0) {
+      alert('El total de la cotización debe ser mayor a cero')
+      setGuardandoCobroCot(false)
+      return
+    }
+
+    const errRef = validarReferenciaPago(formCobroCot.forma_pago, formCobroCot.referencia)
+    if (errRef) { alert(errRef); setGuardandoCobroCot(false); return }
+    const errCred = validarCreditoConPaciente(formCobroCot.forma_pago, cot.paciente_id ?? undefined)
+    if (errCred) { alert(errCred); setGuardandoCobroCot(false); return }
+
+    // ── 1. RECLAMAR la cotización (anti doble-cobro): POR_COBRAR → CONVERTIDA ──
+    const { data: reclamada, error: errClaim } = await sb2.from('cotizaciones').update({
+      estado: 'CONVERTIDA',
+    }).eq('id', cot.id).eq('estado', 'POR_COBRAR').select('id')
+    if (errClaim) {
+      alert('Error al cobrar cotización: ' + errClaim.message)
+      setGuardandoCobroCot(false)
+      return
+    }
+    if (!reclamada || reclamada.length === 0) {
+      alert('Esta cotización ya fue cobrada o cambió de estado. Actualice la lista.')
+      setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
+      cerrarModalCobroCot()
+      setGuardandoCobroCot(false)
+      return
+    }
+    const revertirClaim = async () => {
+      await sb2.from('cotizaciones').update({ estado: 'POR_COBRAR' }).eq('id', cot.id)
+    }
+
+    const hora = new Date().toTimeString().slice(0, 5)
+    const cajeroNombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim()
+
+    // ── 2. Registrar el dinero; si falla, revertir el claim ──
+    const { error: errMov } = await insertarMovimientoCaja(sb2, {
+      sesion_id:       sesion.id,
+      sucursal_id:     sesion.sucursal_id,
+      cajero_id:       userId,
+      tipo:            'INGRESO',
+      concepto:        `Cotización ${cot.numero} — ${cot.cliente_nombre}`,
+      paciente_id:     cot.paciente_id ?? null,
+      paciente_nombre: cot.cliente_nombre,
+      monto:           total,
+      monto_bruto:     Number(cot.subtotal) || total,
+      descuento_monto: Number(cot.descuento_monto) || 0,
+      forma_pago:      formCobroCot.forma_pago,
+      referencia_pago: formCobroCot.referencia || null,
+      nota:            formCobroCot.nota || `Cotización ${cot.numero}`,
+      fecha:           fechaHoy,
+      hora,
+    })
+    if (errMov) {
+      await revertirClaim()
+      alert('Error al registrar cobro: ' + errMov.message)
+      setGuardandoCobroCot(false)
+      return
+    }
+
+    const { error: errSes } = await sb2.from('caja_sesiones').update({
+      total_ingresos: (sesion.total_ingresos || 0) + total,
+    }).eq('id', sesion.id)
+    if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
+
+    // ── 3. Crédito → cuenta por cobrar ──
+    if (formCobroCot.forma_pago === 'CREDITO') {
+      const { error: errCxc } = await sb2.from('cxc').insert({
+        paciente_id:     cot.paciente_id ?? null,
+        paciente_nombre: cot.cliente_nombre,
+        concepto:        `Cotización ${cot.numero}`,
+        monto_total:     total,
+        monto_pagado:    0,
+        saldo:           total,
+        estado:          'PENDIENTE',
+        fecha:           fechaHoy,
+        sucursal_id:     sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
+      })
+      if (errCxc) console.warn('cxc cotización:', errCxc.message)
+    }
+
+    // ── 4. Emitir factura fiscal con correlativo (claim-first del número) ──
+    let itemsFactura: unknown = cot.items
+    if (typeof itemsFactura === 'string') {
+      try { itemsFactura = JSON.parse(itemsFactura) } catch { itemsFactura = [] }
+    }
+
+    const payloadBase = {
+      fecha:            fechaHoy,
+      hora:             new Date().toTimeString().slice(0, 8),
+      sucursal_id:      suc.id,
+      paciente_id:      cot.paciente_id ?? null,
+      cliente_nombre:   cot.cliente_nombre || 'CONSUMIDOR FINAL',
+      cliente_rtn:      cot.cliente_rtn || null,
+      cliente_email:    cot.cliente_email || null,
+      items:            itemsFactura,
+      subtotal:         Number(cot.subtotal),
+      descuento_monto:  Number(cot.descuento_monto) || 0,
+      isv_monto:        Number(cot.isv_monto) || 0,
+      total,
+      exento_isv:       !!cot.exento_isv,
+      cotizacion_id:    cot.id,
+      cajero_nombre:    cajeroNombre,
+      cai:              suc.cai ?? null,
+      rtn_emisor:       suc.rtn ?? null,
+      rango_inicio:     suc.num_min ?? null,
+      rango_fin:        suc.num_max ?? null,
+      fecha_limite_cai: suc.fecha_limite ?? null,
+    }
+
+    let fact: Record<string, unknown> | null = null
+    let numSig = 0
+    let ultimoError: string | null = null
+    for (let intento = 0; intento < 4; intento++) {
+      const reserva = await reservarSiguienteCorrelativo(sb2, suc.id, suc, intento > 0 ? numSig + 1 : undefined)
+      numSig = reserva.numSig
+      const { data, error } = await sb2.from('facturas')
+        .insert({ ...payloadBase, numero: reserva.numero })
+        .select()
+        .single()
+      if (!error) {
+        fact = data
+        await confirmarCorrelativo(sb2, suc.id, numSig)
+        break
+      }
+      ultimoError = error.message
+      if (!esErrorNumeroDuplicado(error)) break
+      numSig += 1
+    }
+
+    if (!fact) {
+      // El cobro ya quedó registrado y la cotización está CONVERTIDA.
+      alert('El cobro se registró, pero no se pudo emitir la factura automáticamente: ' +
+        (ultimoError ?? 'número duplicado') + '.\nEmita la factura desde Facturación para esta cotización.')
+      setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
+      cerrarModalCobroCot()
+      setGuardandoCobroCot(false)
+      startTransition(() => recargar())
+      return
+    }
+
+    setCorrelativos(prev => {
+      const idx = prev.findIndex(c => c.sucursal_id === suc.id)
+      if (idx >= 0) {
+        const n = [...prev]
+        n[idx] = { sucursal_id: suc.id, ultimo_numero: numSig }
+        return n
+      }
+      return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
+    })
+
+    await sb2.from('cotizaciones').update({ factura_id: fact.id }).eq('id', cot.id)
+
+    if (fact.paciente_id) {
+      const resPts = await acumularPuntosPorFactura(sb2, fact.id as number)
+      if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+    }
+
+    setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
+    cerrarModalCobroCot()
+    setGuardandoCobroCot(false)
+
+    abrirFacturaTermica(facturaPrintDesdeRegistro({ ...fact, sucursal: suc }), { autoPrint: true })
+
+    startTransition(async () => {
+      const { data: s2 } = await sb2.from('caja_sesiones')
+        .select('*, movimientos:caja_movimientos(*)')
+        .eq('id', sesion.id).maybeSingle()
+      if (s2) setSesion(s2)
+    })
+  }
+
   /* ── generar factura después del cobro ── */
   async function generarFactura() {
     if (!consultaCobro || !cobroExitoso) return
@@ -1903,6 +2150,7 @@ export default function CajaClient({
             { key: 'cobrar', label: `Consultas (${consultasPorCobrar.length})`, alert: consultasPorCobrar.length > 0 },
             { key: 'lab_cobrar', label: `Lab por cobrar (${labPorCobrar.length})`, alert: labPorCobrar.length > 0 },
             { key: 'membresias_cobrar', label: `Membresías (${membresiaPorCobrar.length})`, alert: membresiaPorCobrar.length > 0 },
+            { key: 'cot_cobrar', label: `Cotizaciones (${cotPorCobrar.length})`, alert: cotPorCobrar.length > 0 },
             { key: 'cxc', label: `Cuentas por Cobrar (${cxc.length})` },
           ] as const).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
@@ -2205,6 +2453,52 @@ export default function CajaClient({
               {!sesion && membresiaPorCobrar.length > 0 && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">
                   Abra la caja del día para poder cobrar cuotas de membresía.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ══ TAB COTIZACIONES POR COBRAR ══ */}
+          {tab === 'cot_cobrar' && (
+            <div>
+              {cotPorCobrar.length === 0 ? (
+                <div className="py-16 text-center text-gray-400">
+                  <FileText className="w-10 h-10 mx-auto mb-3 text-orange-300" />
+                  <p className="font-medium">No hay cotizaciones pendientes de cobro</p>
+                  <p className="text-sm mt-1">Las cotizaciones enviadas a caja desde el módulo de Cotizaciones aparecen aquí</p>
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {cotPorCobrar.map(c => (
+                    <div key={c.id} className="px-4 py-3 flex items-center gap-4 hover:bg-gray-50">
+                      <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
+                        <FileText className="w-5 h-5 text-orange-700" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-900">{c.cliente_nombre}</p>
+                        <p className="text-xs text-gray-400">
+                          {c.numero} · {c.fecha}
+                          {c.cliente_rtn ? ` · RTN ${c.cliente_rtn}` : ''}
+                        </p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="font-bold text-gray-900">{fmt(c.total)}</p>
+                        <button
+                          type="button"
+                          onClick={() => abrirModalCobroCot(c)}
+                          disabled={!sesion || guardandoCobroCot}
+                          className="mt-1 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition"
+                        >
+                          Cobrar y facturar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!sesion && cotPorCobrar.length > 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-3">
+                  Abra la caja del día para poder cobrar cotizaciones.
                 </p>
               )}
             </div>
@@ -2706,6 +3000,93 @@ export default function CajaClient({
           </Modal>
         )
       })()}
+
+      {/* ══════════ MODAL COBRO COTIZACIÓN ══════════ */}
+      {modalCobroCot && cotCobro && (
+        <Modal
+          title="Cobro de Cotización"
+          subtitle={`${cotCobro.numero} · ${cotCobro.cliente_nombre}`}
+          size="wide"
+          accent="amber"
+          icon={FileText}
+          onClose={cerrarModalCobroCot}
+          footer={(
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3">
+              <button type="button" onClick={cerrarModalCobroCot}
+                className="px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-medium hover:bg-white">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={procesarCobroCotizacion}
+                disabled={guardandoCobroCot}
+                className="px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+              >
+                {guardandoCobroCot ? 'Procesando…' : `Cobrar y facturar ${fmt(cotCobro.total)}`}
+              </button>
+            </div>
+          )}
+        >
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <div className="rounded-xl border border-orange-100 bg-orange-50/60 p-4 space-y-1 text-sm">
+                <p className="font-semibold text-orange-900">{cotCobro.cliente_nombre}</p>
+                <p className="text-orange-700">Cotización {cotCobro.numero}</p>
+                {cotCobro.cliente_rtn && <p className="text-xs text-orange-600">RTN {cotCobro.cliente_rtn}</p>}
+                <p className="text-xs text-orange-600">Fecha {cotCobro.fecha}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Forma de pago</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {FORMAS_PAGO.map(fp => (
+                    <button key={fp.key} type="button"
+                      onClick={() => setFormCobroCot(p => ({ ...p, forma_pago: fp.key }))}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs transition-all ${
+                        formCobroCot.forma_pago === fp.key
+                          ? 'border-orange-500 bg-orange-50 text-orange-700'
+                          : 'border-gray-200 text-gray-600'
+                      }`}>
+                      <fp.icon className="w-3.5 h-3.5" /> {fp.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="rounded-xl border p-4 text-center">
+                <p className="text-xs text-gray-500 uppercase tracking-wide">Total a cobrar</p>
+                <p className="text-3xl font-bold text-orange-700 mt-1">{fmt(cotCobro.total)}</p>
+                {Number(cotCobro.descuento_monto) > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">Incluye descuento de {fmt(cotCobro.descuento_monto)}</p>
+                )}
+              </div>
+              {(formCobroCot.forma_pago === 'TARJETA' || formCobroCot.forma_pago === 'TRANSFERENCIA') && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Referencia</label>
+                  <input
+                    value={formCobroCot.referencia}
+                    onChange={e => setFormCobroCot(p => ({ ...p, referencia: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    placeholder="No. voucher / transferencia"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nota</label>
+                <input
+                  value={formCobroCot.nota}
+                  onChange={e => setFormCobroCot(p => ({ ...p, nota: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Opcional"
+                />
+              </div>
+              <p className="text-[11px] text-gray-400">
+                Al cobrar se registra el ingreso en caja y se emite la factura fiscal automáticamente.
+              </p>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* ══════════ MODAL COBRO LABORATORIO DIRECTO ══════════ */}
       {modalCobroLab && labGrupoCobro && (() => {

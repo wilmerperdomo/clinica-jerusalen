@@ -43,6 +43,7 @@ export default async function VentasPage() {
     { data: pruebasLab },
     consultasResult,
     { data: correlativos },
+    { data: cotizacionesPorCobrarRaw },
     { data: membresiaPagosRaw },
   ] = await Promise.all([
     supabase
@@ -101,6 +102,10 @@ export default async function VentasPage() {
     supabase
       .from('factura_correlativos')
       .select('sucursal_id, ultimo_numero'),
+
+    ((!esSuperAdmin && sucursalId)
+      ? supabase.from('cotizaciones').select('id, numero, sucursal_id, cliente_nombre, cliente_rtn, cliente_email, paciente_id, items, subtotal, descuento_monto, isv_monto, total, exento_isv, fecha').eq('estado', 'POR_COBRAR').eq('sucursal_id', sucursalId).order('fecha', { ascending: false }).limit(100)
+      : supabase.from('cotizaciones').select('id, numero, sucursal_id, cliente_nombre, cliente_rtn, cliente_email, paciente_id, items, subtotal, descuento_monto, isv_monto, total, exento_isv, fecha').eq('estado', 'POR_COBRAR').order('fecha', { ascending: false }).limit(100)),
 
     supabase
       .from('membresia_pagos')
@@ -198,6 +203,7 @@ export default async function VentasPage() {
       consultasPorCobrar={consultasPorCobrar || []}
       labGruposPorCobrar={labGruposPorCobrar}
       membresiaPagosPorCobrar={membresiaPagosPorCobrar}
+      cotizacionesPorCobrar={cotizacionesPorCobrarRaw || []}
       correlativos={correlativos || []}
     />
   )
