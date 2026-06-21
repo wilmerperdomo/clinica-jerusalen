@@ -8,7 +8,7 @@ import {
   Package, Pill, ShoppingCart, Receipt, CreditCard,
   BarChart3, Settings, LogOut, ChevronRight,
   FileText, BookOpen, CalendarDays, Building2, KeyRound, X, Eye, EyeOff, Truck, Menu, Bell, ClipboardList,
-  Wallet, PieChart, MapPin, ShieldCheck,
+  Wallet, PieChart, MapPin, ShieldCheck, Tag,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, getInitials } from '@/lib/utils'
@@ -36,6 +36,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ADMINISTRATIVO',
     items: [
+      { href: '/precios',     label: 'Consulta de Precios', icon: Tag    },
       { href: '/ventas',      label: 'Ventas',       icon: Receipt      },
       { href: '/compras',     label: 'Compras',      icon: ShoppingCart },
       { href: '/cxp',        label: 'Cuentas por Pagar', icon: CreditCard },
@@ -124,6 +125,11 @@ export default function Sidebar({
     if (!modulosPermitidos || modulosPermitidos.length === 0) return false
     if (href === '/colonias') {
       return modulosPermitidos.includes('pacientes') || modulosPermitidos.includes('configuracion')
+    }
+    // Consulta de precios: visible para personal de mostrador (cualquiera con acceso a estos módulos)
+    if (href === '/precios') {
+      return ['ventas', 'laboratorio', 'productos', 'inventario', 'cotizaciones']
+        .some(m => modulosPermitidos.includes(m))
     }
     const clave = href.replace('/', '') || 'dashboard'
     return modulosPermitidos.includes(clave)
