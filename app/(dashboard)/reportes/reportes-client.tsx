@@ -7,7 +7,7 @@ import {
   Users, Stethoscope, FlaskConical, CreditCard,
   Printer, RefreshCw, CheckCircle2, Clock,
   Banknote, ArrowRightLeft, Receipt, FileDown,
-  Scale, ShoppingCart, LayoutGrid,
+  Scale, ShoppingCart, LayoutGrid, BadgePercent,
 } from 'lucide-react'
 import { exportarCSV, fmtReporte, imprimirReporte } from '@/lib/reporte-utils'
 import { ModuleShell, ModuleHero, ModuleContent } from '@/components/module-layout'
@@ -75,7 +75,7 @@ interface CxpAbono {
   cajero_nombre?: string; fecha: string; hora?: string; sucursal_id?: number
 }
 
-type TabId = 'resumen' | 'caja' | 'consultas' | 'lab' | 'cxc' | 'fiscal' | 'cxp' | 'compras' | 'inventario' | 'pacientes'
+type TabId = 'resumen' | 'caja' | 'consultas' | 'lab' | 'cxc' | 'fiscal' | 'cxp' | 'compras' | 'inventario' | 'pacientes' | 'descuentos'
 
 interface Props {
   movimientos:      Movimiento[]
@@ -118,6 +118,7 @@ const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: 'compras',    label: 'Compras',      icon: ShoppingCart  },
   { id: 'inventario', label: 'Inventario',   icon: TrendingUp    },
   { id: 'pacientes',  label: 'Pacientes',    icon: Users         },
+  { id: 'descuentos', label: 'Desc. edad',   icon: BadgePercent  },
 ]
 
 const FORMAS: Record<string, { label: string; icon: React.ElementType; color: string }> = {
@@ -177,6 +178,40 @@ export default function ReportesClient({
       return acc
     }, {} as Record<string, number>)
   ).sort((a, b) => b[1] - a[1]).slice(0, 10)
+
+  /* ── descuentos 3ra/4ta edad (de caja_movimientos) ─ */
+  const movsDescEdad = movimientos.filter(m =>
+    (m.descuento_monto || 0) > 0 && /edad/i.test(m.descuento_motivo || ''))
+  const clasifEdad = (motivo?: string): '3ra' | '4ta' | null => {
+    const t = (motivo || '').toLowerCase()
+    if (/4ta|cuarta/.test(t)) return '4ta'
+    if (/3ra|tercera/.test(t)) return '3ra'
+    return null
+  }
+  const descEdadTercera = movsDescEdad.filter(m => clasifEdad(m.descuento_motivo) === '3ra')
+  const descEdadCuarta  = movsDescEdad.filter(m => clasifEdad(m.descuento_motivo) === '4ta')
+  const sumDesc = (arr: Movimiento[]) => arr.reduce((s, m) => s + (m.descuento_monto || 0), 0)
+  const descEdadTotal     = sumDesc(movsDescEdad)
+  const descEdadTotal3ra  = sumDesc(descEdadTercera)
+  const descEdadTotal4ta  = sumDesc(descEdadCuarta)
+  /* agrupado por mes (YYYY-MM) para el reporte mensual */
+  const descEdadPorMes = Object.entries(
+    movsDescEdad.reduce((acc, m) => {
+      const mes = (m.fecha || '').slice(0, 7)
+      if (!mes) return acc
+      if (!acc[mes]) acc[mes] = { mes, total: 0, t3: 0, t4: 0, cuenta: 0 }
+      acc[mes].total += m.descuento_monto || 0
+      if (clasifEdad(m.descuento_motivo) === '4ta') acc[mes].t4 += m.descuento_monto || 0
+      else acc[mes].t3 += m.descuento_monto || 0
+      acc[mes].cuenta += 1
+      return acc
+    }, {} as Record<string, { mes: string; total: number; t3: number; t4: number; cuenta: number }>)
+  ).sort((a, b) => b[0].localeCompare(a[0])).map(([, v]) => v)
+  const fmtMes = (mes: string) => {
+    const [y, mm] = mes.split('-')
+    const d = new Date(Number(y), Number(mm) - 1, 1)
+    return Number.isNaN(d.getTime()) ? mes : d.toLocaleDateString('es-HN', { month: 'long', year: 'numeric' })
+  }
 
   /* ── cálculos consultas ─ */
   const citasAtendidas = citas.filter(c => c.estado === 'ASISTIO' || c.estado === 'ASISTIÓ').length
@@ -1217,6 +1252,118 @@ export default function ReportesClient({
               <p>No se registraron pacientes nuevos en este período</p>
             </div>
           )}
+        </div>
+      </div>}
+
+      {tabActivo === 'descuentos' && <div className="space-y-5">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="text-xs font-semibold text-gray-500 uppercase">Total descuentos por edad</p>
+            <p className="text-2xl font-black text-amber-700 mt-1 tabular-nums">L {fmt(descEdadTotal)}</p>
+            <p className="text-xs text-gray-400 mt-1">{movsDescEdad.length} cobro(s) con descuento</p>
+          </div>
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="text-xs font-semibold text-gray-500 uppercase">Tercera edad</p>
+            <p className="text-2xl font-black text-gray-800 mt-1 tabular-nums">L {fmt(descEdadTotal3ra)}</p>
+            <p className="text-xs text-gray-400 mt-1">{descEdadTercera.length} cobro(s)</p>
+          </div>
+          <div className="bg-white border rounded-2xl p-5">
+            <p className="text-xs font-semibold text-gray-500 uppercase">Cuarta edad</p>
+            <p className="text-2xl font-black text-gray-800 mt-1 tabular-nums">L {fmt(descEdadTotal4ta)}</p>
+            <p className="text-xs text-gray-400 mt-1">{descEdadCuarta.length} cobro(s)</p>
+          </div>
+        </div>
+
+        <div className="bg-white border rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b bg-gray-50">
+            <h2 className="font-bold text-gray-800 flex items-center gap-2">
+              <BadgePercent className="w-5 h-5 text-amber-600" /> Descuentos por edad · resumen mensual
+            </h2>
+            <BtnExport nombre="descuentos_edad_mensual"
+              headers={['Mes','Tercera edad','Cuarta edad','Total','Cobros']}
+              rows={descEdadPorMes.map(r => [fmtMes(r.mes), r.t3.toFixed(2), r.t4.toFixed(2), r.total.toFixed(2), r.cuenta])} />
+          </div>
+          <div className="p-5">
+            {descEdadPorMes.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-gray-50">
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Mes</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Tercera edad</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Cuarta edad</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Total</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Cobros</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {descEdadPorMes.map(r => (
+                      <tr key={r.mes} className="hover:bg-gray-50">
+                        <td className="px-3 py-2.5 font-medium text-gray-900 capitalize">{fmtMes(r.mes)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">L {fmt(r.t3)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">L {fmt(r.t4)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-bold text-amber-700">L {fmt(r.total)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{r.cuenta}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-10 text-gray-400">
+                <BadgePercent className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p>No se aplicaron descuentos por edad en este período</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white border rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b bg-gray-50">
+            <h2 className="font-bold text-gray-800 flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-gray-600" /> Detalle de cobros con descuento por edad
+            </h2>
+            <BtnExport nombre="descuentos_edad_detalle"
+              headers={['Fecha','Hora','Paciente','Concepto','Motivo','Descuento']}
+              rows={movsDescEdad.map(m => [m.fecha, m.hora || '', m.paciente_nombre || '', m.concepto, m.descuento_motivo || '', (m.descuento_monto || 0).toFixed(2)])} />
+          </div>
+          <div className="p-5">
+            {movsDescEdad.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-gray-50">
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Fecha</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Paciente</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Concepto</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">Motivo</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">Descuento</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {movsDescEdad.map((m, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{m.fecha} {m.hora?.slice(0,5) || ''}</td>
+                        <td className="px-3 py-2.5 text-gray-900">{m.paciente_nombre || '—'}</td>
+                        <td className="px-3 py-2.5 text-gray-700">{m.concepto}</td>
+                        <td className="px-3 py-2.5">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            clasifEdad(m.descuento_motivo) === '4ta' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'
+                          }`}>{m.descuento_motivo}</span>
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-amber-700">L {fmt(m.descuento_monto || 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-10 text-gray-400">
+                <Receipt className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p>Sin cobros con descuento por edad en este período</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>}
 

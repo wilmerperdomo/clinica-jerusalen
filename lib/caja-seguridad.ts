@@ -9,33 +9,63 @@ export interface SucursalDescuento {
   por_descuento_cuarta?: number
 }
 
+/** Edad máxima humanamente plausible. Por encima ⇒ fecha sospechosa. */
+export const EDAD_MAXIMA_PLAUSIBLE = 110
+
+/**
+ * Calcula la edad en años. Devuelve NaN si la fecha es inválida,
+ * está en el futuro o supera el máximo plausible (fecha sospechosa).
+ */
 export function calcularEdad(fechaNac: string): number {
-  const hoy = new Date()
+  if (!fechaNac) return NaN
   const nac = new Date(fechaNac)
+  if (Number.isNaN(nac.getTime())) return NaN
+  const hoy = new Date()
+  if (nac.getTime() > hoy.getTime()) return NaN
   let edad = hoy.getFullYear() - nac.getFullYear()
   const m = hoy.getMonth() - nac.getMonth()
   if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) edad--
+  if (edad < 0 || edad > EDAD_MAXIMA_PLAUSIBLE) return NaN
   return edad
 }
 
-/** Descuento automático por edad según sucursal */
+export interface DescuentoEdadResultado {
+  pct: number
+  motivo: string
+  edad: number
+  /** true cuando la fecha de nacimiento es inválida, futura o no plausible */
+  fechaSospechosa: boolean
+}
+
+/**
+ * Descuento automático por edad según sucursal.
+ * Blindaje: si la fecha de nacimiento es imposible/sospechosa, NO sugiere
+ * descuento y marca `fechaSospechosa` para que la caja lo revise.
+ */
 export function descuentoEdadPaciente(
   fechaNac: string | undefined | null,
   sucursal: SucursalDescuento | undefined | null,
-): { pct: number; motivo: string; edad: number } {
-  if (!fechaNac || !sucursal) return { pct: 0, motivo: '', edad: 0 }
+): DescuentoEdadResultado {
+  if (!sucursal) return { pct: 0, motivo: '', edad: 0, fechaSospechosa: false }
+  // Sin fecha registrada: no es "sospechosa", simplemente no hay dato para sugerir.
+  if (!fechaNac) return { pct: 0, motivo: '', edad: 0, fechaSospechosa: false }
+
   const edad = calcularEdad(fechaNac)
+  if (Number.isNaN(edad)) {
+    return { pct: 0, motivo: '', edad: 0, fechaSospechosa: true }
+  }
+
   const cuartaMin = sucursal.cuarta_edad ?? 80
   const terceraMin = sucursal.tercera_edad ?? 60
   const pctCuarta = sucursal.por_descuento_cuarta ?? 0
   const pctTercera = sucursal.por_descuento_tercera ?? 0
   if (cuartaMin > 0 && edad >= cuartaMin && pctCuarta > 0) {
-    return { pct: pctCuarta, motivo: '4ta Edad', edad }
+    return { pct: pctCuarta, motivo: '4ta Edad', edad, fechaSospechosa: false }
   }
   if (terceraMin > 0 && edad >= terceraMin && pctTercera > 0) {
-    return { pct: pctTercera, motivo: '3ra Edad', edad }
+    return { pct: pctTercera, motivo: '3ra Edad', edad, fechaSospechosa: false }
   }
-  return { pct: 0, motivo: '', edad }
+  return { pct: 0, motivo: '', edad, fechaSospechosa: false }
 }
 
 /**

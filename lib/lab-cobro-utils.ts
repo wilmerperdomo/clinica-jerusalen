@@ -1,4 +1,5 @@
 import { nombrePaciente, type PacienteConsulta } from '@/lib/consultas-utils'
+import { calcularEdad } from '@/lib/caja-seguridad'
 
 export interface LabOrdenCobroRow {
   id: number
@@ -91,23 +92,27 @@ export function calcularDescuentoEdad(
     por_descuento_tercera?: number
     por_descuento_cuarta?: number
   },
-): { pctDesc: number; valDesc: number; total: number; motivo: string } {
+): { pctDesc: number; valDesc: number; total: number; motivo: string; edad: number; fechaSospechosa: boolean } {
   let pctDesc = 0
   let motivo = ''
+  let edad = 0
+  let fechaSospechosa = false
   if (fechaNac && sucursal) {
-    const hoy = new Date()
-    const nac = new Date(fechaNac + 'T12:00:00')
-    let edad = hoy.getFullYear() - nac.getFullYear()
-    const m = hoy.getMonth() - nac.getMonth()
-    if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) edad--
-    if (edad >= (sucursal.cuarta_edad || 80)) {
-      pctDesc = sucursal.por_descuento_cuarta || 0
-      motivo = `Cuarta Edad (${edad} años)`
-    } else if (edad >= (sucursal.tercera_edad || 60)) {
-      pctDesc = sucursal.por_descuento_tercera || 0
-      motivo = `Tercera Edad (${edad} años)`
+    const e = calcularEdad(fechaNac)
+    // Blindaje: fecha imposible/sospechosa ⇒ no se aplica descuento por edad.
+    if (Number.isNaN(e)) {
+      fechaSospechosa = true
+    } else {
+      edad = e
+      if (edad >= (sucursal.cuarta_edad || 80)) {
+        pctDesc = sucursal.por_descuento_cuarta || 0
+        motivo = `Cuarta Edad (${edad} años)`
+      } else if (edad >= (sucursal.tercera_edad || 60)) {
+        pctDesc = sucursal.por_descuento_tercera || 0
+        motivo = `Tercera Edad (${edad} años)`
+      }
     }
   }
   const valDesc = subtotal * (pctDesc / 100)
-  return { pctDesc, valDesc, total: subtotal - valDesc, motivo }
+  return { pctDesc, valDesc, total: subtotal - valDesc, motivo, edad, fechaSospechosa }
 }

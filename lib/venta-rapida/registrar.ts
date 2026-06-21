@@ -9,8 +9,9 @@ import {
   validarSesionOperacion,
 } from '@/lib/caja-seguridad'
 import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
+import { descuentoEfectivo, type BeneficiosMembresia } from '@/lib/membresia-utils'
 import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
-import { pctDescuentoMaximoPaciente } from '@/lib/venta-rapida/descuentos'
+import { categoriaVenta, pctDescuentoMaximoPaciente } from '@/lib/venta-rapida/descuentos'
 import type {
   ConceptoEgreso,
   FormMovimientoVenta,
@@ -42,6 +43,7 @@ interface ContextoVentaIngreso {
   servicios: ServicioCatalogo[]
   productos: ProductoCatalogo[]
   pruebasLab: PruebaLabCatalogo[]
+  beneficios?: BeneficiosMembresia | null
 }
 
 export async function registrarVentaRapidaIngreso(
@@ -93,17 +95,20 @@ export async function registrarVentaRapidaIngreso(
     paciente_nombre: pacNombre,
   }
 
+  const motivoEdad = ctx.form.descuento_motivo || (descPct > 0 ? 'Descuento edad' : 'Descuento')
   const movimientos = cat.items.map(item => {
     const bruto = item.precio * item.cantidad
-    const descMonto = descPct > 0 ? parseFloat((bruto * descPct / 100).toFixed(2)) : 0
+    // Combina descuento por edad con el beneficio de membresía de la categoría del ítem.
+    const eff = descuentoEfectivo(categoriaVenta(item.tipo), descPct, motivoEdad, ctx.beneficios)
+    const descMonto = eff.pct > 0 ? parseFloat((bruto * eff.pct / 100).toFixed(2)) : 0
     const neto = parseFloat((bruto - descMonto).toFixed(2))
     return {
       ...movBase,
       concepto: `${PREFIJOS_CONCEPTO_VENTA[item.tipo]} — ${item.nombre}`,
       monto_bruto: bruto,
-      descuento_pct: descPct,
+      descuento_pct: eff.pct,
       descuento_monto: descMonto,
-      descuento_motivo: ctx.form.descuento_motivo || null,
+      descuento_motivo: eff.motivo || null,
       monto: neto,
     }
   })

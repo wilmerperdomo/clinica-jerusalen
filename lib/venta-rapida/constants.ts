@@ -14,6 +14,7 @@ export const FORM_MOV_VACIO: FormMovimientoVenta = {
   nota: '',
   descuento_pct: '0',
   descuento_motivo: '',
+  descuento_confirmado: false,
 }
 
 export const TABS_CATALOGO_VENTA: TabCatalogoConfig[] = [

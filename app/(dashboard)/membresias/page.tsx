@@ -18,7 +18,7 @@ export default async function MembresiasPage() {
     // planes disponibles con beneficios
     supabase
       .from('membresia_tipos')
-      .select('id, nombre, precio, duracion_dias, descripcion, activo, membresia_beneficios(id, descripcion, activo)')
+      .select('id, nombre, precio, duracion_dias, descripcion, activo, consulta_gratis, pct_consulta, pct_laboratorio, pct_medicamentos, pct_servicios, membresia_beneficios(id, descripcion, activo)')
       .order('nombre'),
 
     // membresías con todo el detalle

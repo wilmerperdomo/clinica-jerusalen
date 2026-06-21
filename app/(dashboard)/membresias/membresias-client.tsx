@@ -19,6 +19,9 @@ interface Beneficio   { id: number; descripcion: string; activo: boolean }
 interface Tipo        {
   id: number; nombre: string; precio: number
   duracion_dias: number; descripcion?: string; activo: boolean
+  consulta_gratis?: boolean
+  pct_consulta?: number; pct_laboratorio?: number
+  pct_medicamentos?: number; pct_servicios?: number
   membresia_beneficios: Beneficio[]
 }
 interface Beneficiario { id?: number; nombre: string; parentesco: string; activo: boolean }
@@ -129,7 +132,10 @@ export default function MembresiasClient({
   const [errorMem,   setErrorMem]   = useState('')
 
   /* ── modal tipo plan ── */
-  const tipoVacio = { nombre: '', precio: 0, duracion_dias: 30, descripcion: '', activo: true }
+  const tipoVacio = {
+    nombre: '', precio: 0, duracion_dias: 30, descripcion: '', activo: true,
+    consulta_gratis: false, pct_consulta: 0, pct_laboratorio: 0, pct_medicamentos: 0, pct_servicios: 0,
+  }
   const [modalTipo,   setModalTipo]   = useState(false)
   const [formTipo,    setFormTipo]    = useState(tipoVacio)
   const [bensTipo,    setBensTipo]    = useState<string[]>([''])
@@ -299,11 +305,16 @@ export default function MembresiasClient({
         const { error: eUpd } = await supabase
           .from('membresia_tipos')
           .update({
-            nombre:        formTipo.nombre,
-            precio:        formTipo.precio,
-            duracion_dias: formTipo.duracion_dias,
-            descripcion:   formTipo.descripcion || null,
-            activo:        formTipo.activo,
+            nombre:           formTipo.nombre,
+            precio:           formTipo.precio,
+            duracion_dias:    formTipo.duracion_dias,
+            descripcion:      formTipo.descripcion || null,
+            activo:           formTipo.activo,
+            consulta_gratis:  formTipo.consulta_gratis,
+            pct_consulta:     formTipo.pct_consulta,
+            pct_laboratorio:  formTipo.pct_laboratorio,
+            pct_medicamentos: formTipo.pct_medicamentos,
+            pct_servicios:    formTipo.pct_servicios,
           })
           .eq('id', editTipoId)
         if (eUpd) throw new Error(eUpd.message)
@@ -326,10 +337,15 @@ export default function MembresiasClient({
         const { data: nt, error: eIns } = await supabase
           .from('membresia_tipos')
           .insert({
-            nombre:        formTipo.nombre,
-            precio:        formTipo.precio,
-            duracion_dias: formTipo.duracion_dias,
-            descripcion:   formTipo.descripcion || null,
+            nombre:           formTipo.nombre,
+            precio:           formTipo.precio,
+            duracion_dias:    formTipo.duracion_dias,
+            descripcion:      formTipo.descripcion || null,
+            consulta_gratis:  formTipo.consulta_gratis,
+            pct_consulta:     formTipo.pct_consulta,
+            pct_laboratorio:  formTipo.pct_laboratorio,
+            pct_medicamentos: formTipo.pct_medicamentos,
+            pct_servicios:    formTipo.pct_servicios,
           })
           .select('*')
           .single()
@@ -867,7 +883,15 @@ export default function MembresiasClient({
                       </div>
                       <button onClick={() => {
                         setEditTipoId(t.id)
-                        setFormTipo({ nombre: t.nombre, precio: t.precio, duracion_dias: t.duracion_dias, descripcion: t.descripcion || '', activo: t.activo })
+                        setFormTipo({
+                          nombre: t.nombre, precio: t.precio, duracion_dias: t.duracion_dias,
+                          descripcion: t.descripcion || '', activo: t.activo,
+                          consulta_gratis: t.consulta_gratis ?? false,
+                          pct_consulta: t.pct_consulta ?? 0,
+                          pct_laboratorio: t.pct_laboratorio ?? 0,
+                          pct_medicamentos: t.pct_medicamentos ?? 0,
+                          pct_servicios: t.pct_servicios ?? 0,
+                        })
                         setBensTipo(t.membresia_beneficios.filter(b => b.activo).map(b => b.descripcion))
                         setModalTipo(true); setErrorTipo('')
                       }} className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
@@ -1054,9 +1078,47 @@ export default function MembresiasClient({
                   </div>
                 )}
               </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 space-y-3">
+                <p className="text-xs font-semibold text-emerald-800 uppercase">Beneficios automáticos en caja</p>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" checked={formTipo.consulta_gratis}
+                    onChange={e => setFormTipo(p => ({ ...p, consulta_gratis: e.target.checked }))}
+                    className="w-4 h-4 accent-emerald-600" />
+                  <span className="text-sm text-gray-800 font-medium">Consulta médica gratis</span>
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className={formTipo.consulta_gratis ? 'opacity-40 pointer-events-none' : ''}>
+                    <label className="text-[11px] font-semibold text-gray-600 uppercase mb-1 block">% Consulta</label>
+                    <input type="number" min={0} max={100} step="0.01" value={formTipo.pct_consulta}
+                      onChange={e => setFormTipo(p => ({ ...p, pct_consulta: Number(e.target.value) }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-600 uppercase mb-1 block">% Laboratorio</label>
+                    <input type="number" min={0} max={100} step="0.01" value={formTipo.pct_laboratorio}
+                      onChange={e => setFormTipo(p => ({ ...p, pct_laboratorio: Number(e.target.value) }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-600 uppercase mb-1 block">% Medicamentos</label>
+                    <input type="number" min={0} max={100} step="0.01" value={formTipo.pct_medicamentos}
+                      onChange={e => setFormTipo(p => ({ ...p, pct_medicamentos: Number(e.target.value) }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-600 uppercase mb-1 block">% Servicios</label>
+                    <input type="number" min={0} max={100} step="0.01" value={formTipo.pct_servicios}
+                      onChange={e => setFormTipo(p => ({ ...p, pct_servicios: Number(e.target.value) }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+                  </div>
+                </div>
+                <p className="text-[11px] text-emerald-700/80">
+                  Estos valores se aplican solos al cobrar en caja cuando el paciente tiene este plan activo.
+                </p>
+              </div>
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-semibold text-gray-600 uppercase">Beneficios incluidos</label>
+                  <label className="text-xs font-semibold text-gray-600 uppercase">Beneficios incluidos (descripción)</label>
                   <button onClick={() => setBensTipo(p => [...p, ''])}
                     className="flex items-center gap-1 text-xs text-blue-600 hover:underline"><Plus className="w-3.5 h-3.5"/> Agregar</button>
                 </div>

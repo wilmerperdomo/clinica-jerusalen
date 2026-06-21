@@ -26,12 +26,16 @@ export interface FormMovimientoVenta {
   nota: string
   descuento_pct: string
   descuento_motivo: string
+  descuento_confirmado: boolean
 }
 
 export interface DescuentoVentaInfo {
   pct: number
   motivo: string
   edad: number
+  fechaNac?: string
+  /** true si la fecha de nacimiento es imposible/sospechosa */
+  fechaSospechosa?: boolean
 }
 
 export interface ServicioCatalogo {

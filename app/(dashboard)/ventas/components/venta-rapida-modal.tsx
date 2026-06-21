@@ -74,6 +74,19 @@ export default function VentaRapidaModal({ venta, conceptos, esAdmin }: Props) {
           <EgresoFields form={form} conceptos={conceptos} onChange={setForm} />
         )}
 
+        {esIngreso && venta.membActiva && venta.membInfo && (
+          <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3">
+            <p className="text-sm font-bold text-emerald-800">Plan activo: {venta.membInfo.tipo}</p>
+            <p className="text-xs text-emerald-800 mt-0.5">
+              {[
+                venta.membInfo.estructurados.pctMedicamentos > 0 ? `${venta.membInfo.estructurados.pctMedicamentos}% medicamentos` : '',
+                venta.membInfo.estructurados.pctLaboratorio > 0 ? `${venta.membInfo.estructurados.pctLaboratorio}% laboratorio` : '',
+                venta.membInfo.estructurados.pctServicios > 0 ? `${venta.membInfo.estructurados.pctServicios}% servicios` : '',
+              ].filter(Boolean).join(' · ') || 'Beneficios del plan'} — aplicados automáticamente.
+            </p>
+          </div>
+        )}
+
         {esIngreso && (form.paciente_id || venta.items.length > 0) && (
           <DescuentoVentaSection
             esAdmin={esAdmin}
@@ -367,6 +380,13 @@ function EgresoFields({
   )
 }
 
+function fmtFechaNac(fecha?: string): string {
+  if (!fecha) return ''
+  const d = new Date(`${fecha.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return fecha
+  return d.toLocaleDateString('es-HN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 function DescuentoVentaSection({
   esAdmin, form, descuentoInfo, subtotal, tienePaciente, onChange,
 }: {
@@ -377,43 +397,95 @@ function DescuentoVentaSection({
   tienePaciente: boolean
   onChange: VentaRapidaController['setForm']
 }) {
+  const elegible = Boolean(descuentoInfo && !descuentoInfo.fechaSospechosa && descuentoInfo.pct > 0)
+  const sospechosa = Boolean(descuentoInfo?.fechaSospechosa)
+  const confirmado = form.descuento_confirmado && Number(form.descuento_pct) > 0
+
+  const toggleConfirmar = (checked: boolean) => {
+    if (!descuentoInfo) return
+    onChange(p => checked
+      ? { ...p, descuento_confirmado: true, descuento_pct: String(descuentoInfo.pct), descuento_motivo: descuentoInfo.motivo }
+      : { ...p, descuento_confirmado: false, descuento_pct: '0', descuento_motivo: '' })
+  }
+
   return (
-    <div className={`rounded-xl border p-3 space-y-2 ${descuentoInfo ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}>
+    <div className={`rounded-xl border p-3 space-y-2 ${
+      sospechosa ? 'border-red-300 bg-red-50'
+        : confirmado ? 'border-amber-300 bg-amber-50'
+          : elegible ? 'border-amber-200 bg-amber-50/40'
+            : 'border-gray-200'
+    }`}>
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">Descuento</span>
-        {descuentoInfo && (
+        {elegible && (
           <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full">
-            {descuentoInfo.motivo} — {descuentoInfo.edad} años
+            {descuentoInfo!.motivo} {descuentoInfo!.pct}% · sugerido
           </span>
         )}
       </div>
-      {esAdmin ? (
+
+      {/* Fecha de nacimiento sospechosa → no se sugiere descuento */}
+      {sospechosa && (
+        <p className="text-xs text-red-700 bg-red-100/60 border border-red-200 rounded-lg px-3 py-2">
+          ⚠ La fecha de nacimiento del paciente es inválida o poco creíble
+          {descuentoInfo?.fechaNac ? ` (${fmtFechaNac(descuentoInfo.fechaNac)})` : ''}.
+          No se aplicará descuento por edad — verifique el expediente.
+        </p>
+      )}
+
+      {/* Casilla de confirmación visible con edad y fecha a la vista */}
+      {elegible && (
+        <label className="flex items-start gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={form.descuento_confirmado}
+            onChange={e => toggleConfirmar(e.target.checked)}
+            className="mt-0.5 w-4 h-4 accent-amber-600"
+          />
+          <span className="text-sm text-gray-700">
+            <span className="font-semibold">Aplicar descuento {descuentoInfo!.motivo} ({descuentoInfo!.pct}%)</span>
+            <span className="block text-xs text-gray-600">
+              Paciente de <b>{descuentoInfo!.edad} años</b>
+              {descuentoInfo!.fechaNac ? ` · nació el ${fmtFechaNac(descuentoInfo!.fechaNac)}` : ''}.
+              Confirmo que verifiqué su identidad.
+            </span>
+          </span>
+        </label>
+      )}
+
+      {/* Admin: puede ajustar manualmente el porcentaje */}
+      {esAdmin && (
         <div className="relative">
           <input type="number" min="0" max="100" step="0.01"
             value={form.descuento_pct}
             onChange={e => onChange(p => ({
               ...p,
               descuento_pct: e.target.value,
-              descuento_motivo: e.target.value === '0' ? '' : (descuentoInfo?.motivo || 'Manual admin'),
+              descuento_confirmado: Number(e.target.value) > 0,
+              descuento_motivo: Number(e.target.value) <= 0
+                ? ''
+                : (elegible && Number(e.target.value) === descuentoInfo!.pct ? descuentoInfo!.motivo : 'Manual admin'),
             }))}
             className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none" />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
         </div>
-      ) : (
+      )}
+
+      {/* Mensajes informativos para enfermería/caja */}
+      {!esAdmin && !elegible && !sospechosa && (
         <p className="text-sm text-gray-600">
-          {Number(form.descuento_pct) > 0
-            ? `${form.descuento_pct}% (${form.descuento_motivo || 'automático'}) — se aplica al cobrar`
-            : tienePaciente
-              ? 'Paciente sin descuento por edad (tercera/cuarta edad según sucursal)'
-              : 'Seleccione un paciente para aplicar descuento automático por edad'}
+          {tienePaciente
+            ? 'Paciente sin descuento por edad (tercera/cuarta edad según sucursal).'
+            : 'Seleccione un paciente para sugerir descuento por edad.'}
         </p>
       )}
       {!esAdmin && (
         <p className="text-[11px] text-gray-500">
-          Enfermería/caja: descuento automático por edad. Descuentos extra solo administrador.
+          El descuento por edad debe confirmarse en caja. Descuentos extra solo administrador.
         </p>
       )}
-      {subtotal > 0 && Number(form.descuento_pct) > 0 && (
+
+      {subtotal > 0 && confirmado && (
         <p className="text-xs text-amber-700">
           Ahorro: {fmtCaja(subtotal * Number(form.descuento_pct) / 100)}
         </p>

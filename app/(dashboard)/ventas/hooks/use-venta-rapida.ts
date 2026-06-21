@@ -16,8 +16,14 @@ import { FORM_MOV_VACIO } from '@/lib/venta-rapida/constants'
 import {
   pctDescuentoMaximoPaciente,
   resolverDescuentoPaciente,
-  totalConDescuento,
+  totalVentaConMembresia,
 } from '@/lib/venta-rapida/descuentos'
+import {
+  getMembresiaPaciente,
+  tieneBeneficiosMembresia,
+  type MembresiasMap,
+  type MembresiaPacienteInfo,
+} from '@/lib/membresia-utils'
 import { registrarVentaRapidaEgreso, registrarVentaRapidaIngreso } from '@/lib/venta-rapida/registrar'
 import type {
   ConceptoEgreso,
@@ -46,6 +52,7 @@ interface UseVentaRapidaParams {
   productos: ProductoCatalogo[]
   pruebasLab: PruebaLabCatalogo[]
   conceptos: ConceptoEgreso[]
+  membresiasMap?: MembresiasMap
   onIngresoExitoso?: (data: VentaRapidaIngresoOk) => void
   onEgresoExitoso?: () => void
 }
@@ -63,6 +70,7 @@ export function useVentaRapida({
   productos,
   pruebasLab,
   conceptos,
+  membresiasMap,
   onIngresoExitoso,
   onEgresoExitoso,
 }: UseVentaRapidaParams) {
@@ -101,10 +109,19 @@ export function useVentaRapida({
 
   const subtotal = useMemo(() => subtotalCarrito(items), [items])
 
+  const membInfo: MembresiaPacienteInfo | null = useMemo(
+    () => getMembresiaPaciente(form.paciente_id ? Number(form.paciente_id) : null, membresiasMap),
+    [form.paciente_id, membresiasMap],
+  )
+  const membActiva = useMemo(() => tieneBeneficiosMembresia(membInfo?.estructurados), [membInfo])
+
   const total = useMemo(() => {
     const pctMax = pctDescuentoMaximoPaciente(form.paciente_id, pacientes, sucursalActiva)
-    return totalConDescuento(subtotal, Number(form.descuento_pct) || 0, pctMax, esAdmin)
-  }, [subtotal, form.descuento_pct, form.paciente_id, pacientes, sucursalActiva, esAdmin])
+    const pctEdad = Math.min(Number(form.descuento_pct) || 0, esAdmin ? 100 : pctMax)
+    return totalVentaConMembresia(
+      items, pctEdad, form.descuento_motivo || 'Descuento', membInfo?.estructurados,
+    ).total
+  }, [items, subtotal, form.descuento_pct, form.descuento_motivo, form.paciente_id, pacientes, sucursalActiva, esAdmin, membInfo])
 
   const puedeConfirmar = form.tipo === 'EGRESO'
     ? Boolean(form.monto && Number(form.monto) > 0 && form.concepto_id)
@@ -136,6 +153,7 @@ export function useVentaRapida({
         paciente_id: '',
         descuento_pct: '0',
         descuento_motivo: '',
+        descuento_confirmado: false,
       }))
       return
     }
@@ -190,6 +208,7 @@ export function useVentaRapida({
           servicios,
           productos,
           pruebasLab,
+          beneficios: membInfo?.estructurados ?? null,
         })
       : await registrarVentaRapidaEgreso({
           supabase,
@@ -217,7 +236,7 @@ export function useVentaRapida({
   }, [
     sesion, form, items, pacientes, servicios, productos, pruebasLab, conceptos,
     supabase, userId, esAdmin, fechaHoy, perfilSucursalId, sucursalActiva, cerrar,
-    onIngresoExitoso, onEgresoExitoso,
+    membInfo, onIngresoExitoso, onEgresoExitoso,
   ])
 
   return {
@@ -242,6 +261,8 @@ export function useVentaRapida({
     registrarPaciente,
     seleccionarPaciente,
     descuentoInfo,
+    membInfo,
+    membActiva,
     subtotal,
     total,
     puedeConfirmar,

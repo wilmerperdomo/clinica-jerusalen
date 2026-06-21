@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { PACIENTE_BUSQUEDA_SELECT } from '@/lib/buscar-pacientes'
 import { agruparLabPorCobrar, type LabOrdenCobroRow } from '@/lib/lab-cobro-utils'
+import { buildMembresiasMap } from '@/lib/membresia-utils'
 import CajaClient from './caja-client'
 
 export const dynamic = 'force-dynamic'
@@ -45,6 +46,7 @@ export default async function VentasPage() {
     { data: correlativos },
     { data: cotizacionesPorCobrarRaw },
     { data: membresiaPagosRaw },
+    { data: membresiasActivasRaw },
   ] = await Promise.all([
     supabase
       .from('caja_sesiones')
@@ -120,6 +122,16 @@ export default async function VentasPage() {
       .in('estado', ['pendiente', 'vencido'])
       .order('fecha_vencimiento')
       .limit(100),
+
+    // Membresías ACTIVAS y vigentes (para aplicar beneficios automáticos en caja)
+    supabase
+      .from('membresias')
+      .select(`
+        paciente_id, fecha_fin, numero_carnet, tipo_id,
+        tipo:membresia_tipos(nombre, consulta_gratis, pct_consulta, pct_laboratorio, pct_medicamentos, pct_servicios)
+      `)
+      .eq('estado', 'activo')
+      .gte('fecha_fin', hoy),
   ])
 
   let consultasPorCobrar = consultasResult.data ?? []
@@ -176,6 +188,11 @@ export default async function VentasPage() {
     )
   }
 
+  // Mapa de membresías activas por paciente, con beneficios estructurados
+  const membresiasMap = buildMembresiasMap(
+    (membresiasActivasRaw ?? []) as Parameters<typeof buildMembresiasMap>[0],
+  )
+
   if (!sucursalId && sucursales.length > 0) {
     sucursalId = sucursales[0].id
   }
@@ -203,6 +220,7 @@ export default async function VentasPage() {
       consultasPorCobrar={consultasPorCobrar || []}
       labGruposPorCobrar={labGruposPorCobrar}
       membresiaPagosPorCobrar={membresiaPagosPorCobrar}
+      membresiasMap={membresiasMap}
       cotizacionesPorCobrar={cotizacionesPorCobrarRaw || []}
       correlativos={correlativos || []}
     />

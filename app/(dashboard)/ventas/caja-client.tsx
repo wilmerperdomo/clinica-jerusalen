@@ -14,6 +14,14 @@ import {
   calcularDescuentoEdad,
   type LabGrupoCobro,
 } from '@/lib/lab-cobro-utils'
+import {
+  descuentoEfectivo,
+  desglosarLineasCobro,
+  getMembresiaPaciente,
+  tieneBeneficiosMembresia,
+  type MembresiasMap,
+  type MembresiaPacienteInfo,
+} from '@/lib/membresia-utils'
 import PagoAgradecimientoPanel from '@/components/pago-agradecimiento-panel'
 import {
   reservarSiguienteCorrelativo, confirmarCorrelativo, esErrorNumeroDuplicado,
@@ -181,6 +189,7 @@ interface Props {
   consultasPorCobrar:      ConsultaPorCobrar[]
   labGruposPorCobrar:      LabGrupoCobro[]
   membresiaPagosPorCobrar: MembresiaPagoCobro[]
+  membresiasMap:           MembresiasMap
   cotizacionesPorCobrar:   CotizacionPorCobrar[]
   correlativos:            Correlativo[]
 }
@@ -199,6 +208,7 @@ export default function CajaClient({
   consultasPorCobrar: initConsultasPorCobrar,
   labGruposPorCobrar: initLabGruposPorCobrar,
   membresiaPagosPorCobrar: initMembresiaPagosPorCobrar,
+  membresiasMap,
   cotizacionesPorCobrar: initCotizacionesPorCobrar,
   correlativos: initCorrelativos,
 }: Props) {
@@ -236,7 +246,7 @@ export default function CajaClient({
   const [modalFacturaLab, setModalFacturaLab] = useState(false)
   const [guardandoCobroLab, setGuardandoCobroLab] = useState(false)
   const [formCobroLab, setFormCobroLab] = useState({
-    forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0',
+    forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', descuento_confirmado: false,
   })
   const [puntosFidelidadLab, setPuntosFidelidadLab] = useState(0)
   const [usarPuntosLab, setUsarPuntosLab] = useState(false)
@@ -255,7 +265,7 @@ export default function CajaClient({
   const [factImpresa,    setFactImpresa]    = useState<Record<string, unknown> | null>(null)
   const [formCobro, setFormCobro] = useState({
     forma_pago: 'EFECTIVO', referencia: '', nota: '',
-    descuento_pct: '0', monto_manual: '',
+    descuento_pct: '0', monto_manual: '', descuento_confirmado: false,
   })
   const [guardandoCobro, setGuardandoCobro] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -320,6 +330,7 @@ export default function CajaClient({
     productos,
     pruebasLab,
     conceptos,
+    membresiasMap,
     onIngresoExitoso: (data) => {
       const factInit = datosFacturaDesdePaciente(data.paciente as ConsultaPorCobrar['paciente'])
       setFormFacturaVentaRapida({
@@ -341,6 +352,14 @@ export default function CajaClient({
     const m    = hoy.getMonth() - nac.getMonth()
     if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) edad--
     return edad
+  }
+
+  /* ── formatear fecha de nacimiento para confirmación visible ─ */
+  function fmtFechaNac(fecha?: string | null): string {
+    if (!fecha) return ''
+    const d = new Date(`${fecha.slice(0, 10)}T00:00:00`)
+    if (Number.isNaN(d.getTime())) return String(fecha)
+    return d.toLocaleDateString('es-HN', { day: '2-digit', month: '2-digit', year: 'numeric' })
   }
 
   /* ── recargar sesión ─ */
@@ -818,7 +837,7 @@ export default function CajaClient({
       const det = calcularTotalConsulta(full)
       const factInit = datosFacturaDesdePaciente(pac ?? undefined)
       setConsultaCobro(full)
-      setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: String(det.pctDesc), monto_manual: '' })
+      setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
       setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true })
       setModalCobro(true)
     } finally {
@@ -830,6 +849,8 @@ export default function CajaClient({
   function calcularTotalConsulta(c: ConsultaPorCobrar): {
     consulta: number; servicios: number; meds: number; lab: number; subtotal: number
     pctDesc: number; valDesc: number; total: number; motivo: string
+    edad: number; fechaSospechosa: boolean
+    membInfo: MembresiaPacienteInfo | null
   } {
     const consulta  = Number(c.consulta_valor || 0)
     const servicios = (c.consulta_servicios || []).reduce((a, s) => a + s.precio * s.cantidad, 0)
@@ -843,7 +864,12 @@ export default function CajaClient({
     const motivo = descEdad.pct > 0 ? `${descEdad.motivo} (${descEdad.edad} años)` : ''
     const valDesc = subtotal * (pctDesc / 100)
     const total   = subtotal - valDesc
-    return { consulta, servicios, meds, lab, subtotal, pctDesc, valDesc, total, motivo }
+    const membInfo = getMembresiaPaciente(c.paciente_id, membresiasMap)
+    return {
+      consulta, servicios, meds, lab, subtotal, pctDesc, valDesc, total, motivo,
+      edad: descEdad.edad, fechaSospechosa: descEdad.fechaSospechosa,
+      membInfo,
+    }
   }
 
   /* ── procesar cobro de consulta ─ */
@@ -878,7 +904,7 @@ export default function CajaClient({
     if (errCred) { alert(errCred); setGuardandoCobro(false); return }
 
     const valDescuento = validarDescuento(
-      Number(formCobro.descuento_pct) || detalle.pctDesc,
+      Number(formCobro.descuento_pct) || 0,
       detalle.pctDesc,
       esAdmin,
       formCobro.nota,
@@ -890,10 +916,21 @@ export default function CajaClient({
     }
 
     const pct = valDescuento.pctAplicar
-    const base = detalle.subtotal
-    const valDesc = base * (pct / 100)
-    const total = base - valDesc
-    if (total <= 0) {
+    // Desglose por categoría: combina descuento por edad + beneficios de membresía.
+    const desglose = desglosarLineasCobro(
+      [
+        { categoria: 'consulta',     bruto: detalle.consulta },
+        { categoria: 'servicios',    bruto: detalle.servicios },
+        { categoria: 'laboratorio',  bruto: detalle.lab },
+        { categoria: 'medicamentos', bruto: detalle.meds },
+      ],
+      pct,
+      detalle.motivo || 'Descuento',
+      detalle.membInfo?.estructurados,
+    )
+    const total = desglose.total
+    // Se permite total 0 solo si la membresía cubre el cobro (ej. consulta gratis).
+    if (total <= 0 && !desglose.membAplicada) {
       alert('El monto a cobrar debe ser mayor a cero')
       setGuardandoCobro(false)
       return
@@ -915,23 +952,23 @@ export default function CajaClient({
       consulta_id: consultaCobro.id,
     }
 
-    const movimientos = []
-    if (detalle.consulta > 0) {
-      movimientos.push({ ...movBase, concepto: `Consulta ${consultaCobro.tipo_nombre || ''}`.trim(), monto: detalle.consulta * (1 - pct/100) })
-    }
-    if (detalle.servicios > 0) {
-      movimientos.push({ ...movBase, concepto: 'Servicios Médicos', monto: detalle.servicios * (1 - pct/100) })
-    }
-    if (detalle.lab > 0) {
-      movimientos.push({ ...movBase, concepto: 'Laboratorio', monto: detalle.lab * (1 - pct/100) })
-    }
-    if (detalle.meds > 0) {
-      movimientos.push({ ...movBase, concepto: 'Medicamentos', monto: detalle.meds * (1 - pct/100) })
-    }
-    // si todo es 0 (no se capturó nada), registrar un solo movimiento
-    if (movimientos.length === 0 && total > 0) {
-      movimientos.push({ ...movBase, concepto: `Consulta ${consultaCobro.tipo_nombre || ''}`.trim(), monto: total })
-    }
+    const conceptoCategoria = (cat: string): string =>
+      cat === 'consulta' ? `Consulta ${consultaCobro.tipo_nombre || ''}`.trim()
+        : cat === 'servicios' ? 'Servicios Médicos'
+          : cat === 'laboratorio' ? 'Laboratorio'
+            : 'Medicamentos'
+    const lineaCobro = (concepto: string, l: { bruto: number; pct: number; descMonto: number; neto: number; motivo: string }) => ({
+      ...movBase,
+      concepto,
+      monto_bruto: l.bruto,
+      descuento_pct: l.pct,
+      descuento_monto: l.descMonto,
+      descuento_motivo: l.motivo || null,
+      monto: l.neto,
+    })
+    const movimientos = desglose.lineas
+      .filter(l => l.bruto > 0)
+      .map(l => lineaCobro(conceptoCategoria(l.categoria), l))
 
     // ── 1. RECLAMAR la consulta primero (anti doble-cobro) ──
     // El update condicional solo afecta si aún no estaba cobrada; si otra
@@ -1068,19 +1105,19 @@ export default function CajaClient({
     setCobroExitoso(null)
     setModalFactura(false)
     setFactImpresa(null)
-    setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '' })
+    setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
     setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true })
   }
 
   async function abrirModalCobroLab(grupo: LabGrupoCobro) {
-    const det = calcularDescuentoEdad(grupo.paciente?.fecha_nac, grupo.total, sucursalActiva)
     const factInit = datosFacturaDesdePaciente(grupo.paciente as ConsultaPorCobrar['paciente'])
     setLabGrupoCobro(grupo)
     setFormCobroLab({
       forma_pago: 'EFECTIVO',
       referencia: '',
       nota: '',
-      descuento_pct: String(det.pctDesc || 0),
+      descuento_pct: '0',
+      descuento_confirmado: false,
     })
     setUsarPuntosLab(false)
     setPuntosCanjearLab('')
@@ -1102,7 +1139,7 @@ export default function CajaClient({
     setLabFacturaCtx(null)
     setModalFacturaLab(false)
     setFactImpresa(null)
-    setFormCobroLab({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0' })
+    setFormCobroLab({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', descuento_confirmado: false })
     setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true })
     setPuntosFidelidadLab(0)
     setUsarPuntosLab(false)
@@ -1137,7 +1174,7 @@ export default function CajaClient({
     const subtotal = ordenesDb.reduce((s, o) => s + Number(o.importe || 0), 0)
     const detDesc = calcularDescuentoEdad(labGrupoCobro.paciente?.fecha_nac, subtotal, sucursalActiva)
     const valDescuento = validarDescuento(
-      Number(formCobroLab.descuento_pct) || detDesc.pctDesc,
+      Number(formCobroLab.descuento_pct) || 0,
       detDesc.pctDesc,
       esAdmin,
       formCobroLab.nota,
@@ -1153,7 +1190,11 @@ export default function CajaClient({
     const errCred = validarCreditoConPaciente(formCobroLab.forma_pago, labGrupoCobro.pacienteId)
     if (errCred) { alert(errCred); setGuardandoCobroLab(false); return }
 
-    const pct = valDescuento.pctAplicar
+    // Combina descuento por edad con beneficio de laboratorio de la membresía.
+    const membInfoLab = getMembresiaPaciente(labGrupoCobro.pacienteId, membresiasMap)
+    const effLab = descuentoEfectivo('laboratorio', valDescuento.pctAplicar, detDesc.motivo || 'Descuento', membInfoLab?.estructurados)
+    const pct = effLab.pct
+    const motivoLabBase = effLab.motivo
     const valDesc = subtotal * (pct / 100)
     const totalDespuesEdad = subtotal - valDesc
 
@@ -1225,9 +1266,10 @@ export default function CajaClient({
     const notaPuntos = puntosCanje > 0
       ? `Canje ${puntosCanje} pt fidelidad (L ${descPuntos.toFixed(2)})`
       : null
+    const aplicaDescBase = pct > 0 && Boolean(motivoLabBase)
     const motivoDesc = descPuntos > 0
-      ? (detDesc.motivo ? `${detDesc.motivo} + Puntos Fidelidad` : 'Puntos de Fidelidad')
-      : (detDesc.motivo || null)
+      ? (aplicaDescBase ? `${motivoLabBase} + Puntos` : 'Puntos de Fidelidad')
+      : (aplicaDescBase ? motivoLabBase : null)
 
     // ── 2. Registrar el dinero; si falla, revertir el claim ──
     const { error: errMov } = await insertarMovimientoCaja(sb, {
@@ -1670,10 +1712,22 @@ export default function CajaClient({
     }
 
     const det = calcularTotalConsulta(consultaCobro)
-    const pct = Number(formCobro.descuento_pct) || det.pctDesc
-    const base = det.subtotal
-    const valDesc = base * (pct / 100)
-    const subtotalConDesc = base - valDesc
+    const pct = Number(formCobro.descuento_pct) || 0
+    // Mismo desglose que el cobro: combina edad + beneficios de membresía por categoría.
+    const desgloseFact = desglosarLineasCobro(
+      [
+        { categoria: 'consulta',     bruto: det.consulta },
+        { categoria: 'servicios',    bruto: det.servicios },
+        { categoria: 'laboratorio',  bruto: det.lab },
+        { categoria: 'medicamentos', bruto: det.meds },
+      ],
+      pct,
+      det.motivo || 'Descuento',
+      det.membInfo?.estructurados,
+    )
+    const base = desgloseFact.subtotal
+    const valDesc = desgloseFact.descTotal
+    const subtotalConDesc = desgloseFact.total
     const isv  = formFactura.exento ? 0 : subtotalConDesc * 0.15
     const total = subtotalConDesc + isv
 
@@ -3091,11 +3145,17 @@ export default function CajaClient({
       {/* ══════════ MODAL COBRO LABORATORIO DIRECTO ══════════ */}
       {modalCobroLab && labGrupoCobro && (() => {
         const det = calcularDescuentoEdad(labGrupoCobro.paciente?.fecha_nac, labGrupoCobro.total, sucursalActiva)
-        const detLabDesc = calcularDescuentoEdad(labGrupoCobro.paciente?.fecha_nac, labGrupoCobro.total, sucursalActiva)
+        const detLabDesc = det
+        const elegibleDescLab = !detLabDesc.fechaSospechosa && detLabDesc.pctDesc > 0
+        const descConfirmadoLab = formCobroLab.descuento_confirmado && Number(formCobroLab.descuento_pct) > 0
         const pctInput = esAdmin
-          ? Number(formCobroLab.descuento_pct) || detLabDesc.pctDesc
-          : Math.min(Number(formCobroLab.descuento_pct) || detLabDesc.pctDesc, detLabDesc.pctDesc)
-        const valDescInput = labGrupoCobro.total * (pctInput / 100)
+          ? (Number(formCobroLab.descuento_pct) || 0)
+          : (formCobroLab.descuento_confirmado ? detLabDesc.pctDesc : 0)
+        const membInfoLabUI = getMembresiaPaciente(labGrupoCobro.pacienteId, membresiasMap)
+        const membLabPct = membInfoLabUI?.estructurados.pctLaboratorio ?? 0
+        const effLabUI = descuentoEfectivo('laboratorio', pctInput, detLabDesc.motivo || 'Descuento', membInfoLabUI?.estructurados)
+        const pctLabEfectivo = effLabUI.pct
+        const valDescInput = labGrupoCobro.total * (pctLabEfectivo / 100)
         const totalDespuesEdad = labGrupoCobro.total - valDescInput
         const maxPtCanje = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad)
         const ptsAplicar = usarPuntosLab && labGrupoCobro.pacienteId
@@ -3169,17 +3229,71 @@ export default function CajaClient({
               </div>
 
               <div className="lg:col-span-2 space-y-4 lg:sticky lg:top-0 lg:self-start">
-                <div className={`rounded-xl border p-4 ${det.pctDesc > 0 ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                {membInfoLabUI && membLabPct > 0 && (
+                  <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4">
+                    <div className="flex items-center gap-2">
+                      <BadgeCheck className="w-5 h-5 text-emerald-600" />
+                      <span className="text-sm font-bold text-emerald-800">Plan {membInfoLabUI.tipo}</span>
+                    </div>
+                    <p className="text-xs text-emerald-800 mt-1">{membLabPct}% de descuento en laboratorio aplicado automáticamente.</p>
+                  </div>
+                )}
+                <div className={`rounded-xl border p-4 ${
+                  detLabDesc.fechaSospechosa ? 'border-red-300 bg-red-50'
+                    : descConfirmadoLab ? 'border-amber-300 bg-amber-50'
+                      : elegibleDescLab ? 'border-amber-200 bg-amber-50/40'
+                        : 'border-gray-200 bg-white'
+                }`}>
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-sm font-semibold text-gray-800">Descuento</span>
-                    {det.motivo && <span className="text-xs text-amber-700 font-medium">{det.motivo}</span>}
+                    {elegibleDescLab && (
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full">
+                        {detLabDesc.motivo} · sugerido
+                      </span>
+                    )}
                   </div>
+
+                  {detLabDesc.fechaSospechosa && (
+                    <p className="text-xs text-red-700 bg-red-100/60 border border-red-200 rounded-lg px-3 py-2 mb-2">
+                      ⚠ Fecha de nacimiento inválida o poco creíble
+                      {labGrupoCobro.paciente?.fecha_nac ? ` (${fmtFechaNac(labGrupoCobro.paciente.fecha_nac)})` : ''}.
+                      No se aplicará descuento por edad — verifique el expediente.
+                    </p>
+                  )}
+
+                  {elegibleDescLab && (
+                    <label className="flex items-start gap-2 cursor-pointer select-none mb-2">
+                      <input
+                        type="checkbox"
+                        checked={formCobroLab.descuento_confirmado}
+                        onChange={e => setFormCobroLab(p => ({
+                          ...p,
+                          descuento_confirmado: e.target.checked,
+                          descuento_pct: e.target.checked ? String(detLabDesc.pctDesc) : '0',
+                        }))}
+                        className="mt-0.5 w-4 h-4 accent-amber-600"
+                      />
+                      <span className="text-sm text-gray-700">
+                        <span className="font-semibold">Aplicar descuento {detLabDesc.motivo}</span>
+                        <span className="block text-xs text-gray-600">
+                          Paciente de <b>{detLabDesc.edad} años</b>
+                          {labGrupoCobro.paciente?.fecha_nac ? ` · nació el ${fmtFechaNac(labGrupoCobro.paciente.fecha_nac)}` : ''}.
+                          Confirmo que verifiqué su identidad.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-3">
                     {esAdmin ? (
                       <input
                         type="number" min="0" max="100" step="any"
                         value={formCobroLab.descuento_pct}
-                        onChange={e => setFormCobroLab(p => ({ ...p, descuento_pct: e.target.value }))}
+                        onChange={e => setFormCobroLab(p => ({
+                          ...p,
+                          descuento_pct: e.target.value,
+                          descuento_confirmado: Number(e.target.value) > 0,
+                        }))}
                         className="w-20 border border-gray-200 rounded-xl px-3 py-2 text-sm text-center font-semibold focus:ring-2 focus:ring-amber-400 outline-none"
                       />
                     ) : (
@@ -3188,7 +3302,7 @@ export default function CajaClient({
                     <span className="text-sm text-gray-600">= <strong>L {valDescInput.toFixed(2)}</strong></span>
                   </div>
                   {!esAdmin && (
-                    <p className="text-[11px] text-gray-500 mt-2">Solo descuento automático por edad.</p>
+                    <p className="text-[11px] text-gray-500 mt-2">El descuento por edad debe confirmarse en caja.</p>
                   )}
                 </div>
 
@@ -3446,13 +3560,30 @@ export default function CajaClient({
       {modalCobro && consultaCobro && (() => {
         const det = calcularTotalConsulta(consultaCobro)
         const pctMax = det.pctDesc
+        const elegibleDesc = !det.fechaSospechosa && pctMax > 0
+        const descConfirmado = formCobro.descuento_confirmado && Number(formCobro.descuento_pct) > 0
         const pctInput = esAdmin
-          ? Number(formCobro.descuento_pct) || pctMax
-          : Math.min(Number(formCobro.descuento_pct) || pctMax, pctMax)
+          ? (Number(formCobro.descuento_pct) || 0)
+          : (formCobro.descuento_confirmado ? pctMax : 0)
+        const membInfo = det.membInfo
+        const membActiva = tieneBeneficiosMembresia(membInfo?.estructurados)
+        const desgloseUI = desglosarLineasCobro(
+          [
+            { categoria: 'consulta',     bruto: det.consulta },
+            { categoria: 'servicios',    bruto: det.servicios },
+            { categoria: 'laboratorio',  bruto: det.lab },
+            { categoria: 'medicamentos', bruto: det.meds },
+          ],
+          pctInput,
+          det.motivo || 'Descuento',
+          membInfo?.estructurados,
+        )
         const baseAmount = det.subtotal
-        const valDescInput = baseAmount * (pctInput / 100)
-        const totalFinal = baseAmount - valDescInput
+        const valDescInput = desgloseUI.descTotal
+        const totalFinal = desgloseUI.total
         const subtotalEsCero = det.subtotal === 0
+        const consultaGratisPlan = Boolean(membInfo?.estructurados.consultaGratis)
+        const puedeCobrar = !subtotalEsCero && (totalFinal > 0 || desgloseUI.membAplicada)
         const pac = consultaCobro.paciente
         return (
           <Modal
@@ -3471,11 +3602,13 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={procesarCobro}
-                  disabled={guardandoCobro || totalFinal <= 0 || subtotalEsCero}
+                  disabled={guardandoCobro || !puedeCobrar}
                   className="flex items-center justify-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm transition"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {guardandoCobro ? 'Procesando...' : `Cobrar L ${totalFinal.toFixed(2)}`}
+                  {guardandoCobro ? 'Procesando...'
+                    : totalFinal <= 0 && desgloseUI.membAplicada ? 'Confirmar (cubierto por plan · L 0.00)'
+                      : `Cobrar L ${totalFinal.toFixed(2)}`}
                 </button>
               </div>
             )}
@@ -3589,17 +3722,78 @@ export default function CajaClient({
 
               {/* Columna derecha: pago */}
               <div className="lg:col-span-2 space-y-4 lg:sticky lg:top-0 lg:self-start">
-                <div className={`rounded-xl border p-4 ${det.pctDesc > 0 ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                {membActiva && membInfo && (
+                  <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <BadgeCheck className="w-5 h-5 text-emerald-600" />
+                      <span className="text-sm font-bold text-emerald-800">Plan activo: {membInfo.tipo}</span>
+                    </div>
+                    <ul className="text-xs text-emerald-800 space-y-0.5">
+                      {consultaGratisPlan && <li>• Consulta médica <b>gratis</b></li>}
+                      {!consultaGratisPlan && membInfo.estructurados.pctConsulta > 0 && <li>• {membInfo.estructurados.pctConsulta}% en consulta</li>}
+                      {membInfo.estructurados.pctLaboratorio > 0 && <li>• {membInfo.estructurados.pctLaboratorio}% en laboratorio</li>}
+                      {membInfo.estructurados.pctMedicamentos > 0 && <li>• {membInfo.estructurados.pctMedicamentos}% en medicamentos</li>}
+                      {membInfo.estructurados.pctServicios > 0 && <li>• {membInfo.estructurados.pctServicios}% en servicios</li>}
+                    </ul>
+                    <p className="text-[11px] text-emerald-700/80 mt-2">Beneficios aplicados automáticamente al total.</p>
+                  </div>
+                )}
+                <div className={`rounded-xl border p-4 ${
+                  det.fechaSospechosa ? 'border-red-300 bg-red-50'
+                    : descConfirmado ? 'border-amber-300 bg-amber-50'
+                      : elegibleDesc ? 'border-amber-200 bg-amber-50/40'
+                        : 'border-gray-200 bg-white'
+                }`}>
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-sm font-semibold text-gray-800">Descuento</span>
-                    {det.pctDesc > 0 && <span className="text-xs text-amber-700 font-medium">{det.motivo}</span>}
+                    {elegibleDesc && (
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-semibold rounded-full">
+                        {det.motivo} {pctMax}% · sugerido
+                      </span>
+                    )}
                   </div>
+
+                  {det.fechaSospechosa && (
+                    <p className="text-xs text-red-700 bg-red-100/60 border border-red-200 rounded-lg px-3 py-2 mb-2">
+                      ⚠ Fecha de nacimiento inválida o poco creíble
+                      {consultaCobro.paciente?.fecha_nac ? ` (${fmtFechaNac(consultaCobro.paciente.fecha_nac)})` : ''}.
+                      No se aplicará descuento por edad — verifique el expediente.
+                    </p>
+                  )}
+
+                  {elegibleDesc && (
+                    <label className="flex items-start gap-2 cursor-pointer select-none mb-2">
+                      <input
+                        type="checkbox"
+                        checked={formCobro.descuento_confirmado}
+                        onChange={e => setFormCobro(p => ({
+                          ...p,
+                          descuento_confirmado: e.target.checked,
+                          descuento_pct: e.target.checked ? String(pctMax) : '0',
+                        }))}
+                        className="mt-0.5 w-4 h-4 accent-amber-600"
+                      />
+                      <span className="text-sm text-gray-700">
+                        <span className="font-semibold">Aplicar descuento {det.motivo}</span>
+                        <span className="block text-xs text-gray-600">
+                          Paciente de <b>{det.edad} años</b>
+                          {consultaCobro.paciente?.fecha_nac ? ` · nació el ${fmtFechaNac(consultaCobro.paciente.fecha_nac)}` : ''}.
+                          Confirmo que verifiqué su identidad.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-3">
                     {esAdmin ? (
                       <input
                         type="number" min="0" max="100" step="any"
                         value={formCobro.descuento_pct}
-                        onChange={e => setFormCobro(p => ({ ...p, descuento_pct: e.target.value }))}
+                        onChange={e => setFormCobro(p => ({
+                          ...p,
+                          descuento_pct: e.target.value,
+                          descuento_confirmado: Number(e.target.value) > 0,
+                        }))}
                         className="w-20 border border-gray-200 rounded-xl px-3 py-2 text-sm text-center font-semibold focus:ring-2 focus:ring-amber-400 outline-none"
                       />
                     ) : (
@@ -3608,7 +3802,7 @@ export default function CajaClient({
                     <span className="text-sm text-gray-600">= <strong>L {valDescInput.toFixed(2)}</strong></span>
                   </div>
                   {!esAdmin && (
-                    <p className="text-[11px] text-gray-500 mt-2">Solo el descuento automático por edad. Más descuento requiere administrador.</p>
+                    <p className="text-[11px] text-gray-500 mt-2">El descuento por edad debe confirmarse. Más descuento requiere administrador.</p>
                   )}
                 </div>
 
