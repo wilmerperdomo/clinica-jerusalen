@@ -8,7 +8,7 @@ import {
   RefreshCw, CreditCard, Banknote, ArrowRightLeft, Clock,
   CheckCircle2, AlertCircle, Receipt, Users, ChevronDown,
   LockKeyhole, Unlock, Wallet, FileText, Printer, FlaskConical,
-  Stethoscope, Pill, ClipboardList, BadgeCheck, Gift, type LucideIcon,
+  Stethoscope, Pill, ClipboardList, BadgeCheck, Gift, Tags, Pencil, Power, type LucideIcon,
 } from 'lucide-react'
 import {
   calcularDescuentoEdad,
@@ -60,7 +60,7 @@ import {
 } from '@/lib/fidelidad-puntos'
 
 /* ─── tipos ─────────────────────────────────────────────── */
-interface Concepto { id: number; nombre: string; tipo: 'INGRESO' | 'EGRESO'; categoria?: string }
+interface Concepto { id: number; nombre: string; tipo: 'INGRESO' | 'EGRESO'; categoria?: string; activo?: boolean }
 interface Movimiento {
   id: number; tipo: 'INGRESO' | 'EGRESO'; concepto: string
   monto: number; forma_pago: string; paciente_nombre?: string
@@ -93,6 +93,7 @@ interface Sucursal {
   fecha_limite?: string; lema?: string
   tercera_edad?: number; cuarta_edad?: number
   por_descuento_tercera?: number; por_descuento_cuarta?: number
+  fondo_caja?: number
 }
 interface Perfil   { nombre?: string; apellido?: string; sucursal_id?: number }
 interface CXC {
@@ -279,10 +280,18 @@ export default function CajaClient({
 
   /* apertura */
   const [formApertura, setFormApertura] = useState({
-    monto_inicial: '', sucursal_id: sucursalDefault,
+    monto_inicial: sucursalActiva?.fondo_caja ? String(sucursalActiva.fondo_caja) : '',
+    sucursal_id: sucursalDefault,
   })
+  const [fondoMsg, setFondoMsg] = useState<string | null>(null)
+  const [guardandoFondo, setGuardandoFondo] = useState(false)
 
   const [modalCierre, setModalCierre] = useState(false)
+  const [modalConceptos, setModalConceptos] = useState(false)
+  const [conceptosEgreso, setConceptosEgreso] = useState<Concepto[]>([])
+  const [cargandoConceptos, setCargandoConceptos] = useState(false)
+  const [formConcepto, setFormConcepto] = useState<{ id: number | null; nombre: string; categoria: string }>({ id: null, nombre: '', categoria: '' })
+  const [guardandoConcepto, setGuardandoConcepto] = useState(false)
   const [modalAbono,  setModalAbono]  = useState(false)
   const [guardandoAbono, setGuardandoAbono] = useState(false)
   const [cxcActual,   setCxcActual]   = useState<CXC | null>(null)
@@ -408,6 +417,69 @@ export default function CajaClient({
     if (cotRows) setCotPorCobrar(cotRows as CotizacionPorCobrar[])
   }
 
+  /* ── guardar fondo sugerido de la sucursal (solo admin) ─ */
+  async function guardarFondoSucursal() {
+    const sid = Number(formApertura.sucursal_id)
+    if (!sid) return
+    const fondo = Number(formApertura.monto_inicial || 0)
+    if (fondo < 0) { setFondoMsg('Monto inválido'); return }
+    setGuardandoFondo(true)
+    setFondoMsg(null)
+    const { error } = await supabase.from('sucursales').update({ fondo_caja: fondo }).eq('id', sid)
+    setGuardandoFondo(false)
+    if (error) {
+      setFondoMsg(error.message.includes('fondo_caja') ? 'Falta migración (FIX-CAJA-FONDO-SUCURSAL.sql)' : 'No se pudo guardar')
+      return
+    }
+    const suc = sucursales.find(s => s.id === sid)
+    if (suc) suc.fondo_caja = fondo
+    setFondoMsg('Fondo guardado ✓')
+  }
+
+  /* ── catálogo de conceptos de egreso (solo admin) ─ */
+  async function abrirModalConceptos() {
+    setModalConceptos(true)
+    setFormConcepto({ id: null, nombre: '', categoria: '' })
+    setCargandoConceptos(true)
+    const { data } = await supabase
+      .from('caja_conceptos')
+      .select('id, nombre, tipo, categoria, activo')
+      .eq('tipo', 'EGRESO')
+      .order('nombre')
+    setConceptosEgreso((data as Concepto[]) || [])
+    setCargandoConceptos(false)
+  }
+
+  async function guardarConcepto() {
+    const nombre = formConcepto.nombre.trim()
+    if (!nombre) return alert('Escriba el nombre del concepto')
+    setGuardandoConcepto(true)
+    const payload = { nombre, categoria: formConcepto.categoria.trim() || null, tipo: 'EGRESO' as const }
+    if (formConcepto.id) {
+      const { error } = await supabase.from('caja_conceptos').update(payload).eq('id', formConcepto.id)
+      if (error) { setGuardandoConcepto(false); return alert('No se pudo guardar: ' + error.message) }
+      setConceptosEgreso(prev => prev.map(c => c.id === formConcepto.id ? { ...c, ...payload, categoria: payload.categoria ?? undefined } : c))
+    } else {
+      const { data, error } = await supabase.from('caja_conceptos').insert({ ...payload, activo: true }).select('id, nombre, tipo, categoria, activo').single()
+      if (error) { setGuardandoConcepto(false); return alert('No se pudo crear: ' + error.message) }
+      if (data) setConceptosEgreso(prev => [...prev, data as Concepto].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+    }
+    setFormConcepto({ id: null, nombre: '', categoria: '' })
+    setGuardandoConcepto(false)
+  }
+
+  async function toggleConceptoActivo(c: Concepto) {
+    const nuevo = !(c.activo ?? true)
+    const { error } = await supabase.from('caja_conceptos').update({ activo: nuevo }).eq('id', c.id)
+    if (error) return alert('No se pudo actualizar: ' + error.message)
+    setConceptosEgreso(prev => prev.map(x => x.id === c.id ? { ...x, activo: nuevo } : x))
+  }
+
+  function cerrarModalConceptos() {
+    setModalConceptos(false)
+    startTransition(() => recargar())
+  }
+
   /* ── apertura de caja ─ */
   async function abrirCaja() {
     setErrorAp('')
@@ -454,6 +526,26 @@ export default function CajaClient({
   const arqueoSistema = useMemo(
     () => calcularTotalesCaja(sesion?.movimientos || [], Number(sesion?.monto_inicial || 0)),
     [sesion?.movimientos, sesion?.monto_inicial],
+  )
+
+  // Egresos del día (detalle para el cierre y el ticket)
+  const egresosDelDia = useMemo(
+    () => (sesion?.movimientos || [])
+      .filter(m => m.tipo === 'EGRESO' && !m.anulado)
+      .map(m => ({
+        hora: m.hora,
+        concepto: m.concepto,
+        monto: Number(m.monto),
+        forma_pago: m.forma_pago,
+      }))
+      .sort((a, b) => (a.hora || '').localeCompare(b.hora || '')),
+    [sesion?.movimientos],
+  )
+
+  // Resultado del día (lo que se entrega): el fondo inicial NO se cuenta como ingreso
+  const efectivoDelDia = useMemo(
+    () => parseFloat((arqueoSistema.ingEfectivo - arqueoSistema.totalEgr).toFixed(2)),
+    [arqueoSistema.ingEfectivo, arqueoSistema.totalEgr],
   )
 
   const efectivoContado = useMemo(() => {
@@ -554,6 +646,8 @@ export default function CajaClient({
       total_ingresos: totalIng,
       total_egresos: totalEgr,
       efectivo_esperado: efectivoEsperado,
+      efectivo_dia: parseFloat((arqueoSistema.ingEfectivo - totalEgr).toFixed(2)),
+      egresos_detalle: egresosDelDia,
       conteo_apertura: Number(formCierre.efectivo_apertura || 0),
       conteo_ventas_efectivo: Number(formCierre.ventas_efectivo || 0),
       conteo_egresos: Number(formCierre.egresos_contado || 0),
@@ -2097,7 +2191,16 @@ export default function CajaClient({
               </div>
             ) : (
               <select value={formApertura.sucursal_id}
-                onChange={e => setFormApertura(p => ({ ...p, sucursal_id: e.target.value }))}
+                onChange={e => {
+                  const sid = e.target.value
+                  const suc = sucursales.find(s => s.id === Number(sid))
+                  setFormApertura(p => ({
+                    ...p,
+                    sucursal_id: sid,
+                    monto_inicial: suc?.fondo_caja ? String(suc.fondo_caja) : p.monto_inicial,
+                  }))
+                  setFondoMsg(null)
+                }}
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
                 <option value="">— Seleccionar sucursal —</option>
                 {sucursales.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
@@ -2113,10 +2216,30 @@ export default function CajaClient({
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium text-sm">L.</span>
               <input type="number" min="0" step="0.01"
                 value={formApertura.monto_inicial}
-                onChange={e => setFormApertura(p => ({ ...p, monto_inicial: e.target.value }))}
+                onChange={e => { setFormApertura(p => ({ ...p, monto_inicial: e.target.value })); setFondoMsg(null) }}
                 placeholder="0.00"
                 className="w-full border rounded-lg pl-9 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-lg font-semibold" />
             </div>
+            {(() => {
+              const sucSel = sucursales.find(s => s.id === Number(formApertura.sucursal_id))
+              const fondoSuc = Number(sucSel?.fondo_caja || 0)
+              return (
+                <p className="text-[11px] text-gray-500 mt-1">
+                  {fondoSuc > 0
+                    ? `Fondo sugerido de la sucursal: ${fmt(fondoSuc)}. Es la base que se conserva; puede ajustarla.`
+                    : 'Este es el fondo base de la caja; se conserva y no cuenta como ingreso del día.'}
+                </p>
+              )
+            })()}
+            {esAdmin && formApertura.sucursal_id && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <button type="button" onClick={guardarFondoSucursal} disabled={guardandoFondo}
+                  className="text-xs text-blue-600 hover:underline disabled:opacity-50">
+                  Guardar este monto como fondo de la sucursal
+                </button>
+                {fondoMsg && <span className="text-xs text-green-600">{fondoMsg}</span>}
+              </div>
+            )}
           </div>
 
           {errorAp && (
@@ -2162,6 +2285,11 @@ export default function CajaClient({
             <ModuleBtnPrimary onClick={() => ventaRapida.abrir('INGRESO')}>
               <Receipt className="w-4 h-4" /> Venta rápida
             </ModuleBtnPrimary>
+            {esAdmin && (
+              <ModuleBtnGhost onClick={abrirModalConceptos}>
+                <Tags className="w-4 h-4" /> Egresos
+              </ModuleBtnGhost>
+            )}
             <ModuleBtnGhost onClick={abrirModalCierre} className="!bg-red-500/20 !border-red-300/40 !text-red-100">
               <LockKeyhole className="w-4 h-4" /> Cerrar Caja
             </ModuleBtnGhost>
@@ -2806,10 +2934,6 @@ export default function CajaClient({
                 <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
                   <p className="text-xs font-bold text-blue-900 uppercase tracking-wide mb-3">Resumen del sistema (solo admin)</p>
                   <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Efectivo con que abrió caja</span>
-                      <span className="font-semibold tabular-nums">{fmt(sesion.monto_inicial)}</span>
-                    </div>
                     <div className="flex justify-between text-green-700">
                       <span>(+) Ventas en efectivo</span>
                       <span className="font-semibold tabular-nums">{fmt(arqueoSistema.ingEfectivo)}</span>
@@ -2818,11 +2942,53 @@ export default function CajaClient({
                       <span>(−) Egresos pagados</span>
                       <span className="font-semibold tabular-nums">{fmt(arqueoSistema.totalEgr)}</span>
                     </div>
-                    <div className="flex justify-between pt-2 border-t border-blue-200 font-bold text-blue-900">
-                      <span>= Efectivo que debe haber</span>
+                    <div className="flex justify-between pt-2 border-t border-blue-200 font-bold text-emerald-700">
+                      <span>= Efectivo del día (a entregar)</span>
+                      <span className="text-lg tabular-nums">{fmt(efectivoDelDia)}</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-blue-200 space-y-2 text-sm">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Fondo de caja (se conserva)</span>
+                      <span className="font-semibold tabular-nums">{fmt(sesion.monto_inicial)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-blue-900">
+                      <span>= Total en cajón (fondo + día)</span>
                       <span className="text-lg tabular-nums">{fmt(arqueoSistema.efectivoEsperado)}</span>
                     </div>
                   </div>
+                  <p className="text-[11px] text-gray-500 mt-2">
+                    El fondo de {fmt(sesion.monto_inicial)} no es ingreso del día: queda en el cajón para mañana.
+                  </p>
+                </div>
+
+                {/* Detalle de egresos del día */}
+                <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-4">
+                  <p className="text-xs font-bold text-rose-900 uppercase tracking-wide mb-2">
+                    Egresos del día ({egresosDelDia.length})
+                  </p>
+                  {egresosDelDia.length === 0 ? (
+                    <p className="text-xs text-gray-500">No hubo egresos en este turno.</p>
+                  ) : (
+                    <>
+                      <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                        {egresosDelDia.map((e, i) => (
+                          <div key={i} className="flex justify-between items-center text-sm gap-2">
+                            <span className="text-gray-700 truncate">
+                              {e.hora?.slice(0, 5) && <span className="text-gray-400 text-xs mr-1">{e.hora.slice(0, 5)}</span>}
+                              {e.concepto}
+                              <span className="text-[10px] text-gray-400 ml-1">{e.forma_pago}</span>
+                            </span>
+                            <span className="font-semibold tabular-nums text-rose-700 shrink-0">−{fmt(e.monto)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex justify-between pt-2 mt-2 border-t border-rose-200 font-bold text-rose-900 text-sm">
+                        <span>Total egresos</span>
+                        <span className="tabular-nums">{fmt(arqueoSistema.totalEgr)}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-sm">
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Otros medios</p>
@@ -2869,6 +3035,23 @@ export default function CajaClient({
                   <span className="font-semibold text-gray-800">Total efectivo contado</span>
                   <span className="text-2xl font-black text-amber-900 tabular-nums">{fmt(efectivoContado)}</span>
                 </div>
+
+                {(() => {
+                  const fondo = Number(formCierre.efectivo_apertura) || 0
+                  const dia = parseFloat(((Number(formCierre.ventas_efectivo) || 0) - (Number(formCierre.egresos_contado) || 0)).toFixed(2))
+                  return (
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-center">
+                      <div className="rounded-lg bg-white border border-amber-200 p-2">
+                        <p className="text-[10px] text-gray-500 uppercase">Dejar en cajón (fondo)</p>
+                        <p className="font-bold text-gray-800 tabular-nums">{fmt(fondo)}</p>
+                      </div>
+                      <div className="rounded-lg bg-white border border-emerald-200 p-2">
+                        <p className="text-[10px] text-gray-500 uppercase">Entregar (efectivo del día)</p>
+                        <p className="font-bold text-emerald-700 tabular-nums">{fmt(dia)}</p>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
 
               {formCierre.ventas_efectivo && formCierre.egresos_contado !== '' && (
@@ -2900,6 +3083,98 @@ export default function CajaClient({
                 El reporte impreso incluye el detalle del sistema y su conteo para archivo de la clínica.
               </p>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ══════════ MODAL CATÁLOGO DE EGRESOS (ADMIN) ══════════ */}
+      {modalConceptos && (
+        <Modal
+          title="Conceptos de egreso"
+          subtitle="Administre los conceptos disponibles al registrar egresos en caja"
+          size="md"
+          accent="rose"
+          icon={Tags}
+          onClose={cerrarModalConceptos}
+          footer={(
+            <div className="flex justify-end">
+              <button type="button" onClick={cerrarModalConceptos}
+                className="px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-medium hover:bg-white">
+                Listo
+              </button>
+            </div>
+          )}
+        >
+          <div className="space-y-4">
+            {/* Form alta/edición */}
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+              <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                {formConcepto.id ? 'Editar concepto' : 'Nuevo concepto'}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Nombre *</label>
+                  <input value={formConcepto.nombre}
+                    onChange={e => setFormConcepto(p => ({ ...p, nombre: e.target.value }))}
+                    placeholder="Ej. Compra de insumos"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-300 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Categoría (opcional)</label>
+                  <input value={formConcepto.categoria}
+                    onChange={e => setFormConcepto(p => ({ ...p, categoria: e.target.value }))}
+                    placeholder="Ej. Operativo"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-300 outline-none" />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={guardarConcepto} disabled={guardandoConcepto}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold">
+                  {formConcepto.id ? <><Save className="w-4 h-4" /> Guardar</> : <><Plus className="w-4 h-4" /> Agregar</>}
+                </button>
+                {formConcepto.id && (
+                  <button type="button" onClick={() => setFormConcepto({ id: null, nombre: '', categoria: '' })}
+                    className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium hover:bg-white">
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Lista */}
+            {cargandoConceptos ? (
+              <p className="text-sm text-gray-400 text-center py-6">Cargando…</p>
+            ) : conceptosEgreso.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">No hay conceptos de egreso. Agregue el primero arriba.</p>
+            ) : (
+              <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                {conceptosEgreso.map(c => {
+                  const activo = c.activo ?? true
+                  return (
+                    <div key={c.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${activo ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-800 truncate">{c.nombre}</p>
+                        {c.categoria && <p className="text-[11px] text-gray-400">{c.categoria}</p>}
+                      </div>
+                      {!activo && <span className="text-[10px] text-gray-400 uppercase font-semibold">Inactivo</span>}
+                      <button type="button" title="Editar"
+                        onClick={() => setFormConcepto({ id: c.id, nombre: c.nombre, categoria: c.categoria || '' })}
+                        className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button type="button" title={activo ? 'Desactivar' : 'Activar'}
+                        onClick={() => toggleConceptoActivo(c)}
+                        className={`p-1.5 rounded-lg hover:bg-gray-100 ${activo ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        <Power className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <p className="text-[11px] text-gray-500">
+              Los conceptos inactivos no aparecen al registrar egresos, pero se conservan en el historial.
+            </p>
           </div>
         </Modal>
       )}

@@ -21,7 +21,7 @@ export default async function VentasPage() {
   async function getSucursales() {
     const { data, error } = await supabase
       .from('sucursales')
-      .select('id, nombre, direccion, telefono, rtn, cai, num_min, num_max, numero_inicial, fecha_limite, lema, tercera_edad, cuarta_edad, por_descuento_tercera, por_descuento_cuarta')
+      .select('id, nombre, direccion, telefono, rtn, cai, num_min, num_max, numero_inicial, fecha_limite, lema, tercera_edad, cuarta_edad, por_descuento_tercera, por_descuento_cuarta, fondo_caja')
       .order('nombre')
     if (error) {
       const { data: base } = await supabase

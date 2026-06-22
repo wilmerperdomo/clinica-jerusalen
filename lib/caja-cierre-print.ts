@@ -24,6 +24,8 @@ export interface CajaCierrePrintData {
   total_ingresos: number
   total_egresos: number
   efectivo_esperado: number
+  efectivo_dia?: number
+  egresos_detalle?: { hora?: string; concepto: string; monto: number; forma_pago?: string }[]
   conteo_apertura: number
   conteo_ventas_efectivo: number
   conteo_egresos: number
@@ -59,6 +61,17 @@ export function htmlCierreCaja(d: CajaCierrePrintData, baseUrl = ''): string {
   `).join('')
 
   const cuadra = Math.abs(d.diferencia) < 0.01
+  const efectivoDia = typeof d.efectivo_dia === 'number'
+    ? d.efectivo_dia
+    : (d.ingresos_efectivo - d.total_egresos)
+  const egresosDet = d.egresos_detalle ?? []
+  const filasEgr = egresosDet.map(e => `
+    <tr>
+      <td style="padding:2px 4px;font-size:10px">${e.hora?.slice(0, 5) ?? ''}</td>
+      <td style="padding:2px 4px;font-size:10px">${e.concepto}</td>
+      <td style="padding:2px 4px;font-size:10px;text-align:right;color:#b91c1c">−${L(e.monto)}</td>
+    </tr>
+  `).join('')
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -92,15 +105,24 @@ export function htmlCierreCaja(d: CajaCierrePrintData, baseUrl = ''): string {
   <div class="line"></div>
 
   <div class="bold" style="margin-bottom:4px">RESUMEN DEL SISTEMA</div>
-  <div class="row"><span>Efectivo apertura</span><span>${L(d.monto_inicial)}</span></div>
   <div class="row"><span>(+) Ventas efectivo</span><span>${L(d.ingresos_efectivo)}</span></div>
   <div class="row"><span>(−) Egresos</span><span>${L(d.total_egresos)}</span></div>
-  <div class="row bold"><span>= Efectivo esperado</span><span>${L(d.efectivo_esperado)}</span></div>
+  <div class="row bold"><span>= Efectivo del día</span><span>${L(efectivoDia)}</span></div>
+  <div class="row" style="margin-top:4px"><span>Fondo de caja (se conserva)</span><span>${L(d.monto_inicial)}</span></div>
+  <div class="row bold"><span>= Total en cajón</span><span>${L(d.efectivo_esperado)}</span></div>
+  <div style="font-size:9px;color:#666;margin-top:2px">El fondo queda en el cajón para el día siguiente.</div>
   <div class="line"></div>
   <div class="row"><span>Ventas tarjeta</span><span>${L(d.ingresos_tarjeta)}</span></div>
   <div class="row"><span>Ventas transferencia</span><span>${L(d.ingresos_transferencia)}</span></div>
   <div class="row"><span>A crédito</span><span>${L(d.ingresos_credito)}</span></div>
   <div class="row"><span>Total ingresos</span><span>${L(d.total_ingresos)}</span></div>
+
+  ${egresosDet.length ? `
+  <div class="line"></div>
+  <div class="bold" style="margin-bottom:4px">DETALLE DE EGRESOS (${egresosDet.length})</div>
+  <table>${filasEgr}</table>
+  <div class="row bold" style="margin-top:2px"><span>Total egresos</span><span>−${L(d.total_egresos)}</span></div>
+  ` : ''}
 
   <div class="line"></div>
   <div class="bold" style="margin-bottom:4px">ARQUEO FÍSICO (CAJERO)</div>
