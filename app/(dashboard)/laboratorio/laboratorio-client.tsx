@@ -7,7 +7,7 @@ import {
   CheckCircle2, Clock, X, Save, AlertCircle,
   Beaker, Edit2, Printer, MessageCircle, Trash2,
   LayoutGrid, List, BarChart3, Tag, ShieldCheck, Send, SlidersHorizontal,
-  KeyRound, Copy, Stethoscope, Package, Zap,
+  KeyRound, Copy, Stethoscope, Package, Zap, TestTube2,
 } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { linkWhatsAppMensaje } from '@/lib/mensajes-paciente'
@@ -1478,9 +1478,14 @@ export default function LaboratorioClient({
         {/* Modal nueva orden */}
         {modalOrden && (
           <LabModal title="Nueva Orden de Laboratorio" onClose={cerrarModalOrden} wide full>
-            <div className="flex flex-col gap-4 min-h-0 flex-1">
-              <div className="rounded-xl border border-gray-100 bg-gradient-to-r from-slate-50 to-cyan-50/40 p-4">
-                <label className="block text-sm font-semibold text-gray-800 mb-2">Paciente *</label>
+            <div className="flex flex-col min-h-0 flex-1">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-5">
+              {/* ── Sección: Paciente ── */}
+              <section className="rounded-xl border border-gray-100 bg-gradient-to-r from-slate-50 to-cyan-50/40 p-4">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-cyan-700 mb-3 flex items-center gap-1.5">
+                  <FlaskConical className="w-3.5 h-3.5" /> Paciente
+                </h4>
+                <label className="block text-sm font-semibold text-gray-800 mb-2">Buscar paciente *</label>
                 <BuscarPacienteInput
                   pacientes={pacientesBusqueda}
                   value={formOrden.paciente_id}
@@ -1516,7 +1521,7 @@ export default function LaboratorioClient({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-xs font-semibold text-gray-600 mb-1">Nombre *</label>
                         <input
@@ -1602,7 +1607,7 @@ export default function LaboratorioClient({
                           placeholder="Opcional"
                         />
                       </div>
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-2 lg:col-span-3">
                         <label className="block text-xs font-semibold text-gray-600 mb-1">Correo</label>
                         <input
                           type="email"
@@ -1640,11 +1645,15 @@ export default function LaboratorioClient({
                     </div>
                   </div>
                 )}
-              </div>
+              </section>
 
-              {/* Médico solicitante + Perfil/Paquete */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+              {/* ── Sección: Datos de la orden ── */}
+              <section className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 space-y-4">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-cyan-700 flex items-center gap-1.5">
+                  <Stethoscope className="w-3.5 h-3.5" /> Datos de la orden
+                </h4>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-gray-100 bg-white p-4">
                   <label className="block text-sm font-semibold text-gray-800 mb-2">
                     <Stethoscope className="w-4 h-4 inline mr-1 text-cyan-600" /> Médico solicitante
                   </label>
@@ -1704,7 +1713,7 @@ export default function LaboratorioClient({
                   )}
                 </div>
 
-                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+                <div className="rounded-xl border border-gray-100 bg-white p-4">
                   <label className="block text-sm font-semibold text-gray-800 mb-2">
                     <Package className="w-4 h-4 inline mr-1 text-cyan-600" /> Perfil / paquete
                   </label>
@@ -1724,81 +1733,22 @@ export default function LaboratorioClient({
                     Al elegir un perfil se agregan sus pruebas a la selección. Si el perfil tiene precio propio, se usa ese precio.
                   </p>
                 </div>
-              </div>
-
-              <div className="flex-1 min-h-0">
-                <label className="block text-sm font-semibold text-gray-800 mb-2">Catálogo de pruebas *</label>
-                <LabSelectorPruebas
-                  pruebas={pruebasCatalogo}
-                  selectedIds={formOrden.pruebas_ids}
-                  onChange={ids => setFormOrden(p => ({ ...p, pruebas_ids: ids }))}
-                  pacienteId={formOrden.paciente_id}
-                  precioParaPaciente={precioPruebaParaPaciente}
-                  loading={loadingCatalogo}
-                />
-
-                {/* Referencia y unidad informativas por examen seleccionado */}
-                {formOrden.pruebas_ids.length > 0 && (() => {
-                  const pacSel = pacientesMerged.find(p => String(p.id) === formOrden.paciente_id)
-                  const edad = calcularEdad(pacSel?.fecha_nac)
-                  return (
-                    <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="bg-gray-50 text-gray-500 uppercase">
-                            <th className="px-3 py-2 text-left">Examen</th>
-                            <th className="px-3 py-2 text-left">Valor de referencia</th>
-                            <th className="px-3 py-2 text-left">Unidad</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {formOrden.pruebas_ids.map(pid => {
-                            const prueba = pruebasCatalogo.find(p => p.id === pid)
-                            const rango = buscarRangoAplicable(rangosState, pid, edad, pacSel?.genero)
-                            const ev = evaluarValorRango('', rango)
-                            return (
-                              <tr key={pid}>
-                                <td className="px-3 py-1.5">{prueba?.nombre ?? `#${pid}`}</td>
-                                <td className="px-3 py-1.5 text-gray-600">{ev.rangoTexto || '—'}</td>
-                                <td className="px-3 py-1.5 text-gray-600">{ev.unidad || '—'}</td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                      <p className="text-[11px] text-gray-400 px-3 py-1.5 bg-gray-50/60">
-                        Referencia y unidad según edad/sexo del paciente (definidas en el catálogo). Informativo.
-                      </p>
-                    </div>
-                  )
-                })()}
-              </div>
-
-              {/* Observación, entrega y urgencia */}
-              <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 space-y-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-800 mb-1">Observaciones</label>
-                  <textarea
-                    value={formOrden.observaciones}
-                    onChange={e => setFormOrden(p => ({ ...p, observaciones: e.target.value }))}
-                    rows={2}
-                    placeholder="Indicaciones, ayuno, notas para el laboratorio…"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+                {/* Entrega y urgencia */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold text-gray-800 mb-1">Fecha/hora de entrega</label>
                     <input
                       type="datetime-local"
                       value={formOrden.entrega_fecha}
                       onChange={e => setFormOrden(p => ({ ...p, entrega_fecha: e.target.value }))}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-800 mb-1">Entrega de resultados</label>
-                    <div className="flex flex-wrap gap-3 pt-1.5">
+                    <div className="flex flex-wrap gap-x-4 gap-y-2 pt-2">
                       <label className="inline-flex items-center gap-1.5 text-sm">
                         <input type="checkbox" checked={formOrden.entrega_whatsapp}
                           onChange={e => setFormOrden(p => ({ ...p, entrega_whatsapp: e.target.checked }))} />
@@ -1817,15 +1767,82 @@ export default function LaboratorioClient({
                     </div>
                   </div>
                 </div>
-                <label className={`inline-flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-lg cursor-pointer ${formOrden.urgente ? 'bg-red-50 text-red-700 border border-red-200' : 'text-gray-700'}`}>
+                <label className={`inline-flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-lg cursor-pointer w-full sm:w-auto ${formOrden.urgente ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-white border border-gray-200 text-gray-700'}`}>
                   <input type="checkbox" checked={formOrden.urgente}
                     onChange={e => setFormOrden(p => ({ ...p, urgente: e.target.checked }))} />
                   <Zap className={`w-4 h-4 ${formOrden.urgente ? 'text-red-600' : 'text-gray-400'}`} /> Marcar como URGENTE / Emergencia
                 </label>
+              </section>
+
+              {/* ── Sección: Exámenes ── */}
+              <section className="rounded-xl border border-gray-100 bg-white p-4">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-cyan-700 mb-3 flex items-center gap-1.5">
+                  <TestTube2 className="w-3.5 h-3.5" /> Exámenes *
+                </h4>
+                <LabSelectorPruebas
+                  pruebas={pruebasCatalogo}
+                  selectedIds={formOrden.pruebas_ids}
+                  onChange={ids => setFormOrden(p => ({ ...p, pruebas_ids: ids }))}
+                  pacienteId={formOrden.paciente_id}
+                  precioParaPaciente={precioPruebaParaPaciente}
+                  loading={loadingCatalogo}
+                />
+
+                {/* Referencia y unidad informativas por examen seleccionado */}
+                {formOrden.pruebas_ids.length > 0 && (() => {
+                  const pacSel = pacientesMerged.find(p => String(p.id) === formOrden.paciente_id)
+                  const edad = calcularEdad(pacSel?.fecha_nac)
+                  return (
+                    <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs min-w-[420px]">
+                          <thead>
+                            <tr className="bg-gray-50 text-gray-500 uppercase">
+                              <th className="px-3 py-2 text-left">Examen</th>
+                              <th className="px-3 py-2 text-left">Valor de referencia</th>
+                              <th className="px-3 py-2 text-left">Unidad</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {formOrden.pruebas_ids.map(pid => {
+                              const prueba = pruebasCatalogo.find(p => p.id === pid)
+                              const rango = buscarRangoAplicable(rangosState, pid, edad, pacSel?.genero)
+                              const ev = evaluarValorRango('', rango)
+                              return (
+                                <tr key={pid}>
+                                  <td className="px-3 py-1.5">{prueba?.nombre ?? `#${pid}`}</td>
+                                  <td className="px-3 py-1.5 text-gray-600">{ev.rangoTexto || '—'}</td>
+                                  <td className="px-3 py-1.5 text-gray-600">{ev.unidad || '—'}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[11px] text-gray-400 px-3 py-1.5 bg-gray-50/60">
+                        Referencia y unidad según edad/sexo del paciente (definidas en el catálogo). Informativo.
+                      </p>
+                    </div>
+                  )
+                })()}
+              </section>
+
+              {/* ── Sección: Observaciones ── */}
+              <section className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-cyan-700 mb-3">Observaciones</h4>
+                <textarea
+                  value={formOrden.observaciones}
+                  onChange={e => setFormOrden(p => ({ ...p, observaciones: e.target.value }))}
+                  rows={2}
+                  placeholder="Indicaciones, ayuno, notas para el laboratorio…"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+                />
+              </section>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t shrink-0">
-                <div className="text-sm text-gray-600">
+              {/* Footer fijo */}
+              <div className="flex flex-col-reverse sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 pt-3 mt-3 border-t shrink-0">
+                <div className="text-sm text-gray-600 text-center sm:text-left">
                   {formOrden.pruebas_ids.length > 0 ? (
                     <span>
                       <strong className="text-gray-900">{formOrden.pruebas_ids.length}</strong> prueba(s) ·{' '}
@@ -1837,11 +1854,11 @@ export default function LaboratorioClient({
                     <span className="text-gray-400">Seleccione al menos una prueba</span>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={cerrarModalOrden} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button onClick={cerrarModalOrden} className="px-4 py-2 border rounded-lg text-sm order-2 sm:order-1">Cancelar</button>
                   <button onClick={crearOrden}
                     disabled={guardandoOrden || !formOrden.paciente_id || formOrden.pruebas_ids.length === 0}
-                    className="px-5 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 shadow-sm">
+                    className="px-5 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 shadow-sm order-1 sm:order-2">
                     <FlaskConical className="w-4 h-4 inline mr-1" />
                     {guardandoOrden ? 'Generando…' : 'Generar Orden'}
                   </button>
