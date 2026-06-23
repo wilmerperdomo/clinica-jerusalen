@@ -26,7 +26,8 @@ import PagoAgradecimientoPanel from '@/components/pago-agradecimiento-panel'
 import {
   reservarSiguienteCorrelativo, confirmarCorrelativo, esErrorNumeroDuplicado,
 } from '@/lib/factura-correlativo'
-import { abrirFacturaTermica, facturaPrintDesdeRegistro } from '@/lib/factura-print'
+import { abrirFacturaTermica, facturaPrintDesdeRegistro, type FacturaPrintData } from '@/lib/factura-print'
+import { generarAccesoPortal } from '@/app/(dashboard)/laboratorio/portal-actions'
 import { abrirCierreCajaPrint, type CajaCierrePrintData } from '@/lib/caja-cierre-print'
 import { formatearNombreMedico } from '@/lib/medico-utils'
 import type { PacienteBusqueda } from '@/components/buscar-paciente-input'
@@ -1920,7 +1921,11 @@ export default function CajaClient({
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresa(impresa)
     setGuardandoFact(false)
-    abrirFacturaTermica(facturaPrintDesdeRegistro(impresa), { autoPrint: true })
+    const tieneLab = (consultaCobro?.consulta_analisis?.length ?? 0) > 0
+    const printDataCons = await adjuntarPortalSiLab(
+      facturaPrintDesdeRegistro(impresa), fact?.paciente_id ?? consultaCobro?.paciente_id ?? null, tieneLab,
+    )
+    abrirFacturaTermica(printDataCons, { autoPrint: true })
   }
 
   /* ── generar factura después del cobro de laboratorio directo ── */
@@ -2031,7 +2036,38 @@ export default function CajaClient({
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresa(impresa)
     setGuardandoFact(false)
-    abrirFacturaTermica(facturaPrintDesdeRegistro(impresa), { autoPrint: true })
+    const printDataLab = await adjuntarPortalSiLab(
+      facturaPrintDesdeRegistro(impresa), grupo.pacienteId || null, true,
+    )
+    abrirFacturaTermica(printDataLab, { autoPrint: true })
+  }
+
+  /* ── portal del paciente (para imprimir credenciales en la factura de lab) ── */
+  function portalBaseUrl(): string {
+    const env = process.env.NEXT_PUBLIC_APP_URL
+    if (env) return env.replace(/\/$/, '') + '/portal'
+    if (typeof window !== 'undefined') return window.location.origin + '/portal'
+    return '/portal'
+  }
+
+  /** Si la factura incluye laboratorio y hay paciente, genera el acceso y lo adjunta al ticket. */
+  async function adjuntarPortalSiLab(
+    printData: FacturaPrintData,
+    pacienteId: number | null | undefined,
+    tieneLab: boolean,
+  ): Promise<FacturaPrintData> {
+    if (!tieneLab || !pacienteId) return printData
+    try {
+      const r = await generarAccesoPortal(pacienteId)
+      if (r.ok && r.usuario && r.password) {
+        printData.portal = { usuario: r.usuario, password: r.password, url: portalBaseUrl() }
+      } else if (r.error) {
+        console.warn('Acceso portal:', r.error)
+      }
+    } catch (e) {
+      console.warn('Acceso portal:', e)
+    }
+    return printData
   }
 
   /* ── imprimir factura generada desde caja ── */

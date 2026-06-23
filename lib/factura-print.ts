@@ -31,6 +31,8 @@ export interface FacturaPrintData {
   medico_nombre?: string | null
   items: FacturaPrintItem[] | unknown
   estado?: string
+  /** Acceso al portal del paciente (se imprime cuando la venta incluye laboratorio) */
+  portal?: { usuario: string; password: string; url: string }
 }
 
 export interface FacturaPrintOptions {
@@ -312,6 +314,19 @@ ${filaMonospace('TOTAL:', L(f.total), true)}
   ${FISCAL.web}
 </div>
 
+${f.portal ? `
+<div class="line-solid"></div>
+<div class="center pie" style="margin-top:4px">
+  <strong>PORTAL DE RESULTADOS EN LÍNEA</strong><br>
+  <span style="font-size:9px">Consulte y descargue sus resultados de laboratorio</span><br>
+  <strong>${f.portal.url}</strong>
+</div>
+<div class="bloque-fiscal" style="margin-top:4px">
+  ${filaMonospace('Usuario (identidad):', f.portal.usuario, true)}
+  ${filaMonospace('Contraseña:', f.portal.password, true)}
+</div>
+<div class="center" style="font-size:8.5px;font-weight:normal;margin-top:2px">Guarde esta contraseña: no se vuelve a mostrar.</div>` : ''}
+
 ${incluirQr && qr ? `<div class="center" style="margin-top:8px"><img src="${qr}" width="72" height="72" alt="QR"/></div>` : ''}
 </div>
 
@@ -368,6 +383,7 @@ export function facturaPrintDesdeRegistro(f: Record<string, unknown>): FacturaPr
     medico_nombre: f.medico_nombre as string | undefined,
     items: f.items,
     estado: f.estado as string | undefined,
+    portal: f.portal as { usuario: string; password: string; url: string } | undefined,
   }
 }
 
