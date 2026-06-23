@@ -43,8 +43,16 @@ export default function LabKanban({ grupos, onAbrirGrupo, onEtiquetas, onMoverGr
                 >
                   <div className="flex items-start justify-between gap-1">
                     <div className="min-w-0">
-                      <p className="font-semibold text-sm text-gray-900 truncate">{g.pacienteNombre}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-semibold text-sm text-gray-900 truncate">{g.pacienteNombre}</p>
+                        {g.urgente && (
+                          <span className="shrink-0 text-[9px] font-extrabold bg-red-600 text-white px-1.5 py-0.5 rounded">URGENTE</span>
+                        )}
+                      </div>
                       <p className="text-[10px] text-gray-400">{g.pacienteCodigo} · {g.fecha}</p>
+                      {g.medicoNombre && (
+                        <p className="text-[10px] text-gray-500 truncate">Dr(a). {g.medicoNombre}</p>
+                      )}
                     </div>
                     {g.atrasado && (
                       <span title={`${g.diasAtraso} día(s) de atraso`} className="text-red-500 shrink-0">

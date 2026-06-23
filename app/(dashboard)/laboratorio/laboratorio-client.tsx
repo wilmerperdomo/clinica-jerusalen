@@ -7,7 +7,7 @@ import {
   CheckCircle2, Clock, X, Save, AlertCircle,
   Beaker, Edit2, Printer, MessageCircle, Trash2,
   LayoutGrid, List, BarChart3, Tag, ShieldCheck, Send, SlidersHorizontal,
-  KeyRound, Copy,
+  KeyRound, Copy, Stethoscope, Package, Zap,
 } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { linkWhatsAppMensaje } from '@/lib/mensajes-paciente'
@@ -20,7 +20,7 @@ import {
   evaluarValorRango, computeFechaPrometida, estadoOrdenLab, tuboColorClase,
   indicadorDesdeRango,
   type OrdenLab, type PruebaLab, type PacienteLab, type GrupoLab,
-  type LabRango, type LabPanelCampo,
+  type LabRango, type LabPanelCampo, type Medico, type LabPerfil,
 } from '@/lib/lab-utils'
 import { precioLabLista } from '@/lib/membresia-utils'
 import { descontarInsumosLab, type LabInsumo } from '@/lib/lab-insumos'
@@ -49,6 +49,8 @@ interface Props {
   insumos: LabInsumo[]
   preciosLista: Record<number, Record<number, number>>
   productos: { id: number; nombre: string; codigo?: string }[]
+  medicos: Medico[]
+  perfiles: LabPerfil[]
   sucursalId?: number
   esSuperAdmin?: boolean
 }
@@ -77,7 +79,8 @@ function sb() {
 export default function LaboratorioClient({
   ordenes: init, pruebas, pacientes, fechaHoy,
   rangos, panelCampos: initPanelCampos, insumos: initInsumos,
-  preciosLista, productos, sucursalId, esSuperAdmin = false,
+  preciosLista, productos, medicos: initMedicos, perfiles: initPerfiles,
+  sucursalId, esSuperAdmin = false,
 }: Props) {
   const [tab, setTab] = useState<TabLab>('cola')
   const [filtroLab, setFiltroLab] = useState<FiltroLab>('procesar')
@@ -91,7 +94,18 @@ export default function LaboratorioClient({
   const [grupoActual, setGrupoActual] = useState<GrupoLab | null>(null)
   const [pruebaActual, setPruebaActual] = useState<PruebaLab | null>(null)
 
-  const [formOrden, setFormOrden] = useState({ paciente_id: '', pruebas_ids: [] as number[] })
+  const [formOrden, setFormOrden] = useState({
+    paciente_id: '',
+    pruebas_ids: [] as number[],
+    medico_id: '',
+    perfil_id: '',
+    observaciones: '',
+    entrega_fecha: '',
+    entrega_whatsapp: false,
+    entrega_email: false,
+    entrega_fisico: true,
+    urgente: false,
+  })
   const [resultForm, setResultForm] = useState<Record<string, CampoResultadoForm>>({})
   const [formPrueba, setFormPrueba] = useState({
     nombre: '', description: '', color: '', dias: '1',
@@ -128,6 +142,30 @@ export default function LaboratorioClient({
     nombre: '', apellido1: '', apellido2: '',
     fecha_nac: '', genero: '', telefono: '', celular: '', correo: '', cedula: '',
   })
+
+  // Catálogos de médicos y perfiles (estado vivo para CRUD sin recargar)
+  const [medicosState, setMedicosState] = useState<Medico[]>(initMedicos)
+  const [perfilesState, setPerfilesState] = useState<LabPerfil[]>(initPerfiles)
+  useEffect(() => { setMedicosState(initMedicos) }, [initMedicos])
+  useEffect(() => { setPerfilesState(initPerfiles) }, [initPerfiles])
+
+  const [catTab, setCatTab] = useState<'pruebas' | 'perfiles' | 'medicos'>('pruebas')
+
+  // Alta rápida de médico desde el modal de orden
+  const [mostrarNuevoMedico, setMostrarNuevoMedico] = useState(false)
+  const [guardandoMedico, setGuardandoMedico] = useState(false)
+  const [formMedicoRapido, setFormMedicoRapido] = useState({ nombre: '', especialidad: '', colegiado: '', telefono: '' })
+
+  // CRUD de médicos (pestaña catálogo)
+  const [modalMedico, setModalMedico] = useState(false)
+  const [medicoActual, setMedicoActual] = useState<Medico | null>(null)
+  const [formMedico, setFormMedico] = useState({ nombre: '', especialidad: '', colegiado: '', telefono: '', correo: '', activo: true })
+
+  // CRUD de perfiles/paquetes (pestaña catálogo)
+  const [modalPerfil, setModalPerfil] = useState(false)
+  const [perfilActual, setPerfilActual] = useState<LabPerfil | null>(null)
+  const [formPerfil, setFormPerfil] = useState({ nombre: '', descripcion: '', precio: '', activo: true, pruebas_ids: [] as number[] })
+  const [guardandoPerfil, setGuardandoPerfil] = useState(false)
 
   const supabase = useMemo(() => sb(), [])
 
@@ -301,6 +339,148 @@ export default function LaboratorioClient({
     usarPacienteEnOrden(res.data as PacienteLab)
   }
 
+  /* ── Perfiles: al elegir uno, agrega sus pruebas a la selección ── */
+  function aplicarPerfil(perfilId: string) {
+    setFormOrden(prev => {
+      const next = { ...prev, perfil_id: perfilId }
+      const perfil = perfilesState.find(p => String(p.id) === perfilId)
+      if (perfil?.pruebas_ids?.length) {
+        const set = new Set<number>(prev.pruebas_ids)
+        for (const id of perfil.pruebas_ids) set.add(id)
+        next.pruebas_ids = [...set]
+      }
+      return next
+    })
+  }
+
+  /* ── Alta rápida de médico desde el modal de orden ── */
+  async function registrarMedicoRapido() {
+    const nombre = formMedicoRapido.nombre.trim()
+    if (!nombre) { alert('Ingrese el nombre del médico.'); return }
+    setGuardandoMedico(true)
+    const { data, error } = await supabase
+      .from('medicos')
+      .insert({
+        nombre,
+        especialidad: formMedicoRapido.especialidad.trim() || null,
+        colegiado: formMedicoRapido.colegiado.trim() || null,
+        telefono: formMedicoRapido.telefono.trim() || null,
+        activo: true,
+      })
+      .select('*')
+      .single()
+    setGuardandoMedico(false)
+    if (error || !data) {
+      alert('No se pudo registrar el médico: ' + (error?.message ?? 'error desconocido'))
+      return
+    }
+    setMedicosState(prev => [...prev, data as Medico].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+    setFormOrden(prev => ({ ...prev, medico_id: String((data as Medico).id) }))
+    setMostrarNuevoMedico(false)
+    setFormMedicoRapido({ nombre: '', especialidad: '', colegiado: '', telefono: '' })
+  }
+
+  /* ── CRUD de médicos (catálogo) ── */
+  function abrirModalMedico(m: Medico | null) {
+    setMedicoActual(m)
+    setFormMedico(m
+      ? { nombre: m.nombre, especialidad: m.especialidad ?? '', colegiado: m.colegiado ?? '', telefono: m.telefono ?? '', correo: m.correo ?? '', activo: m.activo !== false }
+      : { nombre: '', especialidad: '', colegiado: '', telefono: '', correo: '', activo: true })
+    setModalMedico(true)
+  }
+
+  async function guardarMedico() {
+    const nombre = formMedico.nombre.trim()
+    if (!nombre) { alert('El nombre del médico es obligatorio.'); return }
+    const payload = {
+      nombre,
+      especialidad: formMedico.especialidad.trim() || null,
+      colegiado: formMedico.colegiado.trim() || null,
+      telefono: formMedico.telefono.trim() || null,
+      correo: formMedico.correo.trim() || null,
+      activo: formMedico.activo,
+    }
+    if (medicoActual) {
+      const { data, error } = await supabase.from('medicos').update(payload).eq('id', medicoActual.id).select('*').single()
+      if (error || !data) { alert('No se pudo guardar: ' + (error?.message ?? '')); return }
+      setMedicosState(prev => prev.map(m => m.id === medicoActual.id ? (data as Medico) : m))
+    } else {
+      const { data, error } = await supabase.from('medicos').insert(payload).select('*').single()
+      if (error || !data) { alert('No se pudo guardar: ' + (error?.message ?? '')); return }
+      setMedicosState(prev => [...prev, data as Medico].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+    }
+    setModalMedico(false)
+    setMedicoActual(null)
+  }
+
+  async function eliminarMedico(m: Medico) {
+    if (!confirm(`¿Eliminar al médico "${m.nombre}"? Las órdenes ya guardadas conservan su nombre.`)) return
+    const { error } = await supabase.from('medicos').delete().eq('id', m.id)
+    if (error) { alert('No se pudo eliminar: ' + error.message); return }
+    setMedicosState(prev => prev.filter(x => x.id !== m.id))
+  }
+
+  /* ── CRUD de perfiles / paquetes (catálogo) ── */
+  function abrirModalPerfil(p: LabPerfil | null) {
+    setPerfilActual(p)
+    setFormPerfil(p
+      ? { nombre: p.nombre, descripcion: p.descripcion ?? '', precio: p.precio != null ? String(p.precio) : '', activo: p.activo !== false, pruebas_ids: p.pruebas_ids ?? [] }
+      : { nombre: '', descripcion: '', precio: '', activo: true, pruebas_ids: [] })
+    setModalPerfil(true)
+  }
+
+  async function guardarPerfil() {
+    const nombre = formPerfil.nombre.trim()
+    if (!nombre) { alert('El nombre del perfil es obligatorio.'); return }
+    if (formPerfil.pruebas_ids.length === 0) { alert('Agregue al menos una prueba al perfil.'); return }
+    setGuardandoPerfil(true)
+    const precioNum = formPerfil.precio.trim() === '' ? null : Number(formPerfil.precio)
+    const payload = {
+      nombre,
+      descripcion: formPerfil.descripcion.trim() || null,
+      precio: precioNum != null && !Number.isNaN(precioNum) ? precioNum : null,
+      activo: formPerfil.activo,
+    }
+
+    let perfilId: number
+    if (perfilActual) {
+      const { error } = await supabase.from('lab_perfiles').update(payload).eq('id', perfilActual.id)
+      if (error) { setGuardandoPerfil(false); alert('No se pudo guardar: ' + error.message); return }
+      perfilId = perfilActual.id
+      await supabase.from('lab_perfil_pruebas').delete().eq('perfil_id', perfilId)
+    } else {
+      const { data, error } = await supabase.from('lab_perfiles').insert(payload).select('id').single()
+      if (error || !data) { setGuardandoPerfil(false); alert('No se pudo guardar: ' + (error?.message ?? '')); return }
+      perfilId = (data as { id: number }).id
+    }
+
+    const filas = formPerfil.pruebas_ids.map(pid => ({ perfil_id: perfilId, prueba_id: pid }))
+    if (filas.length) {
+      const { error: errPP } = await supabase.from('lab_perfil_pruebas').insert(filas)
+      if (errPP) { setGuardandoPerfil(false); alert('Perfil guardado, pero falló asignar pruebas: ' + errPP.message); return }
+    }
+
+    const perfilGuardado: LabPerfil = {
+      id: perfilId, nombre, descripcion: payload.descripcion, precio: payload.precio,
+      activo: payload.activo, pruebas_ids: formPerfil.pruebas_ids,
+    }
+    setPerfilesState(prev => {
+      const exists = prev.some(p => p.id === perfilId)
+      const next = exists ? prev.map(p => p.id === perfilId ? perfilGuardado : p) : [...prev, perfilGuardado]
+      return next.sort((a, b) => a.nombre.localeCompare(b.nombre))
+    })
+    setGuardandoPerfil(false)
+    setModalPerfil(false)
+    setPerfilActual(null)
+  }
+
+  async function eliminarPerfil(p: LabPerfil) {
+    if (!confirm(`¿Eliminar el perfil "${p.nombre}"? No afecta las órdenes ya creadas.`)) return
+    const { error } = await supabase.from('lab_perfiles').delete().eq('id', p.id)
+    if (error) { alert('No se pudo eliminar: ' + error.message); return }
+    setPerfilesState(prev => prev.filter(x => x.id !== p.id))
+  }
+
   const hace7 = useMemo(() => {
     const d = new Date()
     d.setDate(d.getDate() - 7)
@@ -353,6 +533,40 @@ export default function LaboratorioClient({
     return precioLabLista(pruebaId, pac?.lista_id, preciosLista, Number(prueba.costo))
   }
 
+  /**
+   * Importe a cobrar por cada prueba seleccionada. Si hay un perfil con precio
+   * propio, distribuye ese precio proporcionalmente entre las pruebas del perfil
+   * (la suma queda exacta); las pruebas fuera del perfil mantienen su precio.
+   */
+  function importesOrden(): Record<number, number> {
+    const out: Record<number, number> = {}
+    for (const pid of formOrden.pruebas_ids) out[pid] = precioPruebaParaPaciente(pid, formOrden.paciente_id)
+
+    const perfil = formOrden.perfil_id ? perfilesState.find(p => String(p.id) === formOrden.perfil_id) : undefined
+    if (perfil && perfil.precio != null && perfil.pruebas_ids?.length) {
+      const enPerfil = formOrden.pruebas_ids.filter(pid => perfil.pruebas_ids!.includes(pid))
+      if (enPerfil.length) {
+        const sumBase = enPerfil.reduce((s, pid) => s + out[pid], 0)
+        const objetivo = Number(perfil.precio)
+        let acum = 0
+        enPerfil.forEach((pid, i) => {
+          let v = sumBase > 0
+            ? Math.round((out[pid] / sumBase) * objetivo * 100) / 100
+            : Math.round((objetivo / enPerfil.length) * 100) / 100
+          if (i === enPerfil.length - 1) v = Math.round((objetivo - acum) * 100) / 100
+          acum += v
+          out[pid] = v
+        })
+      }
+    }
+    return out
+  }
+
+  const totalOrdenModal = (() => {
+    const imp = importesOrden()
+    return formOrden.pruebas_ids.reduce((s, pid) => s + (imp[pid] ?? 0), 0)
+  })()
+
   async function crearOrden() {
     if (!formOrden.paciente_id || formOrden.pruebas_ids.length === 0) {
       alert('Seleccione un paciente y al menos una prueba de laboratorio')
@@ -381,12 +595,18 @@ export default function LaboratorioClient({
       return
     }
 
+    const medicoSel = formOrden.medico_id
+      ? medicosState.find(m => String(m.id) === formOrden.medico_id)
+      : undefined
+    const perfilIdNum = formOrden.perfil_id ? Number(formOrden.perfil_id) : null
+
     const grupoId = crypto.randomUUID()
     const hora = new Date().toTimeString().slice(0, 8)
+    const imp = importesOrden()
     const filas = formOrden.pruebas_ids.flatMap(pid => {
       const prueba = pruebasCatalogo.find(p => p.id === pid)
       if (!prueba) return []
-      const precio = precioPruebaParaPaciente(pid, formOrden.paciente_id)
+      const precio = imp[pid] ?? precioPruebaParaPaciente(pid, formOrden.paciente_id)
       return [{
         id_consulta: null as null,
         id_cliente: String(paciente.id),
@@ -404,6 +624,16 @@ export default function LaboratorioClient({
         lab_grupo_id: grupoId,
         fecha_prometida: computeFechaPrometida(fechaHoy, prueba.dias ?? 1),
         sucursal_id: sucursalId,
+        // Campos extra (migración 068)
+        medico_id: medicoSel?.id ?? null,
+        medico_nombre: medicoSel?.nombre ?? null,
+        perfil_id: perfilIdNum,
+        observaciones: formOrden.observaciones.trim() || null,
+        entrega_fecha: formOrden.entrega_fecha ? new Date(formOrden.entrega_fecha).toISOString() : null,
+        entrega_whatsapp: formOrden.entrega_whatsapp,
+        entrega_email: formOrden.entrega_email,
+        entrega_fisico: formOrden.entrega_fisico,
+        urgente: formOrden.urgente,
       }]
     })
 
@@ -415,8 +645,13 @@ export default function LaboratorioClient({
     setGuardandoOrden(true)
     let error = (await supabase.from('consulta_analisis').insert(filas)).error
 
-    if (error && /lab_grupo_id|fecha_prometida|estado_lab|paciente_id|sucursal_id|schema cache/i.test(error.message)) {
-      const filasBase = filas.map(({ lab_grupo_id, fecha_prometida, estado_lab, paciente_id, sucursal_id, ...rest }) => rest)
+    if (error && /lab_grupo_id|fecha_prometida|estado_lab|paciente_id|sucursal_id|medico_id|medico_nombre|perfil_id|observaciones|entrega_|urgente|schema cache/i.test(error.message)) {
+      const filasBase = filas.map(({
+        lab_grupo_id, fecha_prometida, estado_lab, paciente_id, sucursal_id,
+        medico_id, medico_nombre, perfil_id, observaciones, entrega_fecha,
+        entrega_whatsapp, entrega_email, entrega_fisico, urgente,
+        ...rest
+      }) => rest)
       error = (await supabase.from('consulta_analisis').insert(filasBase)).error
     }
 
@@ -659,6 +894,9 @@ export default function LaboratorioClient({
       sexo: pac?.genero,
       fechaResultado: fechaResultado ?? undefined,
       portalUrl: portalBaseUrl(),
+      medicoNombre: grupo.medicoNombre,
+      urgente: grupo.urgente,
+      observaciones: grupo.observaciones,
     })
   }
 
@@ -821,23 +1059,31 @@ export default function LaboratorioClient({
     setPanelCamposState(prev => prev.filter(c => c.id !== id))
   }
 
+  const emptyFormOrden = {
+    paciente_id: '', pruebas_ids: [] as number[], medico_id: '', perfil_id: '',
+    observaciones: '', entrega_fecha: '',
+    entrega_whatsapp: false, entrega_email: false, entrega_fisico: true, urgente: false,
+  }
+
   function resetNuevoPac() {
     setMostrarNuevoPac(false)
     setFormNuevoPac({
       nombre: '', apellido1: '', apellido2: '',
       fecha_nac: '', genero: '', telefono: '', celular: '', correo: '', cedula: '',
     })
+    setMostrarNuevoMedico(false)
+    setFormMedicoRapido({ nombre: '', especialidad: '', colegiado: '', telefono: '' })
   }
 
   function abrirModalOrden() {
-    setFormOrden({ paciente_id: '', pruebas_ids: [] })
+    setFormOrden({ ...emptyFormOrden })
     resetNuevoPac()
     setModalOrden(true)
   }
 
   function cerrarModalOrden() {
     setModalOrden(false)
-    setFormOrden({ paciente_id: '', pruebas_ids: [] })
+    setFormOrden({ ...emptyFormOrden })
     resetNuevoPac()
   }
 
@@ -952,8 +1198,18 @@ export default function LaboratorioClient({
                     <div key={g.grupoId} className={`border rounded-xl p-4 ${g.atrasado ? 'border-red-200 bg-red-50/30' : 'bg-gray-50/50'}`}>
                       <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
                         <div>
-                          <p className="font-semibold text-gray-900">{g.pacienteNombre}</p>
-                          <p className="text-xs text-gray-500">{g.pacienteCodigo} · {g.fecha} · {g.ordenes.length} prueba(s)</p>
+                          <p className="font-semibold text-gray-900 flex items-center gap-2">
+                            {g.pacienteNombre}
+                            {g.urgente && (
+                              <span className="text-[10px] font-extrabold bg-red-600 text-white px-2 py-0.5 rounded inline-flex items-center gap-1">
+                                <Zap className="w-3 h-3" /> URGENTE
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {g.pacienteCodigo} · {g.fecha} · {g.ordenes.length} prueba(s)
+                            {g.medicoNombre ? ` · Dr(a). ${g.medicoNombre}` : ''}
+                          </p>
                           {g.atrasado && (
                             <p className="text-xs text-red-600 font-medium mt-0.5">
                               <AlertCircle className="w-3 h-3 inline" /> Atrasada {g.diasAtraso}d — prometida {g.fechaPrometida}
@@ -1018,6 +1274,25 @@ export default function LaboratorioClient({
             )}
 
             {tab === 'catalogo' && (
+              <>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {([
+                    ['pruebas', `Pruebas (${pruebasCatalogo.length})`, Beaker],
+                    ['perfiles', `Perfiles (${perfilesState.length})`, Package],
+                    ['medicos', `Médicos (${medicosState.length})`, Stethoscope],
+                  ] as const).map(([id, label, Icon]) => (
+                    <button key={id} type="button" onClick={() => setCatTab(id)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                        catTab === id ? 'bg-cyan-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}>
+                      <Icon className="w-3.5 h-3.5" /> {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {tab === 'catalogo' && catTab === 'pruebas' && (
               <>
                 <div className="flex justify-end mb-3">
                   <button onClick={() => {
@@ -1092,6 +1367,106 @@ export default function LaboratorioClient({
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </>
+            )}
+
+            {tab === 'catalogo' && catTab === 'perfiles' && (
+              <>
+                <div className="flex justify-end mb-3">
+                  <button onClick={() => abrirModalPerfil(null)}
+                    className="flex items-center gap-2 px-3 py-2 bg-cyan-600 text-white rounded-lg text-sm">
+                    <Plus className="w-4 h-4" /> Nuevo Perfil / Paquete
+                  </button>
+                </div>
+                {perfilesState.length === 0 ? (
+                  <p className="text-center py-10 text-gray-400">
+                    No hay perfiles. Cree paquetes que agrupen varias pruebas (ej. &quot;Perfil prenatal&quot;).
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {perfilesState.filter(p => !busqueda || p.nombre.toLowerCase().includes(busqueda.toLowerCase())).map(p => (
+                      <div key={p.id} className="border rounded-xl p-4 bg-gray-50/50">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-900">{p.nombre}</p>
+                            <p className="text-xs text-gray-500">{p.descripcion || '—'}</p>
+                          </div>
+                          {p.activo === false && <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">Inactivo</span>}
+                        </div>
+                        <div className="flex flex-wrap gap-1 my-2">
+                          {(p.pruebas_ids ?? []).slice(0, 6).map(pid => {
+                            const pr = pruebasCatalogo.find(x => x.id === pid)
+                            return <span key={pid} className="text-[10px] bg-cyan-50 text-cyan-800 px-1.5 py-0.5 rounded">{pr?.nombre ?? `#${pid}`}</span>
+                          })}
+                          {(p.pruebas_ids?.length ?? 0) > 6 && <span className="text-[10px] text-gray-400">+{(p.pruebas_ids!.length - 6)}</span>}
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-cyan-700">
+                            {p.precio != null ? `L. ${Number(p.precio).toFixed(2)}` : 'Suma de pruebas'}
+                          </span>
+                          <div className="flex gap-1.5">
+                            <button onClick={() => abrirModalPerfil(p)} className="p-1.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200" title="Editar">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => eliminarPerfil(p)} className="p-1.5 rounded bg-red-50 text-red-600 hover:bg-red-100" title="Eliminar">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === 'catalogo' && catTab === 'medicos' && (
+              <>
+                <div className="flex justify-end mb-3">
+                  <button onClick={() => abrirModalMedico(null)}
+                    className="flex items-center gap-2 px-3 py-2 bg-cyan-600 text-white rounded-lg text-sm">
+                    <Plus className="w-4 h-4" /> Nuevo Médico
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-600 text-xs uppercase">
+                        <th className="px-4 py-3 text-left">Nombre</th>
+                        <th className="px-4 py-3 text-left">Especialidad</th>
+                        <th className="px-4 py-3 text-left">Colegiado</th>
+                        <th className="px-4 py-3 text-left">Contacto</th>
+                        <th className="px-4 py-3 text-center"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {medicosState.filter(m => !busqueda || m.nombre.toLowerCase().includes(busqueda.toLowerCase())).map(m => (
+                        <tr key={m.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <p className="font-medium">{m.nombre}</p>
+                            {m.activo === false && <span className="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">Inactivo</span>}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{m.especialidad || '—'}</td>
+                          <td className="px-4 py-3 text-gray-600">{m.colegiado || '—'}</td>
+                          <td className="px-4 py-3 text-gray-600">{m.telefono || m.correo || '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button onClick={() => abrirModalMedico(m)} className="p-1.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200" title="Editar">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => eliminarMedico(m)} className="p-1.5 rounded bg-red-50 text-red-600 hover:bg-red-100" title="Eliminar">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {medicosState.length === 0 && (
+                    <p className="text-center py-10 text-gray-400">No hay médicos registrados.</p>
+                  )}
                 </div>
               </>
             )}
@@ -1267,6 +1642,90 @@ export default function LaboratorioClient({
                 )}
               </div>
 
+              {/* Médico solicitante + Perfil/Paquete */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+                  <label className="block text-sm font-semibold text-gray-800 mb-2">
+                    <Stethoscope className="w-4 h-4 inline mr-1 text-cyan-600" /> Médico solicitante
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={formOrden.medico_id}
+                      onChange={e => setFormOrden(p => ({ ...p, medico_id: e.target.value }))}
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+                    >
+                      <option value="">Sin médico / mostrador</option>
+                      {medicosState.filter(m => m.activo !== false).map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.nombre}{m.especialidad ? ` — ${m.especialidad}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setMostrarNuevoMedico(v => !v)}
+                      className="px-2.5 rounded-lg border border-cyan-200 text-cyan-700 hover:bg-cyan-50 text-sm font-semibold whitespace-nowrap"
+                    >
+                      <Plus size={15} className="inline" /> Nuevo
+                    </button>
+                  </div>
+
+                  {mostrarNuevoMedico && (
+                    <div className="mt-3 rounded-lg border border-cyan-200 bg-white p-3 space-y-2">
+                      <input
+                        value={formMedicoRapido.nombre}
+                        onChange={e => setFormMedicoRapido(p => ({ ...p, nombre: e.target.value }))}
+                        placeholder="Nombre del médico *"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          value={formMedicoRapido.especialidad}
+                          onChange={e => setFormMedicoRapido(p => ({ ...p, especialidad: e.target.value }))}
+                          placeholder="Especialidad"
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                        />
+                        <input
+                          value={formMedicoRapido.colegiado}
+                          onChange={e => setFormMedicoRapido(p => ({ ...p, colegiado: e.target.value }))}
+                          placeholder="Colegiado / registro"
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button type="button" onClick={() => setMostrarNuevoMedico(false)}
+                          className="px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:bg-gray-100">Cancelar</button>
+                        <button type="button" onClick={registrarMedicoRapido} disabled={guardandoMedico || !formMedicoRapido.nombre.trim()}
+                          className="px-3 py-1.5 rounded-lg text-sm font-bold text-white bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50">
+                          {guardandoMedico ? 'Guardando…' : 'Guardar médico'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4">
+                  <label className="block text-sm font-semibold text-gray-800 mb-2">
+                    <Package className="w-4 h-4 inline mr-1 text-cyan-600" /> Perfil / paquete
+                  </label>
+                  <select
+                    value={formOrden.perfil_id}
+                    onChange={e => aplicarPerfil(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+                  >
+                    <option value="">Ninguno (pruebas sueltas)</option>
+                    {perfilesState.filter(p => p.activo !== false).map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre}{p.precio != null ? ` — L. ${Number(p.precio).toFixed(2)}` : ' (suma de pruebas)'}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1.5">
+                    Al elegir un perfil se agregan sus pruebas a la selección. Si el perfil tiene precio propio, se usa ese precio.
+                  </p>
+                </div>
+              </div>
+
               <div className="flex-1 min-h-0">
                 <label className="block text-sm font-semibold text-gray-800 mb-2">Catálogo de pruebas *</label>
                 <LabSelectorPruebas
@@ -1277,6 +1736,92 @@ export default function LaboratorioClient({
                   precioParaPaciente={precioPruebaParaPaciente}
                   loading={loadingCatalogo}
                 />
+
+                {/* Referencia y unidad informativas por examen seleccionado */}
+                {formOrden.pruebas_ids.length > 0 && (() => {
+                  const pacSel = pacientesMerged.find(p => String(p.id) === formOrden.paciente_id)
+                  const edad = calcularEdad(pacSel?.fecha_nac)
+                  return (
+                    <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 text-gray-500 uppercase">
+                            <th className="px-3 py-2 text-left">Examen</th>
+                            <th className="px-3 py-2 text-left">Valor de referencia</th>
+                            <th className="px-3 py-2 text-left">Unidad</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {formOrden.pruebas_ids.map(pid => {
+                            const prueba = pruebasCatalogo.find(p => p.id === pid)
+                            const rango = buscarRangoAplicable(rangosState, pid, edad, pacSel?.genero)
+                            const ev = evaluarValorRango('', rango)
+                            return (
+                              <tr key={pid}>
+                                <td className="px-3 py-1.5">{prueba?.nombre ?? `#${pid}`}</td>
+                                <td className="px-3 py-1.5 text-gray-600">{ev.rangoTexto || '—'}</td>
+                                <td className="px-3 py-1.5 text-gray-600">{ev.unidad || '—'}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                      <p className="text-[11px] text-gray-400 px-3 py-1.5 bg-gray-50/60">
+                        Referencia y unidad según edad/sexo del paciente (definidas en el catálogo). Informativo.
+                      </p>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              {/* Observación, entrega y urgencia */}
+              <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 space-y-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-800 mb-1">Observaciones</label>
+                  <textarea
+                    value={formOrden.observaciones}
+                    onChange={e => setFormOrden(p => ({ ...p, observaciones: e.target.value }))}
+                    rows={2}
+                    placeholder="Indicaciones, ayuno, notas para el laboratorio…"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-800 mb-1">Fecha/hora de entrega</label>
+                    <input
+                      type="datetime-local"
+                      value={formOrden.entrega_fecha}
+                      onChange={e => setFormOrden(p => ({ ...p, entrega_fecha: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-800 mb-1">Entrega de resultados</label>
+                    <div className="flex flex-wrap gap-3 pt-1.5">
+                      <label className="inline-flex items-center gap-1.5 text-sm">
+                        <input type="checkbox" checked={formOrden.entrega_whatsapp}
+                          onChange={e => setFormOrden(p => ({ ...p, entrega_whatsapp: e.target.checked }))} />
+                        WhatsApp
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-sm">
+                        <input type="checkbox" checked={formOrden.entrega_email}
+                          onChange={e => setFormOrden(p => ({ ...p, entrega_email: e.target.checked }))} />
+                        Email
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-sm">
+                        <input type="checkbox" checked={formOrden.entrega_fisico}
+                          onChange={e => setFormOrden(p => ({ ...p, entrega_fisico: e.target.checked }))} />
+                        Físico
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <label className={`inline-flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-lg cursor-pointer ${formOrden.urgente ? 'bg-red-50 text-red-700 border border-red-200' : 'text-gray-700'}`}>
+                  <input type="checkbox" checked={formOrden.urgente}
+                    onChange={e => setFormOrden(p => ({ ...p, urgente: e.target.checked }))} />
+                  <Zap className={`w-4 h-4 ${formOrden.urgente ? 'text-red-600' : 'text-gray-400'}`} /> Marcar como URGENTE / Emergencia
+                </label>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t shrink-0">
@@ -1285,7 +1830,7 @@ export default function LaboratorioClient({
                     <span>
                       <strong className="text-gray-900">{formOrden.pruebas_ids.length}</strong> prueba(s) ·{' '}
                       <strong className="text-cyan-700">
-                        L. {formOrden.pruebas_ids.reduce((s, id) => s + precioPruebaParaPaciente(id, formOrden.paciente_id), 0).toFixed(2)}
+                        L. {totalOrdenModal.toFixed(2)}
                       </strong>
                     </span>
                   ) : (
@@ -1664,6 +2209,110 @@ export default function LaboratorioClient({
               <button onClick={enviarAccesoWhatsApp}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5">
                 <MessageCircle className="w-4 h-4" /> Enviar por WhatsApp
+              </button>
+            </div>
+          </LabModal>
+        )}
+
+        {/* Modal CRUD médico */}
+        {modalMedico && (
+          <LabModal title={medicoActual ? 'Editar Médico' : 'Nuevo Médico'} onClose={() => setModalMedico(false)}>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Nombre *</label>
+                <input value={formMedico.nombre} onChange={e => setFormMedico(p => ({ ...p, nombre: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Dr(a). Nombre y apellido" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Especialidad</label>
+                  <input value={formMedico.especialidad} onChange={e => setFormMedico(p => ({ ...p, especialidad: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Colegiado / registro</label>
+                  <input value={formMedico.colegiado} onChange={e => setFormMedico(p => ({ ...p, colegiado: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Teléfono</label>
+                  <input value={formMedico.telefono} onChange={e => setFormMedico(p => ({ ...p, telefono: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Correo</label>
+                  <input type="email" value={formMedico.correo} onChange={e => setFormMedico(p => ({ ...p, correo: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </div>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={formMedico.activo} onChange={e => setFormMedico(p => ({ ...p, activo: e.target.checked }))} />
+                Activo
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t mt-3">
+              <button onClick={() => setModalMedico(false)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+              <button onClick={guardarMedico} disabled={!formMedico.nombre.trim()}
+                className="px-5 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">Guardar</button>
+            </div>
+          </LabModal>
+        )}
+
+        {/* Modal CRUD perfil/paquete */}
+        {modalPerfil && (
+          <LabModal title={perfilActual ? 'Editar Perfil' : 'Nuevo Perfil / Paquete'} onClose={() => setModalPerfil(false)} wide full>
+            <div className="space-y-4 max-h-[72dvh] overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Nombre del perfil *</label>
+                  <input value={formPerfil.nombre} onChange={e => setFormPerfil(p => ({ ...p, nombre: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Ej. Perfil prenatal" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Precio del paquete</label>
+                  <input type="number" step="0.01" min="0" value={formPerfil.precio}
+                    onChange={e => setFormPerfil(p => ({ ...p, precio: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Vacío = suma de pruebas" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Descripción</label>
+                <input value={formPerfil.descripcion} onChange={e => setFormPerfil(p => ({ ...p, descripcion: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-2">
+                  Pruebas incluidas * ({formPerfil.pruebas_ids.length} seleccionadas)
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-72 overflow-y-auto border rounded-lg p-2">
+                  {pruebasCatalogo.map(pr => {
+                    const checked = formPerfil.pruebas_ids.includes(pr.id)
+                    return (
+                      <label key={pr.id} className={`flex items-center gap-2 text-sm px-2 py-1.5 rounded cursor-pointer ${checked ? 'bg-cyan-50' : 'hover:bg-gray-50'}`}>
+                        <input type="checkbox" checked={checked}
+                          onChange={e => setFormPerfil(p => ({
+                            ...p,
+                            pruebas_ids: e.target.checked
+                              ? [...p.pruebas_ids, pr.id]
+                              : p.pruebas_ids.filter(x => x !== pr.id),
+                          }))} />
+                        <span className="truncate">{pr.nombre}</span>
+                        <span className="ml-auto text-xs text-gray-400">L. {Number(pr.costo).toFixed(0)}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={formPerfil.activo} onChange={e => setFormPerfil(p => ({ ...p, activo: e.target.checked }))} />
+                Activo
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t mt-3">
+              <button onClick={() => setModalPerfil(false)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+              <button onClick={guardarPerfil} disabled={guardandoPerfil || !formPerfil.nombre.trim() || formPerfil.pruebas_ids.length === 0}
+                className="px-5 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+                {guardandoPerfil ? 'Guardando…' : 'Guardar perfil'}
               </button>
             </div>
           </LabModal>

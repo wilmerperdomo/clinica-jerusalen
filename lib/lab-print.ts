@@ -21,6 +21,9 @@ export interface InformeLabMeta {
   validadoPor?: string
   fechaResultado?: string
   portalUrl?: string
+  medicoNombre?: string
+  urgente?: boolean
+  observaciones?: string
 }
 
 function escapeHtml(s: string): string {
@@ -105,6 +108,8 @@ function informeStyles(): string {
     .firma .box{flex:1;text-align:center;border-top:1px solid #334155;padding-top:6px;font-size:10px;color:#475569}
     .foot{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:8px;font-size:9px;color:#94a3b8;text-align:center}
     .portal{margin-top:12px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:10px 14px;font-size:10px;color:#155e75;text-align:center}
+    .urg{display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;vertical-align:middle;letter-spacing:.5px}
+    .obsbox{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 14px;margin-bottom:6px;font-size:10px;color:#92400e}
     @media print{@page{size:A4;margin:12mm}.page{padding:0}.no-print{display:none}}
   `
 }
@@ -186,7 +191,7 @@ export function htmlInformeResultadosLab(
         </div>
       </div>
 
-      <div class="title">Informe de Resultados de Laboratorio</div>
+      <div class="title">Informe de Resultados de Laboratorio${meta.urgente ? ' <span class="urg">URGENTE</span>' : ''}</div>
 
       <div class="pinfo">
         <div class="row"><b>Paciente</b> ${escapeHtml(grupo.pacienteNombre)}</div>
@@ -194,8 +199,11 @@ export function htmlInformeResultadosLab(
         <div class="row"><b>Identidad</b> ${escapeHtml(grupo.pacienteCodigo || '—')}</div>
         <div class="row"><b>Fecha de resultado</b> ${escapeHtml(meta.fechaResultado ?? '—')}</div>
         <div class="row"><b>Edad / Sexo</b> ${escapeHtml(edadSexo)}</div>
+        <div class="row"><b>Médico solicitante</b> ${escapeHtml(meta.medicoNombre ? `Dr(a). ${meta.medicoNombre}` : '—')}</div>
         <div class="row"><b>Órdenes</b> ${grupo.ordenes.map(o => '#' + o.id).join(', ')}</div>
       </div>
+
+      ${meta.observaciones ? `<div class="obsbox"><b>Observaciones:</b> ${escapeHtml(meta.observaciones)}</div>` : ''}
 
       <table class="res">
         <thead><tr><th>Prueba / Parámetro</th><th>Resultado</th><th>Unidad</th><th>Valor de referencia</th><th>Indicador</th></tr></thead>

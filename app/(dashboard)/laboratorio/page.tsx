@@ -44,6 +44,9 @@ export default async function LaboratorioPage() {
     insumosRes,
     labValoresRes,
     productosRes,
+    medicosRes,
+    perfilesRes,
+    perfilPruebasRes,
   ] = await Promise.all([
     pacienteIds.length
       ? supabase.from('pacientes').select(PACIENTE_BUSQUEDA_SELECT).in('id', pacienteIds)
@@ -61,6 +64,10 @@ export default async function LaboratorioPage() {
       .eq('activo', true)
       .order('nombre')
       .limit(300),
+    // Catálogos nuevos (migración 068). Si aún no existen, no rompe la página.
+    supabase.from('medicos').select('*').order('nombre'),
+    supabase.from('lab_perfiles').select('*').order('nombre'),
+    supabase.from('lab_perfil_pruebas').select('perfil_id, prueba_id'),
   ])
 
   const pacientesOrdenes = pacientesRes.error ? [] : (pacientesRes.data ?? [])
@@ -70,6 +77,17 @@ export default async function LaboratorioPage() {
   const insumos = insumosRes.error ? [] : (insumosRes.data ?? [])
   const labValores = labValoresRes.error ? [] : (labValoresRes.data ?? [])
   const productos = productosRes.error ? [] : (productosRes.data ?? [])
+  const medicos = medicosRes.error ? [] : (medicosRes.data ?? [])
+  const perfilPruebas = perfilPruebasRes.error ? [] : (perfilPruebasRes.data ?? [])
+
+  // Adjunta a cada perfil la lista de ids de pruebas que contiene.
+  const perfilesBase = perfilesRes.error ? [] : (perfilesRes.data ?? [])
+  const perfiles = perfilesBase.map(pf => ({
+    ...pf,
+    pruebas_ids: perfilPruebas
+      .filter(pp => Number(pp.perfil_id) === Number(pf.id))
+      .map(pp => Number(pp.prueba_id)),
+  }))
 
   const preciosLista: Record<number, Record<number, number>> = {}
   for (const v of labValores ?? []) {
@@ -92,6 +110,8 @@ export default async function LaboratorioPage() {
       insumos={insumos || []}
       preciosLista={preciosLista}
       productos={productos || []}
+      medicos={medicos || []}
+      perfiles={perfiles || []}
       sucursalId={sucursalId ?? undefined}
       esSuperAdmin={esSuperAdmin}
     />

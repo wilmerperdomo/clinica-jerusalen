@@ -66,6 +66,35 @@ export interface OrdenLab {
   validado_at?: string
   notificado_at?: string
   resultados?: LabResultado[]
+  // Catálogos / metadatos de la orden (migración 068)
+  medico_id?: number | null
+  medico_nombre?: string | null
+  perfil_id?: number | null
+  observaciones?: string | null
+  entrega_fecha?: string | null
+  entrega_whatsapp?: boolean
+  entrega_email?: boolean
+  entrega_fisico?: boolean
+  urgente?: boolean
+}
+
+export interface Medico {
+  id: number
+  nombre: string
+  especialidad?: string | null
+  colegiado?: string | null
+  telefono?: string | null
+  correo?: string | null
+  activo?: boolean
+}
+
+export interface LabPerfil {
+  id: number
+  nombre: string
+  descripcion?: string | null
+  precio?: number | null
+  activo?: boolean
+  pruebas_ids?: number[]
 }
 
 export interface PruebaLab {
@@ -112,6 +141,9 @@ export interface GrupoLab {
   atrasado: boolean
   diasAtraso: number
   tieneResultados: boolean
+  medicoNombre?: string
+  urgente: boolean
+  observaciones?: string
 }
 
 export function calcularEdad(fechaNac?: string): number | null {
@@ -191,6 +223,9 @@ export function agruparOrdenes(
       atrasado: slaVencido(fechaPrometida, estado),
       diasAtraso: diasAtraso(fechaPrometida),
       tieneResultados: sorted.some(o => (o.resultados?.length ?? 0) > 0),
+      medicoNombre: sorted.map(o => o.medico_nombre).find(Boolean) || undefined,
+      urgente: sorted.some(o => o.urgente === true),
+      observaciones: sorted.map(o => o.observaciones).find(Boolean) || undefined,
     })
   }
 
