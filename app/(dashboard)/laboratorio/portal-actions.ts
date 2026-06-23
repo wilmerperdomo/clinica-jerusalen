@@ -30,7 +30,13 @@ export async function generarAccesoPortal(pacienteId: number): Promise<AccesoPor
     .eq('id', pacienteId)
     .maybeSingle()
 
-  if (!pac) return { ok: false, error: 'Paciente no encontrado' }
+  if (!pac) {
+    return {
+      ok: false,
+      error: 'El paciente de esta orden no está vinculado a un expediente válido. ' +
+        'Regístrelo o vincúlelo a un paciente para poder generar el acceso al portal.',
+    }
+  }
 
   // Usuario = identidad/código normalizado. Si el paciente no tiene identidad,
   // se genera un usuario automático único basado en su número de expediente.

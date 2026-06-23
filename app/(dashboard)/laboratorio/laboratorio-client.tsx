@@ -30,6 +30,7 @@ import {
 } from '@/lib/lab-print'
 import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
 import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
+import { normalizarCodigoPaciente, edadPaciente } from '@/lib/paciente-utils'
 import {
   ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost,
 } from '@/components/module-layout'
@@ -120,6 +121,14 @@ export default function LaboratorioClient({
   const [acceso, setAcceso] = useState<{ usuario: string; password: string; telefono: string; nombre: string } | null>(null)
   const [generandoAcceso, setGenerandoAcceso] = useState(false)
 
+  // Registro rápido de paciente nuevo (directo de laboratorio, sin consulta)
+  const [mostrarNuevoPac, setMostrarNuevoPac] = useState(false)
+  const [guardandoNuevoPac, setGuardandoNuevoPac] = useState(false)
+  const [formNuevoPac, setFormNuevoPac] = useState({
+    nombre: '', apellido1: '', apellido2: '',
+    fecha_nac: '', genero: '', telefono: '', celular: '', correo: '', cedula: '',
+  })
+
   const supabase = useMemo(() => sb(), [])
 
   const pacientesMerged = useMemo(() => {
@@ -179,6 +188,117 @@ export default function LaboratorioClient({
       if (prev.some(x => x.id === row.id) || pacientes.some(x => x.id === row.id)) return prev
       return [...prev, row]
     })
+  }
+
+  /** Selecciona un paciente recién registrado/encontrado en el formulario de orden. */
+  function usarPacienteEnOrden(p: PacienteLab) {
+    setPacientesExtra(prev =>
+      prev.some(x => x.id === p.id) || pacientes.some(x => x.id === p.id) ? prev : [...prev, p],
+    )
+    setFormOrden(prev => ({ ...prev, paciente_id: String(p.id) }))
+    setMostrarNuevoPac(false)
+    setFormNuevoPac({
+      nombre: '', apellido1: '', apellido2: '',
+      fecha_nac: '', genero: '', telefono: '', celular: '', correo: '', cedula: '',
+    })
+  }
+
+  /** Genera un código secuencial tipo LAB000001 para pacientes sin cédula. */
+  async function generarCodigoLab(): Promise<string> {
+    const { data } = await supabase
+      .from('pacientes')
+      .select('codigo')
+      .like('codigo', 'LAB%')
+      .order('codigo', { ascending: false })
+      .limit(1)
+    let next = 1
+    const last = (data?.[0]?.codigo as string | undefined) ?? ''
+    const num = parseInt(last.replace(/\D/g, ''), 10)
+    if (!Number.isNaN(num)) next = num + 1
+    return 'LAB' + String(next).padStart(6, '0')
+  }
+
+  const PAC_SELECT =
+    'id, codigo, tipo, nombre, apellido1, apellido2, nombre_empresa, rtn_empresa, contacto, fecha_nac, lista_id, celular, telefono, correo, genero'
+
+  /** Registro completo de un paciente nuevo desde laboratorio (sin pasar por consulta). */
+  async function registrarPacienteRapido() {
+    const nombre = formNuevoPac.nombre.trim()
+    const apellido1 = formNuevoPac.apellido1.trim()
+    const fechaNac = formNuevoPac.fecha_nac
+    const genero = formNuevoPac.genero
+
+    if (!nombre || !apellido1) {
+      alert('Ingrese nombre y apellido del paciente.')
+      return
+    }
+    if (!fechaNac) {
+      alert('La fecha de nacimiento es obligatoria (se usa para los rangos de laboratorio por edad).')
+      return
+    }
+    if (!genero) {
+      alert('Seleccione el género del paciente.')
+      return
+    }
+    const edad = edadPaciente(fechaNac)
+    if (edad === null) {
+      alert('La fecha de nacimiento no es válida (no puede ser futura ni imposible).')
+      return
+    }
+
+    setGuardandoNuevoPac(true)
+    const cedula = normalizarCodigoPaciente(formNuevoPac.cedula)
+
+    // Anti-duplicado: si dieron cédula y ya existe ese paciente, se reutiliza.
+    if (cedula) {
+      const { data: existente } = await supabase
+        .from('pacientes')
+        .select(PAC_SELECT)
+        .eq('codigo', cedula)
+        .maybeSingle()
+      if (existente) {
+        setGuardandoNuevoPac(false)
+        usarPacienteEnOrden(existente as PacienteLab)
+        alert('Ya existía un paciente con esa cédula/código. Se seleccionó ese expediente.')
+        return
+      }
+    }
+
+    const payload: Record<string, unknown> = {
+      tipo: 'persona',
+      codigo: cedula || (await generarCodigoLab()),
+      nombre,
+      apellido1,
+      apellido2: formNuevoPac.apellido2.trim() || null,
+      genero,
+      fecha_nac: fechaNac,
+      telefono: formNuevoPac.telefono.trim() || null,
+      celular: formNuevoPac.celular.trim() || null,
+      correo: formNuevoPac.correo.trim() || null,
+      lista_id: 1,
+      activo: true,
+      sucursal_id: sucursalId ?? null,
+    }
+
+    let res = await supabase.from('pacientes').insert(payload).select(PAC_SELECT).single()
+
+    // Si el código autogenerado colisionó (carrera), reintenta con uno basado en timestamp.
+    if (res.error && !cedula && /unique|duplicate|llave duplicada/i.test(res.error.message)) {
+      payload.codigo = 'LAB' + Date.now().toString().slice(-10)
+      res = await supabase.from('pacientes').insert(payload).select(PAC_SELECT).single()
+    }
+
+    setGuardandoNuevoPac(false)
+
+    if (res.error || !res.data) {
+      const esUnico = res.error && /unique|duplicate|llave duplicada/i.test(res.error.message)
+      alert(esUnico
+        ? 'Ya existe un paciente con esa cédula/código. No se permiten duplicados.'
+        : 'No se pudo registrar el paciente: ' + (res.error?.message ?? 'error desconocido'))
+      return
+    }
+
+    usarPacienteEnOrden(res.data as PacienteLab)
   }
 
   const hace7 = useMemo(() => {
@@ -701,14 +821,24 @@ export default function LaboratorioClient({
     setPanelCamposState(prev => prev.filter(c => c.id !== id))
   }
 
+  function resetNuevoPac() {
+    setMostrarNuevoPac(false)
+    setFormNuevoPac({
+      nombre: '', apellido1: '', apellido2: '',
+      fecha_nac: '', genero: '', telefono: '', celular: '', correo: '', cedula: '',
+    })
+  }
+
   function abrirModalOrden() {
     setFormOrden({ paciente_id: '', pruebas_ids: [] })
+    resetNuevoPac()
     setModalOrden(true)
   }
 
   function cerrarModalOrden() {
     setModalOrden(false)
     setFormOrden({ paciente_id: '', pruebas_ids: [] })
+    resetNuevoPac()
   }
 
   const gruposBusqueda = useMemo(() => {
@@ -988,6 +1118,153 @@ export default function LaboratorioClient({
                 <p className="text-xs text-gray-500 mt-1.5">
                   Busca en todos los pacientes activos del sistema (mínimo 2 caracteres).
                 </p>
+
+                {!mostrarNuevoPac ? (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarNuevoPac(true)}
+                    className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 hover:text-cyan-800"
+                  >
+                    <Plus size={16} /> Registrar paciente nuevo
+                  </button>
+                ) : (
+                  <div className="mt-3 rounded-xl border border-cyan-200 bg-white p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-bold text-gray-800">Registrar paciente nuevo</h4>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarNuevoPac(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                        aria-label="Cerrar"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Nombre *</label>
+                        <input
+                          value={formNuevoPac.nombre}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, nombre: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Nombre"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Primer apellido *</label>
+                        <input
+                          value={formNuevoPac.apellido1}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, apellido1: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Apellido"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Segundo apellido</label>
+                        <input
+                          value={formNuevoPac.apellido2}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, apellido2: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Opcional"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Género *</label>
+                        <select
+                          value={formNuevoPac.genero}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, genero: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"
+                        >
+                          <option value="">Seleccione…</option>
+                          <option value="M">Masculino</option>
+                          <option value="F">Femenino</option>
+                          <option value="O">Otro</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">
+                          Fecha de nacimiento *
+                          {(() => {
+                            const ed = formNuevoPac.fecha_nac ? edadPaciente(formNuevoPac.fecha_nac) : null
+                            return ed !== null
+                              ? <span className="ml-2 font-bold text-cyan-700">{ed} años</span>
+                              : null
+                          })()}
+                        </label>
+                        <input
+                          type="date"
+                          max={fechaHoy}
+                          value={formNuevoPac.fecha_nac}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, fecha_nac: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Cédula / código</label>
+                        <input
+                          value={formNuevoPac.cedula}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, cedula: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Opcional (se autogenera si no tiene)"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Celular</label>
+                        <input
+                          value={formNuevoPac.celular}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, celular: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Para enviar el portal por WhatsApp"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Teléfono</label>
+                        <input
+                          value={formNuevoPac.telefono}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, telefono: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Opcional"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-xs font-semibold text-gray-600 mb-1">Correo</label>
+                        <input
+                          type="email"
+                          value={formNuevoPac.correo}
+                          onChange={e => setFormNuevoPac(p => ({ ...p, correo: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                          placeholder="Opcional"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setMostrarNuevoPac(false)}
+                        className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-100"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={registrarPacienteRapido}
+                        disabled={
+                          guardandoNuevoPac ||
+                          !formNuevoPac.nombre.trim() ||
+                          !formNuevoPac.apellido1.trim() ||
+                          !formNuevoPac.fecha_nac ||
+                          !formNuevoPac.genero
+                        }
+                        className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 inline-flex items-center gap-1.5"
+                      >
+                        {guardandoNuevoPac ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                        Registrar y seleccionar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 min-h-0">

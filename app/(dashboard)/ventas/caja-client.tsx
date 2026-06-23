@@ -2056,16 +2056,29 @@ export default function CajaClient({
     pacienteId: number | null | undefined,
     tieneLab: boolean,
   ): Promise<FacturaPrintData> {
-    if (!tieneLab || !pacienteId) return printData
+    if (!tieneLab) return printData
+    if (!pacienteId) {
+      alert(
+        'La factura se imprimirá, pero el acceso al portal de resultados NO se incluyó ' +
+        'porque esta orden de laboratorio no está ligada a un paciente registrado.\n\n' +
+        'Para que se genere usuario y contraseña, el paciente debe estar registrado con expediente ' +
+        '(búscalo y selecciónalo de la lista al crear la orden de laboratorio).'
+      )
+      return printData
+    }
     try {
       const r = await generarAccesoPortal(pacienteId)
       if (r.ok && r.usuario && r.password) {
         printData.portal = { usuario: r.usuario, password: r.password, url: portalBaseUrl() }
-      } else if (r.error) {
+      } else {
         console.warn('Acceso portal:', r.error)
+        alert('La factura se imprimirá, pero no se pudo generar el acceso al portal: ' +
+          (r.error ?? 'error desconocido') + '.')
       }
     } catch (e) {
       console.warn('Acceso portal:', e)
+      alert('La factura se imprimirá, pero no se pudo generar el acceso al portal: ' +
+        (e instanceof Error ? e.message : String(e)) + '.')
     }
     return printData
   }
