@@ -1,6 +1,6 @@
 import { BRAND, FISCAL } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
-import type { GrupoLab, PruebaLab } from '@/lib/lab-utils'
+import { indicadorDesdeRango, type GrupoLab, type PruebaLab, type IndicadorRango } from '@/lib/lab-utils'
 import { linkWhatsAppResultado } from '@/lib/lab-resultado-print'
 
 export interface FilaResultadoPrint {
@@ -10,7 +10,17 @@ export interface FilaResultadoPrint {
   unidad?: string
   rango?: string
   anormal?: boolean
+  indicador?: IndicadorRango
   obs?: string
+}
+
+export interface InformeLabMeta {
+  edad?: number | null
+  sexo?: string
+  sucursalNombre?: string
+  validadoPor?: string
+  fechaResultado?: string
+  portalUrl?: string
 }
 
 function escapeHtml(s: string): string {
@@ -64,43 +74,160 @@ export function imprimirEtiquetasTubo(
   w.document.close()
 }
 
+function informeStyles(): string {
+  return `
+    *{box-sizing:border-box}
+    body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;margin:0;padding:0;color:#1f2937;font-size:12px;line-height:1.45;background:#fff}
+    .page{max-width:780px;margin:0 auto;padding:22px 30px}
+    .hdr{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #003366;padding-bottom:12px}
+    .hdr .brand{display:flex;align-items:center;gap:12px}
+    .hdr .brand .logo img{height:54px;width:auto}
+    .hdr .brand .name{font-size:17px;font-weight:800;color:#003366;letter-spacing:.3px}
+    .hdr .brand .tag{font-size:10px;color:#64748b}
+    .hdr .meta{text-align:right;font-size:10px;color:#475569}
+    .title{text-align:center;font-size:14px;font-weight:800;color:#003366;letter-spacing:1px;margin:14px 0 10px;text-transform:uppercase}
+    .pinfo{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:6px}
+    .pinfo .row{display:flex;gap:8px;font-size:11px;padding:1px 0}
+    .pinfo .row b{color:#475569;min-width:96px;display:inline-block}
+    table.res{width:100%;border-collapse:collapse;margin:14px 0 6px}
+    table.res th{background:#003366;color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;text-align:left}
+    table.res td{padding:6px 8px;border-bottom:1px solid #eef2f7;vertical-align:top;font-size:11px}
+    table.res tr.grp td{background:#eef2f7;font-weight:700;color:#003366;font-size:11px;text-transform:uppercase;letter-spacing:.3px}
+    .val{font-weight:700}
+    .alto{color:#b91c1c}
+    .bajo{color:#1d4ed8}
+    .flag{display:inline-block;font-weight:700;font-size:10px;padding:1px 6px;border-radius:999px}
+    .flag.alto{background:#fee2e2;color:#b91c1c}
+    .flag.bajo{background:#dbeafe;color:#1d4ed8}
+    .flag.normal{background:#dcfce7;color:#166534}
+    .obs{color:#64748b;font-size:10px}
+    .firma{margin-top:46px;display:flex;justify-content:space-between;gap:40px}
+    .firma .box{flex:1;text-align:center;border-top:1px solid #334155;padding-top:6px;font-size:10px;color:#475569}
+    .foot{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:8px;font-size:9px;color:#94a3b8;text-align:center}
+    .portal{margin-top:12px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:10px 14px;font-size:10px;color:#155e75;text-align:center}
+    @media print{@page{size:A4;margin:12mm}.page{padding:0}.no-print{display:none}}
+  `
+}
+
+function indicadorFlag(ind?: IndicadorRango): string {
+  if (ind === 'ALTO') return '<span class="flag alto">ALTO ↑</span>'
+  if (ind === 'BAJO') return '<span class="flag bajo">BAJO ↓</span>'
+  if (ind === 'NORMAL') return '<span class="flag normal">Normal</span>'
+  return '<span style="color:#94a3b8">—</span>'
+}
+
+/** Genera el HTML completo del informe de resultados (reutilizable por staff y portal). */
+export function htmlInformeResultadosLab(
+  grupo: Pick<GrupoLab, 'pacienteNombre' | 'pacienteCodigo' | 'fecha' | 'ordenes'>,
+  filas: FilaResultadoPrint[],
+  meta: InformeLabMeta = {},
+  origin = '',
+): string {
+  // Agrupar filas por prueba para encabezados de sección
+  const porPrueba = new Map<string, FilaResultadoPrint[]>()
+  for (const f of filas) {
+    if (!porPrueba.has(f.prueba)) porPrueba.set(f.prueba, [])
+    porPrueba.get(f.prueba)!.push(f)
+  }
+
+  const cuerpo: string[] = []
+  for (const [prueba, fs] of porPrueba) {
+    const multi = fs.length > 1 || fs.some(f => f.campo)
+    if (multi) {
+      cuerpo.push(`<tr class="grp"><td colspan="5">${escapeHtml(prueba)}</td></tr>`)
+      for (const f of fs) {
+        const cls = f.indicador === 'ALTO' ? 'alto' : f.indicador === 'BAJO' ? 'bajo' : ''
+        cuerpo.push(`<tr>
+          <td style="padding-left:18px">${escapeHtml(f.campo ?? prueba)}</td>
+          <td class="val ${cls}">${escapeHtml(f.valor || '—')}</td>
+          <td>${escapeHtml(f.unidad ?? '')}</td>
+          <td>${escapeHtml(f.rango ?? '—')}</td>
+          <td>${indicadorFlag(f.indicador)}${f.obs ? `<div class="obs">${escapeHtml(f.obs)}</div>` : ''}</td>
+        </tr>`)
+      }
+    } else {
+      const f = fs[0]
+      const cls = f.indicador === 'ALTO' ? 'alto' : f.indicador === 'BAJO' ? 'bajo' : ''
+      cuerpo.push(`<tr>
+        <td><b>${escapeHtml(prueba)}</b></td>
+        <td class="val ${cls}">${escapeHtml(f.valor || '—')}</td>
+        <td>${escapeHtml(f.unidad ?? '')}</td>
+        <td>${escapeHtml(f.rango ?? '—')}</td>
+        <td>${indicadorFlag(f.indicador)}${f.obs ? `<div class="obs">${escapeHtml(f.obs)}</div>` : ''}</td>
+      </tr>`)
+    }
+  }
+
+  const edadSexo = [
+    meta.edad != null ? `${meta.edad} años` : null,
+    meta.sexo ? (meta.sexo.toUpperCase().startsWith('M') ? 'Masculino' : meta.sexo.toUpperCase().startsWith('F') ? 'Femenino' : meta.sexo) : null,
+  ].filter(Boolean).join(' · ') || '—'
+
+  const portalBox = meta.portalUrl
+    ? `<div class="portal">Consulte sus resultados en línea: <b>${escapeHtml(meta.portalUrl)}</b> &nbsp;·&nbsp; Usuario: su número de identidad</div>`
+    : ''
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Resultados — ${escapeHtml(grupo.pacienteNombre)}</title>
+    <style>${informeStyles()}</style></head><body>
+    <div class="page">
+      <div class="hdr">
+        <div class="brand">
+          <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
+          <div>
+            <div class="name">${escapeHtml(BRAND.nombre)}</div>
+            <div class="tag">Laboratorio Clínico${meta.sucursalNombre ? ' · ' + escapeHtml(meta.sucursalNombre) : ''}</div>
+          </div>
+        </div>
+        <div class="meta">
+          Tel: ${escapeHtml(FISCAL.telefonos)}<br>
+          RTN: ${escapeHtml(FISCAL.rtn)}
+        </div>
+      </div>
+
+      <div class="title">Informe de Resultados de Laboratorio</div>
+
+      <div class="pinfo">
+        <div class="row"><b>Paciente</b> ${escapeHtml(grupo.pacienteNombre)}</div>
+        <div class="row"><b>Fecha de orden</b> ${escapeHtml(grupo.fecha)}</div>
+        <div class="row"><b>Identidad</b> ${escapeHtml(grupo.pacienteCodigo || '—')}</div>
+        <div class="row"><b>Fecha de resultado</b> ${escapeHtml(meta.fechaResultado ?? '—')}</div>
+        <div class="row"><b>Edad / Sexo</b> ${escapeHtml(edadSexo)}</div>
+        <div class="row"><b>Órdenes</b> ${grupo.ordenes.map(o => '#' + o.id).join(', ')}</div>
+      </div>
+
+      <table class="res">
+        <thead><tr><th>Prueba / Parámetro</th><th>Resultado</th><th>Unidad</th><th>Valor de referencia</th><th>Indicador</th></tr></thead>
+        <tbody>${cuerpo.join('')}</tbody>
+      </table>
+
+      <div class="firma">
+        <div class="box">${escapeHtml(meta.validadoPor || 'Responsable de laboratorio')}<br>Validado por</div>
+        <div class="box">Firma y sello autorizado</div>
+      </div>
+
+      ${portalBox}
+
+      <div class="foot">
+        Documento generado el ${new Date().toLocaleString('es-HN')} · ${escapeHtml(BRAND.nombre)}<br>
+        Los resultados deben ser interpretados por su médico tratante.
+      </div>
+    </div>
+    </body></html>`
+}
+
 export function imprimirResultadoGrupoLab(
   grupo: GrupoLab,
   filas: FilaResultadoPrint[],
+  meta: InformeLabMeta = {},
   baseUrl?: string,
 ) {
   const origin = baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')
-  const w = window.open('', '_blank', 'width=900,height=800')
+  const w = window.open('', '_blank', 'width=900,height=900')
   if (!w) { alert('Permita ventanas emergentes para imprimir.'); return }
-
-  const rows = filas.map(f => `
-    <tr>
-      <td>${escapeHtml(f.prueba)}${f.campo ? `<br><small>${escapeHtml(f.campo)}</small>` : ''}</td>
-      <td class="${f.anormal ? 'anormal' : ''}"><b>${escapeHtml(f.valor)}</b>${f.unidad ? ` ${escapeHtml(f.unidad)}` : ''}</td>
-      <td>${escapeHtml(f.rango ?? '—')}</td>
-      <td>${f.anormal ? '<span class="anormal">▲ Anormal</span>' : 'Normal'}</td>
-      <td>${escapeHtml(f.obs ?? '')}</td>
-    </tr>`).join('')
-
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Resultados ${escapeHtml(grupo.pacienteNombre)}</title>
-    <style>${baseStyles()}</style></head><body>
-    <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
-    <p class="sub"><b>${escapeHtml(BRAND.nombre)}</b><br>Tel: ${escapeHtml(FISCAL.telefonos)}</p>
-    <h1>INFORME DE RESULTADOS DE LABORATORIO</h1>
-    <table style="border:none">
-      <tr><td style="border:none;width:120px"><b>Paciente</b></td><td style="border:none">${escapeHtml(grupo.pacienteNombre)}</td></tr>
-      <tr><td style="border:none"><b>Identidad</b></td><td style="border:none">${escapeHtml(grupo.pacienteCodigo || '—')}</td></tr>
-      <tr><td style="border:none"><b>Fecha orden</b></td><td style="border:none">${escapeHtml(grupo.fecha)}</td></tr>
-      <tr><td style="border:none"><b>Órdenes</b></td><td style="border:none">${grupo.ordenes.map(o => '#' + o.id).join(', ')}</td></tr>
-    </table>
-    <h2>Resultados</h2>
-    <table>
-      <thead><tr><th>Prueba / Parámetro</th><th>Resultado</th><th>Referencia</th><th>Estado</th><th>Obs.</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div class="firma">Responsable de laboratorio — Firma y sello autorizado</div>
-    <script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script>
-    </body></html>`)
+  const html = htmlInformeResultadosLab(grupo, filas, meta, origin)
+  w.document.write(html.replace('</body>', '<script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script></body>'))
   w.document.close()
 }
 
@@ -118,6 +245,7 @@ export function filasPrintDesdeGrupo(
     if (esPanel && panelCampos[Number(orden.id_analisis)]?.length) {
       for (const r of resultados) {
         const campo = panelCampos[Number(orden.id_analisis)]?.find(c => c.id === r.campo_id)
+        const indicador = indicadorDesdeRango(r.valor_resultado, r.rango_min, r.rango_max)
         filas.push({
           prueba: orden.no_analisis,
           campo: campo?.nombre ?? r.nombre_prueba,
@@ -125,17 +253,20 @@ export function filasPrintDesdeGrupo(
           unidad: r.unidad,
           rango: r.rango_texto,
           anormal: r.anormal,
+          indicador: indicador || (r.anormal ? 'ALTO' : ''),
           obs: r.observacion,
         })
       }
     } else {
       const r = resultados[0]
+      const indicador = indicadorDesdeRango(r?.valor_resultado, r?.rango_min, r?.rango_max)
       filas.push({
         prueba: orden.no_analisis,
         valor: r?.valor_resultado ?? orden.resultado_resumen ?? '—',
         unidad: r?.unidad,
         rango: r?.rango_texto,
         anormal: r?.anormal,
+        indicador: indicador || (r?.anormal ? 'ALTO' : ''),
         obs: r?.observacion,
       })
     }

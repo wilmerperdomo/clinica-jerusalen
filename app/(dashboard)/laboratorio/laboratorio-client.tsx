@@ -5,15 +5,20 @@ import { createBrowserClient } from '@supabase/ssr'
 import {
   FlaskConical, Plus, Search, RefreshCw, ClipboardList,
   CheckCircle2, Clock, X, Save, AlertCircle,
-  Beaker, Edit2, Printer, MessageCircle,
-  LayoutGrid, List, BarChart3, Tag, ShieldCheck, Send,
+  Beaker, Edit2, Printer, MessageCircle, Trash2,
+  LayoutGrid, List, BarChart3, Tag, ShieldCheck, Send, SlidersHorizontal,
+  KeyRound, Copy,
 } from 'lucide-react'
+import { BRAND } from '@/lib/brand'
+import { linkWhatsAppMensaje } from '@/lib/mensajes-paciente'
+import { generarAccesoPortal } from './portal-actions'
 import {
   etiquetaEstadoLab, claseBadgeEstadoLab, type EstadoLab,
 } from '@/lib/lab-estado-utils'
 import {
   agruparOrdenes, calcularReportesLab, calcularEdad, buscarRangoAplicable,
   evaluarValorRango, computeFechaPrometida, estadoOrdenLab, tuboColorClase,
+  indicadorDesdeRango,
   type OrdenLab, type PruebaLab, type PacienteLab, type GrupoLab,
   type LabRango, type LabPanelCampo,
 } from '@/lib/lab-utils'
@@ -21,7 +26,7 @@ import { precioLabLista } from '@/lib/membresia-utils'
 import { descontarInsumosLab, type LabInsumo } from '@/lib/lab-insumos'
 import {
   imprimirEtiquetasTubo, imprimirResultadoGrupoLab,
-  filasPrintDesdeGrupo, whatsappGrupoLab, registrarAuditoriaLab,
+  filasPrintDesdeGrupo, registrarAuditoriaLab,
 } from '@/lib/lab-print'
 import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
 import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
@@ -54,6 +59,8 @@ interface CampoResultadoForm {
   valor: string
   unidad: string
   rango_texto: string
+  rango_min: number | null
+  rango_max: number | null
   anormal: boolean
   obs: string
   resultadoId?: number
@@ -95,6 +102,24 @@ export default function LaboratorioClient({
   const [guardandoOrden, setGuardandoOrden] = useState(false)
   const [pacientesExtra, setPacientesExtra] = useState<PacienteLab[]>([])
 
+  // Estado vivo de rangos y campos de panel (para reflejar ediciones del catálogo sin recargar)
+  const [rangosState, setRangosState] = useState<LabRango[]>(rangos)
+  const [panelCamposState, setPanelCamposState] = useState<LabPanelCampo[]>(initPanelCampos)
+  useEffect(() => { setRangosState(rangos) }, [rangos])
+  useEffect(() => { setPanelCamposState(initPanelCampos) }, [initPanelCampos])
+
+  // Configuración de prueba (rangos de referencia + campos de panel)
+  const [modalConfig, setModalConfig] = useState(false)
+  const [configPrueba, setConfigPrueba] = useState<PruebaLab | null>(null)
+  const [formRango, setFormRango] = useState({ genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
+  const [formCampo, setFormCampo] = useState({ nombre: '', codigo: '', unidad: '', orden: '' })
+  const [guardandoConfig, setGuardandoConfig] = useState(false)
+
+  // Acceso al portal del paciente
+  const [modalAcceso, setModalAcceso] = useState(false)
+  const [acceso, setAcceso] = useState<{ usuario: string; password: string; telefono: string; nombre: string } | null>(null)
+  const [generandoAcceso, setGenerandoAcceso] = useState(false)
+
   const supabase = useMemo(() => sb(), [])
 
   const pacientesMerged = useMemo(() => {
@@ -119,13 +144,14 @@ export default function LaboratorioClient({
 
   const panelCamposMap = useMemo(() => {
     const m: Record<number, LabPanelCampo[]> = {}
-    for (const c of initPanelCampos) {
+    for (const c of panelCamposState) {
+      if (c.activo === false) continue
       if (!m[c.prueba_id]) m[c.prueba_id] = []
       m[c.prueba_id].push(c)
     }
     for (const k of Object.keys(m)) m[Number(k)].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
     return m
-  }, [initPanelCampos])
+  }, [panelCamposState])
 
   const insumosMap = useMemo(() => {
     const m: Record<number, LabInsumo[]> = {}
@@ -308,11 +334,13 @@ export default function LaboratorioClient({
       if (campos?.length) {
         for (const campo of campos) {
           const exist = orden.resultados?.find(r => r.campo_id === campo.id)
-          const rango = buscarRangoAplicable(rangos, pid, edad, pac?.genero)
+          const rango = buscarRangoAplicable(rangosState, pid, edad, pac?.genero)
           pre[claveCampo(orden.id, campo.id)] = {
             valor: exist?.valor_resultado ?? '',
             unidad: exist?.unidad ?? campo.unidad ?? rango?.unidad ?? '',
             rango_texto: exist?.rango_texto ?? rango?.rango_texto ?? '',
+            rango_min: exist?.rango_min ?? rango?.rango_min ?? null,
+            rango_max: exist?.rango_max ?? rango?.rango_max ?? null,
             anormal: exist?.anormal ?? false,
             obs: exist?.observacion ?? '',
             resultadoId: exist?.id,
@@ -320,11 +348,13 @@ export default function LaboratorioClient({
         }
       } else {
         const exist = orden.resultados?.[0]
-        const rango = buscarRangoAplicable(rangos, pid, edad, pac?.genero)
+        const rango = buscarRangoAplicable(rangosState, pid, edad, pac?.genero)
         pre[claveCampo(orden.id)] = {
           valor: exist?.valor_resultado ?? '',
           unidad: exist?.unidad ?? rango?.unidad ?? '',
           rango_texto: exist?.rango_texto ?? rango?.rango_texto ?? '',
+          rango_min: exist?.rango_min ?? rango?.rango_min ?? null,
+          rango_max: exist?.rango_max ?? rango?.rango_max ?? null,
           anormal: exist?.anormal ?? false,
           obs: exist?.observacion ?? '',
           resultadoId: exist?.id,
@@ -358,17 +388,31 @@ export default function LaboratorioClient({
       const next = { ...prev, [key]: { ...prev[key], [field]: value } }
       if (field === 'valor' && typeof value === 'string') {
         const pac = grupoActual ? pacientesMerged.find(p => p.id === grupoActual.pacienteId) : undefined
-        const rango = buscarRangoAplicable(rangos, pruebaId, calcularEdad(pac?.fecha_nac), pac?.genero)
+        const rango = buscarRangoAplicable(rangosState, pruebaId, calcularEdad(pac?.fecha_nac), pac?.genero)
         const ev = evaluarValorRango(value, rango)
         next[key] = {
           ...next[key],
           anormal: ev.anormal,
           rango_texto: next[key].rango_texto || ev.rangoTexto,
           unidad: next[key].unidad || ev.unidad,
+          rango_min: next[key].rango_min ?? ev.rangoMin,
+          rango_max: next[key].rango_max ?? ev.rangoMax,
         }
       }
       return next
     })
+  }
+
+  async function upsertResultado(payload: Record<string, unknown>, resultadoId?: number) {
+    const run = (p: Record<string, unknown>) => resultadoId
+      ? supabase.from('lab_resultados').update(p).eq('id', resultadoId)
+      : supabase.from('lab_resultados').insert(p)
+    let { error } = await run(payload)
+    if (error && /rango_min|rango_max|schema cache/i.test(error.message)) {
+      const { rango_min, rango_max, ...base } = payload
+      error = (await run(base)).error
+    }
+    return error
   }
 
   async function persistirResultados(modo: 'borrador' | 'validar' | 'entregar') {
@@ -394,13 +438,13 @@ export default function LaboratorioClient({
             valor_resultado: vals.valor,
             unidad: vals.unidad,
             rango_texto: vals.rango_texto,
+            rango_min: vals.rango_min,
+            rango_max: vals.rango_max,
             anormal: vals.anormal,
             observacion: vals.obs,
             fecha: fechaHoy,
           }
-          const { error } = vals.resultadoId
-            ? await supabase.from('lab_resultados').update(payload).eq('id', vals.resultadoId)
-            : await supabase.from('lab_resultados').insert(payload)
+          const error = await upsertResultado(payload, vals.resultadoId)
           if (error) return alert('Error: ' + error.message)
         }
       } else {
@@ -415,13 +459,13 @@ export default function LaboratorioClient({
           valor_resultado: vals.valor,
           unidad: vals.unidad,
           rango_texto: vals.rango_texto,
+          rango_min: vals.rango_min,
+          rango_max: vals.rango_max,
           anormal: vals.anormal,
           observacion: vals.obs,
           fecha: fechaHoy,
         }
-        const { error } = vals.resultadoId
-          ? await supabase.from('lab_resultados').update(payload).eq('id', vals.resultadoId)
-          : await supabase.from('lab_resultados').insert(payload)
+        const error = await upsertResultado(payload, vals.resultadoId)
         if (error) return alert('Error: ' + error.message)
       }
 
@@ -456,10 +500,11 @@ export default function LaboratorioClient({
       await registrarAuditoriaLab(supabase, orden.id, modo, resumen)
     }
 
-    if (modo === 'entregar' && pac) {
-      const filas = filasPrintDesdeGrupo(grupoActual, pruebasCatalogo, panelCamposMap)
-      const link = whatsappGrupoLab({ ...grupoActual, telefono: pac.celular || pac.telefono || '' }, filas)
-      if (link && confirm('¿Notificar al paciente por WhatsApp?')) window.open(link, '_blank')
+    if (modo === 'entregar') {
+      const tel = pac?.celular || pac?.telefono || grupoActual.telefono
+      if (tel && confirm('¿Notificar al paciente por WhatsApp con el enlace al portal?')) {
+        await enviarResultadosWhatsApp({ ...grupoActual, telefono: tel })
+      }
     }
 
     setModalResultados(false)
@@ -487,7 +532,58 @@ export default function LaboratorioClient({
 
   function imprimirGrupo(grupo: GrupoLab) {
     const filas = filasPrintDesdeGrupo(grupo, pruebasCatalogo, panelCamposMap)
-    imprimirResultadoGrupoLab(grupo, filas)
+    const pac = pacientesMerged.find(p => p.id === grupo.pacienteId)
+    const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
+    imprimirResultadoGrupoLab(grupo, filas, {
+      edad: calcularEdad(pac?.fecha_nac),
+      sexo: pac?.genero,
+      fechaResultado: fechaResultado ?? undefined,
+      portalUrl: portalBaseUrl(),
+    })
+  }
+
+  function portalBaseUrl(): string {
+    const env = process.env.NEXT_PUBLIC_APP_URL
+    if (env) return env.replace(/\/$/, '') + '/portal'
+    if (typeof window !== 'undefined') return window.location.origin + '/portal'
+    return '/portal'
+  }
+
+  async function generarAcceso(grupo: GrupoLab) {
+    setGenerandoAcceso(true)
+    const r = await generarAccesoPortal(grupo.pacienteId)
+    setGenerandoAcceso(false)
+    if (!r.ok || !r.usuario || !r.password) {
+      alert(r.error || 'No se pudo generar el acceso al portal.')
+      return
+    }
+    setAcceso({ usuario: r.usuario, password: r.password, telefono: grupo.telefono, nombre: grupo.pacienteNombre })
+    setModalAcceso(true)
+  }
+
+  function enviarAccesoWhatsApp() {
+    if (!acceso) return
+    const msg = `Hola ${acceso.nombre}, su acceso al Portal del Paciente de ${BRAND.nombre}:\n\n`
+      + `Portal: ${portalBaseUrl()}\n`
+      + `Usuario (identidad): ${acceso.usuario}\n`
+      + `Contraseña: ${acceso.password}\n\n`
+      + `Sus resultados de laboratorio ya están disponibles para descargar.`
+    const link = linkWhatsAppMensaje(acceso.telefono, undefined, msg)
+    if (!link) { alert('El paciente no tiene un celular válido registrado.'); return }
+    window.open(link, '_blank')
+  }
+
+  async function enviarResultadosWhatsApp(grupo: GrupoLab) {
+    if (!grupo.telefono) { alert('El paciente no tiene un celular válido registrado.'); return }
+    const msg = `Hola ${grupo.pacienteNombre}, sus resultados de laboratorio (${grupo.pruebas.join(', ')}) ya están listos en ${BRAND.nombre}.\n\n`
+      + `Descárguelos en línea: ${portalBaseUrl()}\n`
+      + `Usuario: su número de identidad.\n\n`
+      + `Si aún no tiene contraseña, solicítela en la clínica.`
+    const link = linkWhatsAppMensaje(grupo.telefono, undefined, msg)
+    if (!link) { alert('El paciente no tiene un celular válido registrado.'); return }
+    window.open(link, '_blank')
+    const ids = grupo.ordenes.map(o => o.id)
+    await supabase.from('consulta_analisis').update({ notificado_at: new Date().toISOString() }).in('id', ids)
   }
 
   async function guardarPrueba() {
@@ -529,6 +625,80 @@ export default function LaboratorioClient({
     setInsumosPrueba([])
     await cargarCatalogoPruebas()
     startTransition(() => { recargar() })
+  }
+
+  /* ── configuración: rangos de referencia y campos de panel ── */
+  function abrirConfig(prueba: PruebaLab) {
+    setConfigPrueba(prueba)
+    setFormRango({ genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
+    setFormCampo({ nombre: '', codigo: '', unidad: '', orden: '' })
+    setModalConfig(true)
+  }
+
+  async function guardarRango() {
+    if (!configPrueba) return
+    const min = formRango.rango_min.trim() === '' ? null : Number(formRango.rango_min.replace(',', '.'))
+    const max = formRango.rango_max.trim() === '' ? null : Number(formRango.rango_max.replace(',', '.'))
+    const texto = formRango.rango_texto.trim() || null
+    if (min == null && max == null && !texto) {
+      alert('Defina un rango numérico (mín/máx) o un valor de referencia en texto (ej. "Negativo").')
+      return
+    }
+    setGuardandoConfig(true)
+    const payload = {
+      prueba_id: configPrueba.id,
+      genero: formRango.genero || null,
+      edad_min: Number(formRango.edad_min) || 0,
+      edad_max: Number(formRango.edad_max) || 120,
+      rango_min: min,
+      rango_max: max,
+      rango_texto: texto,
+      unidad: formRango.unidad.trim() || null,
+    }
+    const { data, error } = await supabase.from('lab_rangos').insert(payload).select('*').single()
+    setGuardandoConfig(false)
+    if (error) {
+      alert(/unique|duplicate/i.test(error.message)
+        ? 'Ya existe un rango para ese sexo y rango de edad. Edite o elimine el existente.'
+        : 'No se pudo guardar: ' + error.message)
+      return
+    }
+    if (data) setRangosState(prev => [...prev, data as LabRango])
+    setFormRango({ genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
+  }
+
+  async function eliminarRango(id: number) {
+    if (!confirm('¿Eliminar este rango de referencia?')) return
+    const { error } = await supabase.from('lab_rangos').delete().eq('id', id)
+    if (error) return alert('No se pudo eliminar: ' + error.message)
+    setRangosState(prev => prev.filter(r => r.id !== id))
+  }
+
+  async function guardarCampo() {
+    if (!configPrueba) return
+    const nombre = formCampo.nombre.trim()
+    if (!nombre) return alert('Escriba el nombre del parámetro')
+    setGuardandoConfig(true)
+    const payload = {
+      prueba_id: configPrueba.id,
+      nombre,
+      codigo: formCampo.codigo.trim() || null,
+      unidad: formCampo.unidad.trim() || null,
+      orden: Number(formCampo.orden) || (panelCamposState.filter(c => c.prueba_id === configPrueba.id).length + 1),
+      activo: true,
+    }
+    const { data, error } = await supabase.from('lab_panel_campos').insert(payload).select('*').single()
+    setGuardandoConfig(false)
+    if (error) return alert('No se pudo guardar: ' + error.message)
+    if (data) setPanelCamposState(prev => [...prev, data as LabPanelCampo])
+    setFormCampo({ nombre: '', codigo: '', unidad: '', orden: '' })
+  }
+
+  async function eliminarCampo(id: number) {
+    if (!confirm('¿Eliminar este parámetro del panel?')) return
+    const { error } = await supabase.from('lab_panel_campos').delete().eq('id', id)
+    if (error) return alert('No se pudo eliminar: ' + error.message)
+    setPanelCamposState(prev => prev.filter(c => c.id !== id))
   }
 
   function abrirModalOrden() {
@@ -689,13 +859,19 @@ export default function LaboratorioClient({
                         {g.tieneResultados && (
                           <>
                             <button type="button" onClick={() => imprimirGrupo(g)}
-                              className="p-1.5 rounded bg-gray-100 hover:bg-gray-200" title="PDF">
+                              className="p-1.5 rounded bg-gray-100 hover:bg-gray-200" title="Imprimir / PDF">
                               <Printer className="w-3.5 h-3.5" />
                             </button>
+                            {(g.estado === 'VALIDADO' || g.estado === 'ENTREGADO') && (
+                              <button type="button" onClick={() => generarAcceso(g)} disabled={generandoAcceso}
+                                className="p-1.5 rounded bg-cyan-100 text-cyan-700 hover:bg-cyan-200 disabled:opacity-50" title="Acceso al portal del paciente">
+                                <KeyRound className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {g.telefono && (
                               <button type="button"
-                                onClick={() => window.open(whatsappGrupoLab(g, filasPrintDesdeGrupo(g, pruebasCatalogo, panelCamposMap)), '_blank')}
-                                className="p-1.5 rounded bg-green-100 text-green-700 hover:bg-green-200" title="WhatsApp">
+                                onClick={() => enviarResultadosWhatsApp(g)}
+                                className="p-1.5 rounded bg-green-100 text-green-700 hover:bg-green-200" title="Avisar por WhatsApp (con enlace al portal)">
                                 <MessageCircle className="w-3.5 h-3.5" />
                               </button>
                             )}
@@ -758,23 +934,29 @@ export default function LaboratorioClient({
                           <td className="px-4 py-3 text-center text-xs text-gray-500">
                             {(insumosMap[p.id]?.length ?? 0) || '—'}
                           </td>
-                          <td className="px-4 py-3 text-center">
-                            <button onClick={() => {
-                              setPruebaActual(p)
-                              setFormPrueba({
-                                nombre: p.nombre, description: p.description || '',
-                                color: p.color || '', dias: String(p.dias || 1),
-                                costo: String(p.costo), comision: String(p.comision),
-                                nota: '', es_panel: !!p.es_panel,
-                              })
-                              setInsumosPrueba((insumosMap[p.id] ?? []).map(i => ({
-                                producto_id: String(i.producto_id),
-                                cantidad: String(i.cantidad),
-                              })))
-                              setModalPrueba(true)
-                            }} className="p-1.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200">
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button title="Rangos / parámetros" onClick={() => abrirConfig(p)}
+                                className="p-1.5 rounded bg-cyan-50 text-cyan-700 hover:bg-cyan-100">
+                                <SlidersHorizontal className="w-3.5 h-3.5" />
+                              </button>
+                              <button title="Editar prueba" onClick={() => {
+                                setPruebaActual(p)
+                                setFormPrueba({
+                                  nombre: p.nombre, description: p.description || '',
+                                  color: p.color || '', dias: String(p.dias || 1),
+                                  costo: String(p.costo), comision: String(p.comision),
+                                  nota: '', es_panel: !!p.es_panel,
+                                })
+                                setInsumosPrueba((insumosMap[p.id] ?? []).map(i => ({
+                                  producto_id: String(i.producto_id),
+                                  cantidad: String(i.cantidad),
+                                })))
+                                setModalPrueba(true)
+                              }} className="p-1.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -882,7 +1064,8 @@ export default function LaboratorioClient({
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {campos.map(campo => {
                           const key = claveCampo(orden.id, campo.id)
-                          const vals = resultForm[key] ?? { valor: '', unidad: '', rango_texto: '', anormal: false, obs: '' }
+                          const vals = resultForm[key] ?? { valor: '', unidad: '', rango_texto: '', rango_min: null, rango_max: null, anormal: false, obs: '' }
+                          const ind = indicadorDesdeRango(vals.valor, vals.rango_min, vals.rango_max)
                           return (
                             <div key={campo.id} className={`rounded-lg border p-3 space-y-2 ${vals.anormal ? 'border-red-300 bg-red-50/50' : ''}`}>
                               <p className="text-xs font-semibold text-gray-700">{campo.nombre} {campo.codigo && <span className="text-gray-400">({campo.codigo})</span>}</p>
@@ -896,7 +1079,12 @@ export default function LaboratorioClient({
                                 <input value={vals.rango_texto} onChange={e => onValorChange(key, 'rango_texto', e.target.value, orden.id, pid)}
                                   placeholder="Referencia" className="border rounded px-2 py-1" />
                               </div>
-                              {vals.anormal && <p className="text-xs text-red-600 font-medium flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Fuera de rango</p>}
+                              {vals.anormal && (
+                                <p className="text-xs text-red-600 font-medium flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  {ind === 'ALTO' ? 'Alto ↑' : ind === 'BAJO' ? 'Bajo ↓' : 'Fuera de rango'}
+                                </p>
+                              )}
                             </div>
                           )
                         })}
@@ -905,7 +1093,7 @@ export default function LaboratorioClient({
                       <div className={`grid grid-cols-2 sm:grid-cols-3 gap-3 ${resultForm[claveCampo(orden.id)]?.anormal ? 'bg-red-50/50 rounded-lg p-2' : ''}`}>
                         {(() => {
                           const key = claveCampo(orden.id)
-                          const vals = resultForm[key] ?? { valor: '', unidad: '', rango_texto: '', anormal: false, obs: '' }
+                          const vals = resultForm[key] ?? { valor: '', unidad: '', rango_texto: '', rango_min: null, rango_max: null, anormal: false, obs: '' }
                           return (
                             <>
                               <div>
@@ -946,7 +1134,14 @@ export default function LaboratorioClient({
               })}
             </div>
 
-            <div className="flex flex-wrap justify-end gap-2 pt-4 border-t mt-4">
+            <div className="flex flex-wrap items-center gap-2 pt-4 border-t mt-4">
+              {grupoActual && (grupoActual.estado === 'VALIDADO' || grupoActual.estado === 'ENTREGADO') && (
+                <button onClick={() => generarAcceso(grupoActual)} disabled={generandoAcceso}
+                  className="px-3 py-2 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-lg text-sm font-medium flex items-center gap-1.5 disabled:opacity-50">
+                  <KeyRound className="w-4 h-4" /> Acceso al portal
+                </button>
+              )}
+              <div className="flex-1" />
               <button onClick={() => { setModalResultados(false); setGrupoActual(null) }} className="px-4 py-2 border rounded-lg text-sm">Cerrar</button>
               <button onClick={() => persistirResultados('borrador')}
                 className="px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-medium">
@@ -1016,6 +1211,182 @@ export default function LaboratorioClient({
               <button onClick={() => setModalPrueba(false)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
               <button onClick={guardarPrueba} className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-medium">
                 <Save className="w-4 h-4 inline mr-1" /> {pruebaActual ? 'Actualizar' : 'Registrar'}
+              </button>
+            </div>
+          </LabModal>
+        )}
+
+        {/* Modal configuración: rangos de referencia + campos de panel */}
+        {modalConfig && configPrueba && (
+          <LabModal title={`Configurar: ${configPrueba.nombre}`} onClose={() => setModalConfig(false)} wide>
+            <div className="space-y-5 max-h-[72dvh] overflow-y-auto pr-1">
+              {/* Rangos de referencia */}
+              <section>
+                <h4 className="text-sm font-bold text-gray-800 mb-1">Rangos de referencia</h4>
+                <p className="text-xs text-gray-500 mb-2">
+                  Defina el valor normal por sexo y edad. Use mín/máx para numéricos o texto para cualitativos (ej. &quot;Negativo&quot;).
+                </p>
+                <div className="space-y-1.5 mb-3">
+                  {rangosState.filter(r => r.prueba_id === configPrueba.id).length === 0 ? (
+                    <p className="text-xs text-gray-400 italic">Sin rangos definidos. Agregue uno abajo.</p>
+                  ) : rangosState.filter(r => r.prueba_id === configPrueba.id).map(r => (
+                    <div key={r.id} className="flex items-center gap-2 text-xs bg-gray-50 border rounded-lg px-3 py-2">
+                      <span className="px-1.5 py-0.5 rounded bg-white border text-gray-600">
+                        {r.genero === 'M' ? 'Masculino' : r.genero === 'F' ? 'Femenino' : 'Ambos'}
+                      </span>
+                      <span className="text-gray-500">{r.edad_min ?? 0}–{r.edad_max ?? 120} años</span>
+                      <span className="font-medium text-gray-800">
+                        {r.rango_min != null && r.rango_max != null ? `${r.rango_min} – ${r.rango_max}` : (r.rango_texto || '—')}
+                        {r.unidad ? ` ${r.unidad}` : ''}
+                      </span>
+                      <button onClick={() => eliminarRango(r.id)} className="ml-auto text-red-500 hover:text-red-700">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end bg-cyan-50/40 border border-cyan-100 rounded-lg p-3">
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Sexo</label>
+                    <select value={formRango.genero} onChange={e => setFormRango(p => ({ ...p, genero: e.target.value }))}
+                      className="w-full border rounded px-2 py-1.5 text-sm">
+                      <option value="">Ambos</option>
+                      <option value="M">Masculino</option>
+                      <option value="F">Femenino</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Edad mín</label>
+                    <input type="number" value={formRango.edad_min} onChange={e => setFormRango(p => ({ ...p, edad_min: e.target.value }))}
+                      className="w-full border rounded px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Edad máx</label>
+                    <input type="number" value={formRango.edad_max} onChange={e => setFormRango(p => ({ ...p, edad_max: e.target.value }))}
+                      className="w-full border rounded px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Unidad</label>
+                    <input value={formRango.unidad} onChange={e => setFormRango(p => ({ ...p, unidad: e.target.value }))}
+                      placeholder="mg/dL" className="w-full border rounded px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Mín</label>
+                    <input type="number" step="0.0001" value={formRango.rango_min} onChange={e => setFormRango(p => ({ ...p, rango_min: e.target.value }))}
+                      placeholder="70" className="w-full border rounded px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Máx</label>
+                    <input type="number" step="0.0001" value={formRango.rango_max} onChange={e => setFormRango(p => ({ ...p, rango_max: e.target.value }))}
+                      placeholder="100" className="w-full border rounded px-2 py-1.5 text-sm" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-[11px] text-gray-500 mb-0.5">Referencia en texto (cualitativo)</label>
+                    <input value={formRango.rango_texto} onChange={e => setFormRango(p => ({ ...p, rango_texto: e.target.value }))}
+                      placeholder="Negativo / A·B·AB·O…" className="w-full border rounded px-2 py-1.5 text-sm" />
+                  </div>
+                  <div className="col-span-2 sm:col-span-4 flex justify-end">
+                    <button onClick={guardarRango} disabled={guardandoConfig}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                      <Plus className="w-4 h-4" /> Agregar rango
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              {/* Campos de panel */}
+              {configPrueba.es_panel && (
+                <section className="border-t pt-4">
+                  <h4 className="text-sm font-bold text-gray-800 mb-1">Parámetros del panel</h4>
+                  <p className="text-xs text-gray-500 mb-2">
+                    Sub-parámetros que se capturan dentro de esta prueba (ej. en un Hemograma: WBC, HGB, HCT…).
+                  </p>
+                  <div className="space-y-1.5 mb-3">
+                    {panelCamposState.filter(c => c.prueba_id === configPrueba.id).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)).length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">Sin parámetros. Agregue al menos uno para capturar resultados.</p>
+                    ) : panelCamposState.filter(c => c.prueba_id === configPrueba.id).sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0)).map(c => (
+                      <div key={c.id} className="flex items-center gap-2 text-xs bg-gray-50 border rounded-lg px-3 py-2">
+                        <span className="text-gray-400">{c.orden ?? 0}</span>
+                        <span className="font-medium text-gray-800">{c.nombre}</span>
+                        {c.codigo && <span className="text-gray-400">({c.codigo})</span>}
+                        {c.unidad && <span className="text-gray-500">· {c.unidad}</span>}
+                        <button onClick={() => eliminarCampo(c.id)} className="ml-auto text-red-500 hover:text-red-700">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end bg-indigo-50/40 border border-indigo-100 rounded-lg p-3">
+                    <div className="col-span-2">
+                      <label className="block text-[11px] text-gray-500 mb-0.5">Nombre *</label>
+                      <input value={formCampo.nombre} onChange={e => setFormCampo(p => ({ ...p, nombre: e.target.value }))}
+                        placeholder="Hemoglobina" className="w-full border rounded px-2 py-1.5 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-500 mb-0.5">Código</label>
+                      <input value={formCampo.codigo} onChange={e => setFormCampo(p => ({ ...p, codigo: e.target.value }))}
+                        placeholder="HGB" className="w-full border rounded px-2 py-1.5 text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-500 mb-0.5">Unidad</label>
+                      <input value={formCampo.unidad} onChange={e => setFormCampo(p => ({ ...p, unidad: e.target.value }))}
+                        placeholder="g/dL" className="w-full border rounded px-2 py-1.5 text-sm" />
+                    </div>
+                    <div className="col-span-2 sm:col-span-4 flex justify-end">
+                      <button onClick={guardarCampo} disabled={guardandoConfig}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                        <Plus className="w-4 h-4" /> Agregar parámetro
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t mt-3">
+              <button onClick={() => setModalConfig(false)} className="px-4 py-2 bg-gray-800 text-white rounded-lg text-sm font-medium">Listo</button>
+            </div>
+          </LabModal>
+        )}
+
+        {/* Modal acceso al portal del paciente */}
+        {modalAcceso && acceso && (
+          <LabModal title="Acceso al Portal del Paciente" onClose={() => setModalAcceso(false)}>
+            <div className="space-y-4">
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                <KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
+                Anote o envíe estas credenciales ahora. La contraseña <b>no se vuelve a mostrar</b>; si se pierde, deberá regenerarla.
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2">
+                  <div>
+                    <p className="text-[11px] text-gray-500 uppercase">Usuario (identidad)</p>
+                    <p className="font-mono font-bold text-gray-900">{acceso.usuario}</p>
+                  </div>
+                  <button onClick={() => navigator.clipboard?.writeText(acceso.usuario)} className="p-2 rounded hover:bg-gray-200 text-gray-500" title="Copiar">
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2">
+                  <div>
+                    <p className="text-[11px] text-gray-500 uppercase">Contraseña</p>
+                    <p className="font-mono font-bold text-2xl tracking-widest text-cyan-700">{acceso.password}</p>
+                  </div>
+                  <button onClick={() => navigator.clipboard?.writeText(acceso.password)} className="p-2 rounded hover:bg-gray-200 text-gray-500" title="Copiar">
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                Portal: <span className="font-medium text-gray-700">{portalBaseUrl()}</span>
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t mt-3">
+              <button onClick={() => setModalAcceso(false)} className="px-4 py-2 border rounded-lg text-sm">Cerrar</button>
+              <button onClick={enviarAccesoWhatsApp}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <MessageCircle className="w-4 h-4" /> Enviar por WhatsApp
               </button>
             </div>
           </LabModal>

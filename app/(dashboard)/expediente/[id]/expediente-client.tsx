@@ -5,8 +5,9 @@ import {
   Activity, FlaskConical, Printer,
   ChevronDown, ChevronUp, Pill,
   Heart, Stethoscope, FileText, Search, AlertTriangle, Megaphone, MessageCircle,
-  ClipboardList, UserRound, ExternalLink,
+  ClipboardList, UserRound, ExternalLink, KeyRound, Copy, X,
 } from 'lucide-react'
+import { generarAccesoPortal } from '@/app/(dashboard)/laboratorio/portal-actions'
 import { etiquetaEstadoLab, claseBadgeEstadoLab, inferirEstadoLab } from '@/lib/lab-estado-utils'
 import { imprimirResultadoLaboratorio, linkWhatsAppResultado } from '@/lib/lab-resultado-print'
 import { imprimirRecetaMedica, edadPacientePrint } from '@/lib/consulta-documentos-print'
@@ -376,6 +377,39 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
   const [fechaI, setFechaI]   = useState('')
   const [fechaF, setFechaF]   = useState('')
 
+  const [acceso, setAcceso] = useState<{ usuario: string; password: string } | null>(null)
+  const [generandoAcceso, setGenerandoAcceso] = useState(false)
+
+  function portalBaseUrl(): string {
+    const env = process.env.NEXT_PUBLIC_APP_URL
+    if (env) return env.replace(/\/$/, '') + '/portal'
+    if (typeof window !== 'undefined') return window.location.origin + '/portal'
+    return '/portal'
+  }
+
+  async function generarAccesoPaciente() {
+    setGenerandoAcceso(true)
+    const r = await generarAccesoPortal(paciente.id)
+    setGenerandoAcceso(false)
+    if (!r.ok || !r.usuario || !r.password) {
+      alert(r.error || 'No se pudo generar el acceso al portal.')
+      return
+    }
+    setAcceso({ usuario: r.usuario, password: r.password })
+  }
+
+  function enviarAccesoWhatsApp() {
+    if (!acceso) return
+    const msg = `Hola ${nombreCompleto}, su acceso al Portal del Paciente de ${BRAND.nombre}:\n\n`
+      + `Portal: ${portalBaseUrl()}\n`
+      + `Usuario (identidad): ${acceso.usuario}\n`
+      + `Contraseña: ${acceso.password}\n\n`
+      + `Ahí podrá consultar y descargar sus resultados de laboratorio.`
+    const link = linkWhatsAppMensaje(paciente.celular, paciente.telefono, msg)
+    if (!link) { alert('El paciente no tiene un celular válido registrado.'); return }
+    window.open(link, '_blank')
+  }
+
   const nombreCompleto = `${paciente.nombre} ${paciente.apellido1} ${paciente.apellido2 ?? ''}`.trim()
   const iniciales = `${paciente.nombre[0]}${paciente.apellido1[0]}`.toUpperCase()
   const edad = calcEdad(paciente.fecha_nac)
@@ -623,6 +657,14 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
         {/* ── LABORATORIO ───────────────────────────────────────── */}
         {tab === 'laboratorio' && (
           <div className="overflow-x-auto p-4">
+            {analisis.length > 0 && (
+              <div className="flex justify-end mb-3">
+                <button type="button" onClick={generarAccesoPaciente} disabled={generandoAcceso}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-lg text-sm font-medium disabled:opacity-50">
+                  <KeyRound className="w-4 h-4" /> {generandoAcceso ? 'Generando…' : 'Acceso al portal del paciente'}
+                </button>
+              </div>
+            )}
             {analisis.length === 0
               ? <div className="text-center py-14 text-gray-400">
                   <FlaskConical className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -726,6 +768,46 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
           </div>
         )}
       </div>
+
+      {acceso && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setAcceso(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2"><KeyRound className="w-5 h-5 text-cyan-600" /> Acceso al Portal del Paciente</h3>
+              <button onClick={() => setAcceso(null)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                <KeyRound className="w-4 h-4 shrink-0 mt-0.5" />
+                Anote o envíe estas credenciales ahora. La contraseña <b>no se vuelve a mostrar</b>; si se pierde, deberá regenerarla.
+              </div>
+              <div className="flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2">
+                <div>
+                  <p className="text-[11px] text-gray-500 uppercase">Usuario (identidad)</p>
+                  <p className="font-mono font-bold text-gray-900">{acceso.usuario}</p>
+                </div>
+                <button onClick={() => navigator.clipboard?.writeText(acceso.usuario)} className="p-2 rounded hover:bg-gray-200 text-gray-500" title="Copiar"><Copy className="w-4 h-4" /></button>
+              </div>
+              <div className="flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2">
+                <div>
+                  <p className="text-[11px] text-gray-500 uppercase">Contraseña</p>
+                  <p className="font-mono font-bold text-2xl tracking-widest text-cyan-700">{acceso.password}</p>
+                </div>
+                <button onClick={() => navigator.clipboard?.writeText(acceso.password)} className="p-2 rounded hover:bg-gray-200 text-gray-500" title="Copiar"><Copy className="w-4 h-4" /></button>
+              </div>
+              <p className="text-xs text-gray-500">Portal: <span className="font-medium text-gray-700">{portalBaseUrl()}</span></p>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t">
+              <button onClick={() => setAcceso(null)} className="px-4 py-2 border rounded-lg text-sm">Cerrar</button>
+              {(paciente.celular || paciente.telefono) && (
+                <button onClick={enviarAccesoWhatsApp} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium flex items-center gap-1.5">
+                  <MessageCircle className="w-4 h-4" /> Enviar por WhatsApp
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       </ModuleContent>
     </ModuleShell>
   )

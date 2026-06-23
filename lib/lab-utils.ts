@@ -230,25 +230,45 @@ export function buscarRangoAplicable(
   return scored[0]?.score > 0 ? scored[0].r : candidatos[0]
 }
 
+export type IndicadorRango = 'ALTO' | 'BAJO' | 'NORMAL' | ''
+
+export interface EvalRango {
+  anormal: boolean
+  indicador: IndicadorRango
+  rangoTexto: string
+  unidad: string
+  rangoMin: number | null
+  rangoMax: number | null
+}
+
+/** Calcula el indicador alto/bajo/normal a partir de un valor y un rango numérico. */
+export function indicadorDesdeRango(
+  valor: string | number | null | undefined,
+  rangoMin: number | null | undefined,
+  rangoMax: number | null | undefined,
+): IndicadorRango {
+  if (valor == null || valor === '') return ''
+  if (rangoMin == null || rangoMax == null) return ''
+  const num = typeof valor === 'number' ? valor : parseFloat(String(valor).replace(',', '.'))
+  if (Number.isNaN(num)) return ''
+  if (num < Number(rangoMin)) return 'BAJO'
+  if (num > Number(rangoMax)) return 'ALTO'
+  return 'NORMAL'
+}
+
 export function evaluarValorRango(
   valor: string,
   rango: LabRango | null,
-): { anormal: boolean; rangoTexto: string; unidad: string } {
+): EvalRango {
   const unidad = rango?.unidad ?? ''
+  const rangoMin = rango?.rango_min ?? null
+  const rangoMax = rango?.rango_max ?? null
   const rangoTexto = rango?.rango_texto
-    ?? (rango?.rango_min != null && rango?.rango_max != null
-      ? `${rango.rango_min} – ${rango.rango_max}`
-      : '')
+    ?? (rangoMin != null && rangoMax != null ? `${rangoMin} – ${rangoMax}` : '')
 
-  const num = parseFloat(valor.replace(',', '.'))
-  if (!rango || Number.isNaN(num)) {
-    return { anormal: false, rangoTexto, unidad }
-  }
-  if (rango.rango_min != null && rango.rango_max != null) {
-    const anormal = num < Number(rango.rango_min) || num > Number(rango.rango_max)
-    return { anormal, rangoTexto, unidad }
-  }
-  return { anormal: false, rangoTexto, unidad }
+  const indicador = indicadorDesdeRango(valor, rangoMin, rangoMax)
+  const anormal = indicador === 'ALTO' || indicador === 'BAJO'
+  return { anormal, indicador, rangoTexto, unidad, rangoMin, rangoMax }
 }
 
 export function computeFechaPrometida(fechaOrden: string, diasEntrega: number): string {
