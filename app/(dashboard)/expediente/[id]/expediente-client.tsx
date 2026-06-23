@@ -402,7 +402,7 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
     if (!acceso) return
     const msg = `Hola ${nombreCompleto}, su acceso al Portal del Paciente de ${BRAND.nombre}:\n\n`
       + `Portal: ${portalBaseUrl()}\n`
-      + `Usuario (identidad): ${acceso.usuario}\n`
+      + `Usuario: ${acceso.usuario}\n`
       + `Contraseña: ${acceso.password}\n\n`
       + `Ahí podrá consultar y descargar sus resultados de laboratorio.`
     const link = linkWhatsAppMensaje(paciente.celular, paciente.telefono, msg)
@@ -783,7 +783,7 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
               </div>
               <div className="flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2">
                 <div>
-                  <p className="text-[11px] text-gray-500 uppercase">Usuario (identidad)</p>
+                  <p className="text-[11px] text-gray-500 uppercase">Usuario</p>
                   <p className="font-mono font-bold text-gray-900">{acceso.usuario}</p>
                 </div>
                 <button onClick={() => navigator.clipboard?.writeText(acceso.usuario)} className="p-2 rounded hover:bg-gray-200 text-gray-500" title="Copiar"><Copy className="w-4 h-4" /></button>

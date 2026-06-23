@@ -24,17 +24,18 @@ export default function PortalLoginPage() {
 
         <form action={formAction} className="p-7 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Número de identidad</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Usuario</label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 name="usuario"
                 autoComplete="username"
                 required
-                placeholder="Su identidad / código"
+                placeholder="Identidad o usuario de su comprobante"
                 className="w-full border rounded-lg pl-9 pr-3 py-2.5 text-sm focus:ring-2 focus:ring-cyan-500 focus:outline-none"
               />
             </div>
+            <p className="text-[11px] text-gray-400 mt-1">Es su número de identidad o el usuario impreso en su factura/comprobante.</p>
           </div>
 
           <div>

@@ -32,8 +32,9 @@ export async function generarAccesoPortal(pacienteId: number): Promise<AccesoPor
 
   if (!pac) return { ok: false, error: 'Paciente no encontrado' }
 
-  const usuario = normalizarCodigoPaciente(pac.codigo)
-  if (!usuario) return { ok: false, error: 'El paciente no tiene un número de identidad/código válido para crear el acceso.' }
+  // Usuario = identidad/código normalizado. Si el paciente no tiene identidad,
+  // se genera un usuario automático único basado en su número de expediente.
+  const usuario = normalizarCodigoPaciente(pac.codigo) || `P${pacienteId}`
 
   const password = generarPassword(6)
   const { hash, salt } = hashPassword(password)

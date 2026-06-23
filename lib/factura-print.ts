@@ -322,7 +322,7 @@ ${f.portal ? `
   <strong>${f.portal.url}</strong>
 </div>
 <div class="bloque-fiscal" style="margin-top:4px">
-  ${filaMonospace('Usuario (identidad):', f.portal.usuario, true)}
+  ${filaMonospace('Usuario:', f.portal.usuario, true)}
   ${filaMonospace('Contraseña:', f.portal.password, true)}
 </div>
 <div class="center" style="font-size:8.5px;font-weight:normal;margin-top:2px">Guarde esta contraseña: no se vuelve a mostrar.</div>` : ''}

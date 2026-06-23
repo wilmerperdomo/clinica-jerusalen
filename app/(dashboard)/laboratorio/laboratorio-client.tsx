@@ -565,7 +565,7 @@ export default function LaboratorioClient({
     if (!acceso) return
     const msg = `Hola ${acceso.nombre}, su acceso al Portal del Paciente de ${BRAND.nombre}:\n\n`
       + `Portal: ${portalBaseUrl()}\n`
-      + `Usuario (identidad): ${acceso.usuario}\n`
+      + `Usuario: ${acceso.usuario}\n`
       + `Contraseña: ${acceso.password}\n\n`
       + `Sus resultados de laboratorio ya están disponibles para descargar.`
     const link = linkWhatsAppMensaje(acceso.telefono, undefined, msg)
@@ -577,7 +577,7 @@ export default function LaboratorioClient({
     if (!grupo.telefono) { alert('El paciente no tiene un celular válido registrado.'); return }
     const msg = `Hola ${grupo.pacienteNombre}, sus resultados de laboratorio (${grupo.pruebas.join(', ')}) ya están listos en ${BRAND.nombre}.\n\n`
       + `Descárguelos en línea: ${portalBaseUrl()}\n`
-      + `Usuario: su número de identidad.\n\n`
+      + `Usuario: el que aparece en su comprobante de la clínica.\n\n`
       + `Si aún no tiene contraseña, solicítela en la clínica.`
     const link = linkWhatsAppMensaje(grupo.telefono, undefined, msg)
     if (!link) { alert('El paciente no tiene un celular válido registrado.'); return }
@@ -1360,7 +1360,7 @@ export default function LaboratorioClient({
               <div className="space-y-2">
                 <div className="flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2">
                   <div>
-                    <p className="text-[11px] text-gray-500 uppercase">Usuario (identidad)</p>
+                    <p className="text-[11px] text-gray-500 uppercase">Usuario</p>
                     <p className="font-mono font-bold text-gray-900">{acceso.usuario}</p>
                   </div>
                   <button onClick={() => navigator.clipboard?.writeText(acceso.usuario)} className="p-2 rounded hover:bg-gray-200 text-gray-500" title="Copiar">
