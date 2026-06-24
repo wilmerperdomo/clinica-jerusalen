@@ -48,12 +48,14 @@ function formatMedicamentos(items: RecetaPlantillaItem[]): string {
 }
 
 export function recetaPlantillaStyles(): string {
+  /* Posiciones calibradas sobre receta-plantilla.png (1024×644 px) */
+  const pageH = 'calc(279mm * 644 / 1024)'
   return `
     *{box-sizing:border-box;margin:0;padding:0}
-    @page{size:letter landscape;margin:0}
+    @page{size:279mm ${pageH};margin:0}
     body{margin:0;padding:0;background:#fff}
     .receta-page{
-      position:relative;width:279mm;height:216mm;margin:0 auto;
+      position:relative;width:279mm;height:${pageH};margin:0 auto;
       page-break-after:always;overflow:hidden;
     }
     .receta-bg{
@@ -61,20 +63,21 @@ export function recetaPlantillaStyles(): string {
       object-fit:fill;pointer-events:none;user-select:none;
     }
     .receta-overlay{position:absolute;inset:0;font-family:Arial,Helvetica,sans-serif;color:#111}
+    .f-campo{
+      position:absolute;line-height:1.05;font-weight:600;
+      transform:translateY(-100%);
+    }
     .f-nombre{
-      position:absolute;top:26.2%;left:14.2%;width:50%;
-      font-size:11pt;font-weight:600;line-height:1.2;
+      top:32.76%;left:21%;width:24%;font-size:10.5pt;
     }
     .f-edad{
-      position:absolute;top:26.2%;left:67.5%;width:10%;
-      font-size:11pt;font-weight:600;text-align:center;
+      top:32.61%;left:57%;width:5%;font-size:10.5pt;text-align:center;
     }
     .f-fecha{
-      position:absolute;top:26.2%;left:79%;width:17%;
-      font-size:10.5pt;font-weight:600;text-align:left;
+      top:31.99%;left:82%;width:16%;font-size:10pt;
     }
     .f-rx{
-      position:absolute;top:33.5%;left:29.5%;right:5.5%;bottom:16%;
+      position:absolute;top:35.5%;left:29.5%;right:5.5%;bottom:14%;
       overflow:hidden;font-size:10.5pt;line-height:1.45;
     }
     .rx-item{margin-bottom:8px}
@@ -84,16 +87,12 @@ export function recetaPlantillaStyles(): string {
     .rx-reposo{margin-top:4px;font-size:10pt;font-weight:600}
     .rx-empty{color:#666;font-style:italic;padding-top:8px}
     .f-doctor{
-      position:absolute;bottom:9.2%;left:14%;width:42%;
-      font-size:11pt;font-weight:700;text-transform:uppercase;
-    }
-    .f-docno{
-      position:absolute;top:22%;right:6%;font-size:8pt;color:#444;
-      font-family:monospace;
+      top:94.41%;left:20%;width:28%;font-size:10.5pt;font-weight:700;
+      text-transform:uppercase;transform:translateY(-100%);
     }
     @media print{
       body{padding:0}
-      .receta-page{width:279mm;height:216mm}
+      .receta-page{width:279mm;height:${pageH}}
     }
   `
 }
@@ -116,12 +115,11 @@ export function htmlRecetaPlantilla(data: RecetaPlantillaData): string {
     <div class="receta-page">
       <img class="receta-bg" src="${src}" alt="" />
       <div class="receta-overlay">
-        ${data.numero_doc ? `<span class="f-docno">No. ${escapeHtml(data.numero_doc)}</span>` : ''}
-        <span class="f-nombre">${escapeHtml(data.paciente_nombre)}</span>
-        <span class="f-edad">${escapeHtml(data.paciente_edad ?? '')}</span>
-        <span class="f-fecha">${escapeHtml(data.fecha)}</span>
+        <span class="f-campo f-nombre">${escapeHtml(data.paciente_nombre)}</span>
+        <span class="f-campo f-edad">${escapeHtml(data.paciente_edad ?? '')}</span>
+        <span class="f-campo f-fecha">${escapeHtml(data.fecha)}</span>
         <div class="f-rx">${meds}${extra}</div>
-        <span class="f-doctor">${escapeHtml(data.medico_nombre ?? '')}</span>
+        <span class="f-campo f-doctor">${escapeHtml(data.medico_nombre ?? '')}</span>
       </div>
     </div>
     </body></html>`
