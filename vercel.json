@@ -3,6 +3,8 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "crons": [
-    { "path": "/api/respaldos/cron", "schedule": "0 8 * * *" }
+    { "path": "/api/respaldos/cron", "schedule": "0 8 * * *" },
+    { "path": "/api/promociones/cron", "schedule": "*/10 * * * *" },
+    { "path": "/api/agenda/recordatorios/cron", "schedule": "*/15 * * * *" }
   ]
 }
