@@ -5,8 +5,36 @@ import {
   labPlantillaInformeStyles,
   type LabEncabezadoInforme,
 } from '@/lib/lab-plantilla-assets'
-import { indicadorDesdeRango, type GrupoLab, type PruebaLab, type IndicadorRango } from '@/lib/lab-utils'
+import { indicadorDesdeRango, type GrupoLab, type PruebaLab, type IndicadorRango, type OrdenLab } from '@/lib/lab-utils'
 import { linkWhatsAppResultado } from '@/lib/lab-resultado-print'
+
+/** Texto de resultado externo/adjunto (legacy); no mostrar "maquila" en informe clínica. */
+export function esTextoResultadoAdjunto(valor?: string | null): boolean {
+  if (!valor?.trim()) return false
+  const v = valor.toLowerCase()
+  return v.includes('adjunto') || v.includes('maquila') || v.includes('masterlab')
+}
+
+/** Valor mostrado en tabla del informe (clínica u otro). */
+export function valorResultadoInforme(
+  orden: Pick<OrdenLab, 'resultado_externo' | 'resultado_resumen'>,
+  valorLab?: string | null,
+): string {
+  const v = valorLab?.trim()
+  if (v && !esTextoResultadoAdjunto(v)) return v
+  if (orden.resultado_externo || esTextoResultadoAdjunto(v) || esTextoResultadoAdjunto(orden.resultado_resumen)) {
+    return 'Ver archivo adjunto'
+  }
+  const res = orden.resultado_resumen?.trim()
+  return res && !esTextoResultadoAdjunto(res) ? res : '—'
+}
+
+/** Hay valor numérico/cualitativo propio de la clínica (no solo PDF adjunto). */
+export function filaTieneValorClinica(f: FilaResultadoPrint): boolean {
+  const v = f.valor?.trim()
+  if (!v || v === '—' || v === 'Ver archivo adjunto') return false
+  return !esTextoResultadoAdjunto(v)
+}
 
 export interface FilaResultadoPrint {
   prueba: string
@@ -251,7 +279,7 @@ export function filasPrintDesdeGrupo(
         filas.push({
           prueba: orden.no_analisis,
           campo: campo?.nombre ?? r.nombre_prueba,
-          valor: r.valor_resultado ?? '—',
+          valor: valorResultadoInforme(orden, r.valor_resultado),
           unidad: r.unidad,
           rango: r.rango_texto,
           anormal: r.anormal,
@@ -264,7 +292,7 @@ export function filasPrintDesdeGrupo(
       const indicador = indicadorDesdeRango(r?.valor_resultado, r?.rango_min, r?.rango_max)
       filas.push({
         prueba: orden.no_analisis,
-        valor: r?.valor_resultado ?? orden.resultado_resumen ?? '—',
+        valor: valorResultadoInforme(orden, r?.valor_resultado),
         unidad: r?.unidad,
         rango: r?.rango_texto,
         anormal: r?.anormal,

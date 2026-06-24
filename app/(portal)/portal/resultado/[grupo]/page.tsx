@@ -4,6 +4,7 @@ import { ArrowLeft, Download, ShieldCheck, FileText } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { getSesionPortal } from '@/lib/portal/session'
 import { cargarPortalPaciente, filasDeGrupo, archivosDeGrupo } from '@/lib/portal/data'
+import { filaTieneValorClinica } from '@/lib/lab-print'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Resultado' }
@@ -37,9 +38,8 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
   if (!grupo) notFound()
   const filas = res?.filas ?? []
   const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
-  const soloMaquila = archivos.length > 0 && filas.every(f => !f.valor?.trim())
-
-  const tieneInformeClinica = filas.some(f => f.valor && f.valor !== '—' && f.valor.trim().length > 0)
+  const tieneInformeClinica = filas.some(filaTieneValorClinica)
+  const soloAdjunto = archivos.length > 0 && !tieneInformeClinica
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
@@ -87,7 +87,7 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           <p><span className="text-gray-500">Fecha resultado:</span> {fmtFecha(fechaResultado ?? undefined)}</p>
         </div>
 
-        {!soloMaquila && tieneInformeClinica && (
+        {!soloAdjunto && filas.length > 0 && (
           <>
         {/* Tabla para tablet/escritorio */}
         <div className="hidden md:block overflow-x-auto">

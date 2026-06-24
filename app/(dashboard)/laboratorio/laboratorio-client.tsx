@@ -869,7 +869,7 @@ export default function LaboratorioClient({
     const upd: Record<string, unknown> = {
       estado_lab: estado,
       resultado_externo: true,
-      resultado_resumen: 'Resultado adjunto (Masterlab)',
+      resultado_resumen: 'Ver archivo adjunto',
       updated_at: new Date().toISOString(),
     }
     if (modo === 'validar') upd.validado_at = new Date().toISOString()

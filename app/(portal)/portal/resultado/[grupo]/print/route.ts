@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSesionPortal } from '@/lib/portal/session'
 import { cargarPortalPaciente, filasDeGrupo } from '@/lib/portal/data'
-import { htmlInformeResultadosLab } from '@/lib/lab-print'
+import { htmlInformeResultadosLab, filaTieneValorClinica } from '@/lib/lab-print'
 import { parseLabEncabezadoInforme } from '@/lib/lab-plantilla-assets'
 import { calcularEdad } from '@/lib/lab-utils'
 
@@ -25,7 +25,7 @@ export async function GET(
   if (!res) return new NextResponse('Resultado no encontrado', { status: 404 })
 
   const { grupo, filas } = res
-  const tieneValores = filas.some(f => f.valor && f.valor !== '—' && f.valor.trim().length > 0)
+  const tieneValores = filas.some(filaTieneValorClinica)
   if (!tieneValores) return new NextResponse('Sin resultados de laboratorio para descargar', { status: 404 })
   const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
   const origin = new URL(request.url).origin
