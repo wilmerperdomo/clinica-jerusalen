@@ -220,7 +220,15 @@ export default function ConsultaDocumentosPanel({
       await cargar()
       return data as DocRegistro
     } catch (e) {
-      alert('Error al registrar documento: ' + (e instanceof Error ? e.message : 'desconocido'))
+      const err = e as { message?: string; details?: string; hint?: string; code?: string }
+      const detalle = err?.message || err?.details || err?.hint || (typeof e === 'string' ? e : JSON.stringify(e))
+      const esTipoNoPermitido = /tipo_check|check constraint/i.test(detalle)
+      alert(
+        'Error al registrar documento: ' + detalle +
+        (esTipoNoPermitido
+          ? '\n\nLa base de datos aún no acepta este tipo de documento. Aplique la migración 070_referencia_medica.sql en Supabase.'
+          : ''),
+      )
       return null
     } finally {
       setGuardando(false)
