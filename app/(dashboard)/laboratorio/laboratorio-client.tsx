@@ -133,7 +133,8 @@ export default function LaboratorioClient({
   useEffect(() => { setPanelCamposState(initPanelCampos) }, [initPanelCampos])
   useEffect(() => {
     const saved = localStorage.getItem(LAB_ENCABEZADO_STORAGE_KEY)
-    if (saved === 'clinica' || saved === 'maquila') setEncabezadoInforme(saved)
+    if (saved === 'clinica') setEncabezadoInforme('clinica')
+    else if (saved === 'masterlab' || saved === 'maquila') setEncabezadoInforme('masterlab')
   }, [])
   useEffect(() => {
     localStorage.setItem(LAB_ENCABEZADO_STORAGE_KEY, encabezadoInforme)
@@ -868,7 +869,7 @@ export default function LaboratorioClient({
     const upd: Record<string, unknown> = {
       estado_lab: estado,
       resultado_externo: true,
-      resultado_resumen: 'Resultado adjunto (maquila)',
+      resultado_resumen: 'Resultado adjunto (Masterlab)',
       updated_at: new Date().toISOString(),
     }
     if (modo === 'validar') upd.validado_at = new Date().toISOString()
@@ -1016,7 +1017,22 @@ export default function LaboratorioClient({
     startTransition(() => { recargar() })
   }
 
-  function imprimirGrupo(grupo: GrupoLab, encabezado: LabEncabezadoInforme = encabezadoInforme) {
+  async function imprimirGrupo(grupo: GrupoLab, encabezado: LabEncabezadoInforme = encabezadoInforme) {
+    if (encabezado === 'masterlab') {
+      const { data } = await supabase
+        .from('lab_archivos')
+        .select('id')
+        .eq('lab_grupo_id', grupo.grupoId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      const archivoId = data?.[0]?.id
+      if (archivoId) {
+        window.open(`/api/lab/archivo/${archivoId}?encabezado=masterlab`, '_blank')
+        return
+      }
+      alert('No hay PDF de Masterlab subido para esta orden. Suba el archivo en Resultados o elija informe Clínica Jerusalén.')
+    }
+
     const filas = filasPrintDesdeGrupo(grupo, pruebasCatalogo, panelCamposMap)
     const pac = pacientesMerged.find(p => p.id === grupo.pacienteId)
     const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
@@ -1289,37 +1305,41 @@ export default function LaboratorioClient({
 
           <div className="p-4">
             {tab !== 'reportes' && (
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                    placeholder="Buscar paciente, prueba, código…"
-                    className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" />
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <label htmlFor="lab-encabezado" className="text-xs font-semibold text-gray-600 whitespace-nowrap">
-                    Encabezado informe:
-                  </label>
-                  <select
-                    id="lab-encabezado"
-                    value={encabezadoInforme}
-                    onChange={e => setEncabezadoInforme(e.target.value as LabEncabezadoInforme)}
-                    className="border rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  >
-                    <option value="clinica">{LAB_ENCABEZADO_LABELS.clinica}</option>
-                    <option value="maquila">{LAB_ENCABEZADO_LABELS.maquila}</option>
-                  </select>
-                </div>
+              <div className="relative mb-4 max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                  placeholder="Buscar paciente, prueba, código…"
+                  className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" />
               </div>
             )}
 
             {tab === 'cola' && (
-              <LabKanban
-                grupos={gruposBusqueda}
-                onAbrirGrupo={abrirGrupo}
-                onEtiquetas={g => imprimirEtiquetasTubo(g, pruebasCatalogo)}
-                onMoverGrupo={moverGrupo}
-              />
+              <>
+                <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-50 border rounded-lg">
+                  <label htmlFor="lab-encabezado-cola" className="text-xs font-semibold text-gray-700">
+                    Tipo de informe:
+                  </label>
+                  <select
+                    id="lab-encabezado-cola"
+                    value={encabezadoInforme}
+                    onChange={e => setEncabezadoInforme(e.target.value as LabEncabezadoInforme)}
+                    className="border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="clinica">{LAB_ENCABEZADO_LABELS.clinica}</option>
+                    <option value="masterlab">{LAB_ENCABEZADO_LABELS.masterlab}</option>
+                  </select>
+                  <span className="text-xs text-gray-500">
+                    Clínica = encabezado Jerusalén + sello Masterlab · Masterlab = PDF subido con plantilla Masterlab
+                  </span>
+                </div>
+                <LabKanban
+                  grupos={gruposBusqueda}
+                  onAbrirGrupo={abrirGrupo}
+                  onEtiquetas={g => imprimirEtiquetasTubo(g, pruebasCatalogo)}
+                  onImprimir={g => imprimirGrupo(g)}
+                  onMoverGrupo={moverGrupo}
+                />
+              </>
             )}
 
             {tab === 'ordenes' && (
@@ -2126,11 +2146,11 @@ export default function LaboratorioClient({
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
                 <div>
                   <h4 className="text-sm font-bold text-teal-900 flex items-center gap-2">
-                    <Upload className="w-4 h-4" /> Resultado externo (maquila)
+                    <Upload className="w-4 h-4" /> Resultado externo (Masterlab)
                   </h4>
                   <p className="text-xs text-teal-800/80 mt-0.5">
-                    Suba el PDF del laboratorio referido. Al descargar use el encabezado seleccionado arriba
-                    (clínica = PDF original · maquila = con plantilla del laboratorio referido).
+                    Suba el PDF de Masterlab. Al imprimir con tipo Masterlab se abre ese PDF con la plantilla;
+                    el informe de clínica usa encabezado Jerusalén con el mismo sello y firma.
                   </p>
                 </div>
                 <div className="shrink-0">

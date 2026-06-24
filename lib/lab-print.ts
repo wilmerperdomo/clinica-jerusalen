@@ -29,7 +29,7 @@ export interface InformeLabMeta {
   medicoNombre?: string
   urgente?: boolean
   observaciones?: string
-  /** Encabezado del informe: clínica propia o laboratorio maquila */
+  /** Encabezado del informe: clínica propia o Masterlab */
   encabezado?: LabEncabezadoInforme
 }
 
@@ -207,7 +207,7 @@ export function htmlInformeResultadosLab(
         <tbody>${cuerpo.join('')}</tbody>
       </table>
 
-      ${labPieInformeHtml(encabezado, origin, meta.validadoPor)}
+      ${labPieInformeHtml(origin, meta.validadoPor)}
 
       ${portalBox}
 

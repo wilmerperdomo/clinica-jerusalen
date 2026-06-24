@@ -65,7 +65,7 @@ export function htmlResultadoLaboratorio(data: ResultadoLabPrint, origin = ''): 
       <p class="valor ${data.anormal ? 'anormal' : ''}">${escapeHtml(data.valor_resultado ?? '—')}${data.unidad ? ` ${escapeHtml(data.unidad)}` : ''}</p>
       ${data.rango_texto ? `<p class="rango"><b>Rango de referencia:</b> ${escapeHtml(data.rango_texto)}</p>` : ''}
       ${data.observacion ? `<p class="obs"><b>Observación:</b> ${escapeHtml(data.observacion)}</p>` : ''}
-      ${labPieInformeHtml(encabezado, origin, data.validadoPor)}
+      ${labPieInformeHtml(origin, data.validadoPor)}
     </div>
     </body></html>`
 }

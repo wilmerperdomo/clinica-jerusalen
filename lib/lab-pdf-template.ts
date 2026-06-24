@@ -26,7 +26,7 @@ async function cargarPlantillaBytes(): Promise<Uint8Array | null> {
  */
 export async function combinarPdfMaquilaConPlantilla(
   externoBytes: Uint8Array,
-  encabezado: LabEncabezadoInforme = 'maquila',
+  encabezado: LabEncabezadoInforme = 'masterlab',
 ): Promise<Uint8Array> {
   if (encabezado === 'clinica') return externoBytes
 
@@ -65,7 +65,7 @@ export async function combinarPdfMaquilaConPlantilla(
 export async function prepararDescargaResultado(
   bytes: Uint8Array,
   mimeType: string | null | undefined,
-  encabezado: LabEncabezadoInforme = 'maquila',
+  encabezado: LabEncabezadoInforme = 'masterlab',
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
   const mime = (mimeType ?? '').toLowerCase()
   if (mime.includes('pdf') || bytes[0] === 0x25 && bytes[1] === 0x50) {

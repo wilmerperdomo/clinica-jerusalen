@@ -20,7 +20,7 @@ export async function descargarBytesArchivoLab(archivo: LabArchivo): Promise<Uin
 export async function respuestaHttpArchivoLab(
   archivo: LabArchivo,
   nombreDescarga?: string,
-  encabezado: LabEncabezadoInforme = 'maquila',
+  encabezado: LabEncabezadoInforme = 'masterlab',
 ) {
   const raw = await descargarBytesArchivoLab(archivo)
   if (!raw) return null

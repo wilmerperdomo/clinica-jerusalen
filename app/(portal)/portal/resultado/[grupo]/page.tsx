@@ -1,6 +1,6 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Download, ShieldCheck, FileText } from 'lucide-react'
+import { ArrowLeft, ShieldCheck, FileText } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { getSesionPortal } from '@/lib/portal/session'
 import { cargarPortalPaciente, filasDeGrupo, archivosDeGrupo } from '@/lib/portal/data'
@@ -49,7 +49,7 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           {archivos.map(a => (
             <a
               key={a.id}
-              href={`/portal/resultado/${encodeURIComponent(grupoId)}/archivo/${a.id}?encabezado=maquila`}
+              href={`/portal/resultado/${encodeURIComponent(grupoId)}/archivo/${a.id}`}
               target="_blank"
               rel="noopener"
               className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
@@ -58,28 +58,6 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
               <FileText className="w-4 h-4" /> {a.nombre_archivo}
             </a>
           ))}
-          {!soloMaquila && filas.length > 0 && (
-            <>
-              <a
-                href={`/portal/resultado/${encodeURIComponent(grupoId)}/print?encabezado=clinica`}
-                target="_blank"
-                rel="noopener"
-                className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
-                style={{ backgroundColor: '#0891b2' }}
-              >
-                <Download className="w-4 h-4" /> Informe clínica
-              </a>
-              <a
-                href={`/portal/resultado/${encodeURIComponent(grupoId)}/print?encabezado=maquila`}
-                target="_blank"
-                rel="noopener"
-                className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
-                style={{ backgroundColor: '#0d9488' }}
-              >
-                <Download className="w-4 h-4" /> Informe maquila
-              </a>
-            </>
-          )}
         </div>
       </div>
 

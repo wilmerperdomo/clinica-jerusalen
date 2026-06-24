@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, FlaskConical, Tag } from 'lucide-react'
+import { AlertTriangle, FlaskConical, Printer, Tag } from 'lucide-react'
 import {
   KANBAN_COLUMNAS_LAB,
   etiquetaEstadoLab,
@@ -13,10 +13,11 @@ interface Props {
   grupos: GrupoLab[]
   onAbrirGrupo: (g: GrupoLab) => void
   onEtiquetas: (g: GrupoLab) => void
+  onImprimir?: (g: GrupoLab) => void
   onMoverGrupo: (g: GrupoLab, nuevoEstado: EstadoLab) => void
 }
 
-export default function LabKanban({ grupos, onAbrirGrupo, onEtiquetas, onMoverGrupo }: Props) {
+export default function LabKanban({ grupos, onAbrirGrupo, onEtiquetas, onImprimir, onMoverGrupo }: Props) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-2 min-h-[420px]">
       {KANBAN_COLUMNAS_LAB.map(col => {
@@ -90,6 +91,16 @@ export default function LabKanban({ grupos, onAbrirGrupo, onEtiquetas, onMoverGr
                       >
                         <FlaskConical className="w-3 h-3 inline mr-0.5" />
                         {g.estado === 'ENTREGADO' ? 'Ver' : 'Resultados'}
+                      </button>
+                    )}
+                    {g.tieneResultados && onImprimir && (
+                      <button
+                        type="button"
+                        onClick={() => onImprimir(g)}
+                        className="px-2 py-1 rounded text-[10px] bg-gray-100 hover:bg-gray-200"
+                        title="Imprimir informe"
+                      >
+                        <Printer className="w-3 h-3" />
                       </button>
                     )}
                     {g.estado !== 'PENDIENTE_COBRO' && (
