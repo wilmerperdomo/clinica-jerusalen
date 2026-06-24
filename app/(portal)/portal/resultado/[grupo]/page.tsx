@@ -85,15 +85,7 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           <p><span className="text-gray-500">Fecha resultado:</span> {fmtFecha(fechaResultado ?? undefined)}</p>
         </div>
 
-        {soloMaquila ? (
-          <div className="px-5 py-8 text-center text-sm text-gray-600">
-            <FileText className="w-10 h-10 mx-auto mb-3 text-teal-600 opacity-80" />
-            <p className="font-medium text-gray-800">Resultado adjunto del laboratorio</p>
-            <p className="text-xs text-gray-500 mt-2 max-w-sm mx-auto">
-              Use el botón de arriba para abrir o descargar el informe PDF con el encabezado de la clínica.
-            </p>
-          </div>
-        ) : (
+        {!soloMaquila && (
           <>
         {/* Tabla para tablet/escritorio */}
         <div className="hidden md:block overflow-x-auto">
