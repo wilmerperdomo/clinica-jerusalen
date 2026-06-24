@@ -1,9 +1,9 @@
-import { BRAND, FISCAL } from '@/lib/brand'
-import { logoTicketHtml } from '@/lib/brand-logo'
+import { BRAND } from '@/lib/brand'
 import {
-  labEncabezadoPlantillaHtml,
-  labFirmaSelloPlantillaHtml,
+  labEncabezadoInformeHtml,
+  labPieInformeHtml,
   labPlantillaInformeStyles,
+  type LabEncabezadoInforme,
 } from '@/lib/lab-plantilla-assets'
 import { indicadorDesdeRango, type GrupoLab, type PruebaLab, type IndicadorRango } from '@/lib/lab-utils'
 import { linkWhatsAppResultado } from '@/lib/lab-resultado-print'
@@ -29,6 +29,8 @@ export interface InformeLabMeta {
   medicoNombre?: string
   urgente?: boolean
   observaciones?: string
+  /** Encabezado del informe: clínica propia o laboratorio maquila */
+  encabezado?: LabEncabezadoInforme
 }
 
 function escapeHtml(s: string): string {
@@ -177,25 +179,14 @@ export function htmlInformeResultadosLab(
     ? `<div class="portal">Consulte sus resultados en línea: <b>${escapeHtml(meta.portalUrl)}</b> &nbsp;·&nbsp; Usuario: su número de identidad</div>`
     : ''
 
+  const encabezado = meta.encabezado ?? 'clinica'
+
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Resultados — ${escapeHtml(grupo.pacienteNombre)}</title>
     <style>${informeStyles()}</style></head><body>
     <div class="page">
-      ${labEncabezadoPlantillaHtml(origin)}
-      <div class="hdr">
-        <div class="brand">
-          <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
-          <div>
-            <div class="name">${escapeHtml(BRAND.nombre)}</div>
-            <div class="tag">Laboratorio Clínico${meta.sucursalNombre ? ' · ' + escapeHtml(meta.sucursalNombre) : ''}</div>
-          </div>
-        </div>
-        <div class="meta">
-          Tel: ${escapeHtml(FISCAL.telefonos)}<br>
-          RTN: ${escapeHtml(FISCAL.rtn)}
-        </div>
-      </div>
+      ${labEncabezadoInformeHtml(encabezado, origin, { sucursalNombre: meta.sucursalNombre })}
 
       <div class="title">Informe de Resultados de Laboratorio${meta.urgente ? ' <span class="urg">URGENTE</span>' : ''}</div>
 
@@ -216,10 +207,7 @@ export function htmlInformeResultadosLab(
         <tbody>${cuerpo.join('')}</tbody>
       </table>
 
-      <div class="firma-block">
-        ${labFirmaSelloPlantillaHtml(origin)}
-        ${meta.validadoPor ? `<div class="validado-por">Validado por: <b>${escapeHtml(meta.validadoPor)}</b></div>` : ''}
-      </div>
+      ${labPieInformeHtml(encabezado, origin, meta.validadoPor)}
 
       ${portalBox}
 

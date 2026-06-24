@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSesionPortal } from '@/lib/portal/session'
 import { obtenerArchivoLab, respuestaHttpArchivoLab } from '@/lib/lab-archivos-server'
+import { parseLabEncabezadoInforme } from '@/lib/lab-plantilla-assets'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ grupo: string; id: string }> },
 ) {
   const sesion = await getSesionPortal()
   if (!sesion) {
-    return NextResponse.redirect(new URL('/portal/login', _request.url))
+    return NextResponse.redirect(new URL('/portal/login', request.url))
   }
 
   const { id } = await params
@@ -22,7 +23,8 @@ export async function GET(
     return new NextResponse('No autorizado', { status: 403 })
   }
 
-  const res = await respuestaHttpArchivoLab(archivo)
+  const encabezado = parseLabEncabezadoInforme(request.nextUrl.searchParams.get('encabezado'))
+  const res = await respuestaHttpArchivoLab(archivo, undefined, encabezado)
   if (!res) return new NextResponse('Archivo no disponible', { status: 404 })
   return res
 }

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { PDFDocument } from 'pdf-lib'
-
+import type { LabEncabezadoInforme } from '@/lib/lab-plantilla-assets'
 export const LAB_BUCKET = 'lab-resultados'
 export const PLANTILLA_REL = '/lab/plantilla-informe.pdf'
 
@@ -24,7 +24,12 @@ async function cargarPlantillaBytes(): Promise<Uint8Array | null> {
  * - Todas las páginas del PDF externo (conserva firma/sello del laboratorio referido)
  * - Página 2 de la plantilla = pie con firma y sello de la clínica (si existe)
  */
-export async function combinarPdfMaquilaConPlantilla(externoBytes: Uint8Array): Promise<Uint8Array> {
+export async function combinarPdfMaquilaConPlantilla(
+  externoBytes: Uint8Array,
+  encabezado: LabEncabezadoInforme = 'maquila',
+): Promise<Uint8Array> {
+  if (encabezado === 'clinica') return externoBytes
+
   const plantillaBytes = await cargarPlantillaBytes()
   if (!plantillaBytes) return externoBytes
 
@@ -60,10 +65,11 @@ export async function combinarPdfMaquilaConPlantilla(externoBytes: Uint8Array): 
 export async function prepararDescargaResultado(
   bytes: Uint8Array,
   mimeType: string | null | undefined,
+  encabezado: LabEncabezadoInforme = 'maquila',
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
   const mime = (mimeType ?? '').toLowerCase()
   if (mime.includes('pdf') || bytes[0] === 0x25 && bytes[1] === 0x50) {
-    const merged = await combinarPdfMaquilaConPlantilla(bytes)
+    const merged = await combinarPdfMaquilaConPlantilla(bytes, encabezado)
     return { bytes: merged, contentType: 'application/pdf' }
   }
   return { bytes, contentType: mime || 'application/octet-stream' }

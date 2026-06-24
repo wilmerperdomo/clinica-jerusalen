@@ -49,7 +49,7 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           {archivos.map(a => (
             <a
               key={a.id}
-              href={`/portal/resultado/${encodeURIComponent(grupoId)}/archivo/${a.id}`}
+              href={`/portal/resultado/${encodeURIComponent(grupoId)}/archivo/${a.id}?encabezado=maquila`}
               target="_blank"
               rel="noopener"
               className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
@@ -59,15 +59,26 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
             </a>
           ))}
           {!soloMaquila && filas.length > 0 && (
-            <a
-              href={`/portal/resultado/${encodeURIComponent(grupoId)}/print`}
-              target="_blank"
-              rel="noopener"
-              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
-              style={{ backgroundColor: '#0891b2' }}
-            >
-              <Download className="w-4 h-4" /> Informe del sistema
-            </a>
+            <>
+              <a
+                href={`/portal/resultado/${encodeURIComponent(grupoId)}/print?encabezado=clinica`}
+                target="_blank"
+                rel="noopener"
+                className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
+                style={{ backgroundColor: '#0891b2' }}
+              >
+                <Download className="w-4 h-4" /> Informe clínica
+              </a>
+              <a
+                href={`/portal/resultado/${encodeURIComponent(grupoId)}/print?encabezado=maquila`}
+                target="_blank"
+                rel="noopener"
+                className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
+                style={{ backgroundColor: '#0d9488' }}
+              >
+                <Download className="w-4 h-4" /> Informe maquila
+              </a>
+            </>
           )}
         </div>
       </div>

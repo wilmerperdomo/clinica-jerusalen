@@ -1,7 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { prepararDescargaResultado } from '@/lib/lab-pdf-template'
+import type { LabEncabezadoInforme } from '@/lib/lab-plantilla-assets'
 import type { LabArchivo } from '@/lib/lab-archivos'
-
 export async function obtenerArchivoLab(id: number): Promise<LabArchivo | null> {
   const admin = createAdminClient()
   if (!admin) return null
@@ -17,10 +17,14 @@ export async function descargarBytesArchivoLab(archivo: LabArchivo): Promise<Uin
   return new Uint8Array(await data.arrayBuffer())
 }
 
-export async function respuestaHttpArchivoLab(archivo: LabArchivo, nombreDescarga?: string) {
+export async function respuestaHttpArchivoLab(
+  archivo: LabArchivo,
+  nombreDescarga?: string,
+  encabezado: LabEncabezadoInforme = 'maquila',
+) {
   const raw = await descargarBytesArchivoLab(archivo)
   if (!raw) return null
-  const { bytes, contentType } = await prepararDescargaResultado(raw, archivo.mime_type)
+  const { bytes, contentType } = await prepararDescargaResultado(raw, archivo.mime_type, encabezado)
   const nombre = nombreDescarga ?? archivo.nombre_archivo ?? 'resultado-laboratorio.pdf'
   return new Response(bytes, {
     headers: {

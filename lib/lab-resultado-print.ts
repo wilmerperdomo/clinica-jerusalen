@@ -1,9 +1,8 @@
-import { BRAND, FISCAL } from '@/lib/brand'
-import { logoTicketHtml } from '@/lib/brand-logo'
 import {
-  labEncabezadoPlantillaHtml,
-  labFirmaSelloPlantillaHtml,
+  labEncabezadoInformeHtml,
+  labPieInformeHtml,
   labPlantillaInformeStyles,
+  type LabEncabezadoInforme,
 } from '@/lib/lab-plantilla-assets'
 
 export interface ResultadoLabPrint {
@@ -17,6 +16,7 @@ export interface ResultadoLabPrint {
   observacion?: string
   anormal?: boolean
   validadoPor?: string
+  encabezado?: LabEncabezadoInforme
   baseUrl?: string
 }
 
@@ -49,21 +49,12 @@ function resultadoStyles(): string {
 }
 
 export function htmlResultadoLaboratorio(data: ResultadoLabPrint, origin = ''): string {
+  const encabezado = data.encabezado ?? 'clinica'
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
     <title>Resultado — ${escapeHtml(data.prueba_nombre)}</title>
     <style>${resultadoStyles()}</style></head><body>
     <div class="page">
-      ${labEncabezadoPlantillaHtml(origin)}
-      <div class="hdr">
-        <div class="brand">
-          <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
-          <div>
-            <div class="name">${escapeHtml(BRAND.nombre)}</div>
-            <div class="tag">Laboratorio Clínico</div>
-          </div>
-        </div>
-        <div class="meta">Tel: ${escapeHtml(FISCAL.telefonos)}<br>RTN: ${escapeHtml(FISCAL.rtn)}</div>
-      </div>
+      ${labEncabezadoInformeHtml(encabezado, origin)}
       <div class="title">Resultado de Laboratorio</div>
       <table class="info">
         <tr><td>Paciente</td><td>${escapeHtml(data.paciente_nombre)}</td></tr>
@@ -74,10 +65,7 @@ export function htmlResultadoLaboratorio(data: ResultadoLabPrint, origin = ''): 
       <p class="valor ${data.anormal ? 'anormal' : ''}">${escapeHtml(data.valor_resultado ?? '—')}${data.unidad ? ` ${escapeHtml(data.unidad)}` : ''}</p>
       ${data.rango_texto ? `<p class="rango"><b>Rango de referencia:</b> ${escapeHtml(data.rango_texto)}</p>` : ''}
       ${data.observacion ? `<p class="obs"><b>Observación:</b> ${escapeHtml(data.observacion)}</p>` : ''}
-      <div class="firma-block">
-        ${labFirmaSelloPlantillaHtml(origin)}
-        ${data.validadoPor ? `<div class="validado-por">Validado por: <b>${escapeHtml(data.validadoPor)}</b></div>` : ''}
-      </div>
+      ${labPieInformeHtml(encabezado, origin, data.validadoPor)}
     </div>
     </body></html>`
 }

@@ -1,6 +1,6 @@
 /**
  * Extrae del PDF plantilla-informe.pdf las imágenes de encabezado y firma/sello.
- * Ejecutar: node scripts/extract-lab-plantilla.mjs
+ * Ejecutar: npm run extract:lab-plantilla
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -14,10 +14,14 @@ const outDir = path.join(root, 'public', 'lab')
 const pdfPath = path.join(outDir, 'plantilla-informe.pdf')
 
 const SCALE = 2
-/** Porción superior de la página 1 = solo logo y datos del laboratorio */
+const SEAL_SCALE = 3
+/** Solo logo y datos del laboratorio referido (sin paciente) */
 const HEADER_RATIO = 0.12
-/** Porción inferior de la página 2 = firma y sello */
-const FOOTER_RATIO = 0.42
+/** Zona superior derecha pág. 2: sello + firma (sin QR ni número de página) */
+const SEAL_Y_RATIO = 0
+const SEAL_H_RATIO = 0.24
+const SEAL_X_RATIO = 0.32
+const SEAL_W_RATIO = 0.66
 
 class NodeCanvasFactory {
   create(width, height) {
@@ -41,9 +45,9 @@ class NodeCanvasFactory {
 
 const canvasFactory = new NodeCanvasFactory()
 
-async function renderPage(pdf, pageNum) {
+async function renderPage(pdf, pageNum, scale = SCALE) {
   const page = await pdf.getPage(pageNum)
-  const viewport = page.getViewport({ scale: SCALE })
+  const viewport = page.getViewport({ scale })
   const canvasAndContext = canvasFactory.create(viewport.width, viewport.height)
   await page.render({
     canvasContext: canvasAndContext.context,
@@ -77,20 +81,15 @@ async function main() {
   fs.writeFileSync(path.join(outDir, 'plantilla-encabezado.png'), header.toBuffer('image/png'))
   console.log('OK plantilla-encabezado.png', header.width, 'x', headerH)
 
-  if (pages >= 2) {
-    const p2 = await renderPage(pdf, 2)
-    const footerH = Math.round(p2.height * FOOTER_RATIO)
-    const footerY = p2.height - footerH
-    const footer = cropCanvas(p2, 0, footerY, p2.width, footerH)
-    fs.writeFileSync(path.join(outDir, 'plantilla-firma-sello.png'), footer.toBuffer('image/png'))
-    console.log('OK plantilla-firma-sello.png', p2.width, 'x', footerH)
-  } else {
-    const footerH = Math.round(p1.height * FOOTER_RATIO)
-    const footerY = p1.height - footerH
-    const footer = cropCanvas(p1, 0, footerY, p1.width, footerH)
-    fs.writeFileSync(path.join(outDir, 'plantilla-firma-sello.png'), footer.toBuffer('image/png'))
-    console.log('OK plantilla-firma-sello.png (desde pág. 1)', p1.width, 'x', footerH)
-  }
+  const pageSeal = pages >= 2 ? 2 : 1
+  const pSeal = await renderPage(pdf, pageSeal, SEAL_SCALE)
+  const sealX = Math.round(pSeal.width * SEAL_X_RATIO)
+  const sealY = Math.round(pSeal.height * SEAL_Y_RATIO)
+  const sealW = Math.round(pSeal.width * SEAL_W_RATIO)
+  const sealH = Math.round(pSeal.height * SEAL_H_RATIO)
+  const seal = cropCanvas(pSeal, sealX, sealY, sealW, sealH)
+  fs.writeFileSync(path.join(outDir, 'plantilla-firma-sello.png'), seal.toBuffer('image/png'))
+  console.log('OK plantilla-firma-sello.png', seal.width, 'x', seal.height)
 }
 
 main().catch(err => {

@@ -31,6 +31,11 @@ import {
 import {
   LAB_RESULTADOS_BUCKET, aceptaArchivoResultadoLab, type LabArchivo,
 } from '@/lib/lab-archivos'
+import {
+  LAB_ENCABEZADO_LABELS,
+  LAB_ENCABEZADO_STORAGE_KEY,
+  type LabEncabezadoInforme,
+} from '@/lib/lab-plantilla-assets'
 import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
 import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
 import { normalizarCodigoPaciente, edadPaciente } from '@/lib/paciente-utils'
@@ -87,6 +92,7 @@ export default function LaboratorioClient({
 }: Props) {
   const [tab, setTab] = useState<TabLab>('cola')
   const [filtroLab, setFiltroLab] = useState<FiltroLab>('procesar')
+  const [encabezadoInforme, setEncabezadoInforme] = useState<LabEncabezadoInforme>('clinica')
   const [ordenes, setOrdenes] = useState<OrdenLab[]>(init)
   const [busqueda, setBusqueda] = useState('')
   const [isPending, startTransition] = useTransition()
@@ -125,6 +131,13 @@ export default function LaboratorioClient({
   const [panelCamposState, setPanelCamposState] = useState<LabPanelCampo[]>(initPanelCampos)
   useEffect(() => { setRangosState(rangos) }, [rangos])
   useEffect(() => { setPanelCamposState(initPanelCampos) }, [initPanelCampos])
+  useEffect(() => {
+    const saved = localStorage.getItem(LAB_ENCABEZADO_STORAGE_KEY)
+    if (saved === 'clinica' || saved === 'maquila') setEncabezadoInforme(saved)
+  }, [])
+  useEffect(() => {
+    localStorage.setItem(LAB_ENCABEZADO_STORAGE_KEY, encabezadoInforme)
+  }, [encabezadoInforme])
 
   // Configuración de prueba (rangos de referencia + campos de panel)
   const [modalConfig, setModalConfig] = useState(false)
@@ -843,8 +856,8 @@ export default function LaboratorioClient({
     if (grupoActual) await cargarArchivosGrupo(grupoActual.grupoId)
   }
 
-  function abrirArchivoMaquila(archivo: LabArchivo) {
-    window.open(`/api/lab/archivo/${archivo.id}`, '_blank')
+  function abrirArchivoMaquila(archivo: LabArchivo, encabezado: LabEncabezadoInforme = encabezadoInforme) {
+    window.open(`/api/lab/archivo/${archivo.id}?encabezado=${encabezado}`, '_blank')
   }
 
   async function persistirResultadosMaquila(modo: 'borrador' | 'validar' | 'entregar') {
@@ -1003,7 +1016,7 @@ export default function LaboratorioClient({
     startTransition(() => { recargar() })
   }
 
-  function imprimirGrupo(grupo: GrupoLab) {
+  function imprimirGrupo(grupo: GrupoLab, encabezado: LabEncabezadoInforme = encabezadoInforme) {
     const filas = filasPrintDesdeGrupo(grupo, pruebasCatalogo, panelCamposMap)
     const pac = pacientesMerged.find(p => p.id === grupo.pacienteId)
     const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
@@ -1015,6 +1028,7 @@ export default function LaboratorioClient({
       medicoNombre: grupo.medicoNombre,
       urgente: grupo.urgente,
       observaciones: grupo.observaciones,
+      encabezado,
     })
   }
 
@@ -1275,11 +1289,27 @@ export default function LaboratorioClient({
 
           <div className="p-4">
             {tab !== 'reportes' && (
-              <div className="relative mb-4 max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                  placeholder="Buscar paciente, prueba, código…"
-                  className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" />
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                    placeholder="Buscar paciente, prueba, código…"
+                    className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" />
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label htmlFor="lab-encabezado" className="text-xs font-semibold text-gray-600 whitespace-nowrap">
+                    Encabezado informe:
+                  </label>
+                  <select
+                    id="lab-encabezado"
+                    value={encabezadoInforme}
+                    onChange={e => setEncabezadoInforme(e.target.value as LabEncabezadoInforme)}
+                    className="border rounded-lg px-2 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="clinica">{LAB_ENCABEZADO_LABELS.clinica}</option>
+                    <option value="maquila">{LAB_ENCABEZADO_LABELS.maquila}</option>
+                  </select>
+                </div>
               </div>
             )}
 
@@ -1363,7 +1393,8 @@ export default function LaboratorioClient({
                         {g.tieneResultados && (
                           <>
                             <button type="button" onClick={() => imprimirGrupo(g)}
-                              className="p-1.5 rounded bg-gray-100 hover:bg-gray-200" title="Imprimir / PDF">
+                              className="p-1.5 rounded bg-gray-100 hover:bg-gray-200"
+                              title={`Imprimir informe (${LAB_ENCABEZADO_LABELS[encabezadoInforme]})`}>
                               <Printer className="w-3.5 h-3.5" />
                             </button>
                             {(g.estado === 'VALIDADO' || g.estado === 'ENTREGADO') && (
@@ -2098,7 +2129,8 @@ export default function LaboratorioClient({
                     <Upload className="w-4 h-4" /> Resultado externo (maquila)
                   </h4>
                   <p className="text-xs text-teal-800/80 mt-0.5">
-                    Suba el PDF del laboratorio referido. Al descargar se agrega el encabezado y firma de la clínica.
+                    Suba el PDF del laboratorio referido. Al descargar use el encabezado seleccionado arriba
+                    (clínica = PDF original · maquila = con plantilla del laboratorio referido).
                   </p>
                 </div>
                 <div className="shrink-0">
