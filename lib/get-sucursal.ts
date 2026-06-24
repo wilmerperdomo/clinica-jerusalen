@@ -14,7 +14,7 @@ export interface PerfilSucursal {
 }
 
 const MODULOS_SUPER_ADMIN_FALLBACK = [
-  'dashboard', 'agenda', 'notificaciones', 'consultas', 'pacientes', 'laboratorio', 'expediente',
+  'dashboard', 'agenda', 'notificaciones', 'consultas', 'documentos', 'pacientes', 'laboratorio', 'expediente',
   'ventas', 'compras', 'cxp', 'proveedores', 'inventario', 'productos',
   'membresias', 'cotizaciones', 'facturacion', 'reportes', 'planilla', 'control-financiero',
   'usuarios', 'configuracion',

@@ -27,6 +27,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/agenda',         label: 'Agenda',            icon: CalendarDays },
       { href: '/notificaciones', label: 'Notificaciones',    icon: Bell         },
       { href: '/consultas',      label: 'Consultas Médicas', icon: Stethoscope  },
+      { href: '/documentos',     label: 'Documentos Médicos', icon: FileText    },
       { href: '/pacientes',   label: 'Pacientes',         icon: Users        },
       { href: '/colonias',    label: 'Catálogo Colonias', icon: MapPin       },
       { href: '/laboratorio', label: 'Laboratorio',       icon: FlaskConical },
