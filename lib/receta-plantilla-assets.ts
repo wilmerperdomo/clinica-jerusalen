@@ -31,24 +31,35 @@ function escapeHtml(s: string): string {
 }
 
 function caduceoWatermarkSvg(): string {
-  return `<svg class="wm-svg" viewBox="0 0 120 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <g fill="none" stroke="${BRAND.navy}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.08">
+  const c = BRAND.navy
+  return `<svg class="wm-svg" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g opacity="0.1">
       <!-- vara central -->
-      <line x1="60" y1="20" x2="60" y2="116"/>
+      <line x1="100" y1="44" x2="100" y2="244" stroke="${c}" stroke-width="3.4" stroke-linecap="round"/>
       <!-- esfera superior -->
-      <circle cx="60" cy="16" r="5" fill="${BRAND.navy}" fill-opacity="0.06"/>
-      <!-- alas -->
-      <path d="M58 30 C46 22 32 22 18 30 C30 30 40 33 50 40 C53 36 55 33 58 32 Z" fill="${BRAND.navy}" fill-opacity="0.05"/>
-      <path d="M62 30 C74 22 88 22 102 30 C90 30 80 33 70 40 C67 36 65 33 62 32 Z" fill="${BRAND.navy}" fill-opacity="0.05"/>
-      <path d="M58 38 C48 33 36 33 24 39 C35 39 44 42 52 47"/>
-      <path d="M62 38 C72 33 84 33 96 39 C85 39 76 42 68 47"/>
-      <!-- serpiente izquierda entrelazada -->
-      <path d="M60 34 C44 40 44 52 60 58 C76 64 76 76 60 82 C44 88 44 100 60 106"/>
-      <!-- serpiente derecha entrelazada -->
-      <path d="M60 34 C76 40 76 52 60 58 C44 64 44 76 60 82 C76 88 76 100 60 106"/>
+      <circle cx="100" cy="40" r="6.5" fill="${c}"/>
+
+      <!-- alas heráldicas con plumas, abiertas hacia arriba -->
+      <g fill="${c}" fill-opacity="0.5">
+        <path d="M98 76 C78 56 56 46 40 50 C44 56 47 60 50 66 C52 62 55 61 58 64 C61 70 64 74 67 80 C70 75 73 74 76 76 C80 80 84 82 88 84 C91 80 95 78 98 76 Z"/>
+        <path d="M102 76 C122 56 144 46 160 50 C156 56 153 60 150 66 C148 62 145 61 142 64 C139 70 136 74 133 80 C130 75 127 74 124 76 C120 80 116 82 112 84 C109 80 105 78 102 76 Z"/>
+      </g>
+      <!-- separación de plumas -->
+      <g stroke="#ffffff" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.5">
+        <path d="M94 73 C76 58 58 52 44 55"/>
+        <path d="M90 75 C74 64 62 62 54 66"/>
+        <path d="M106 73 C124 58 142 52 156 55"/>
+        <path d="M110 75 C126 64 138 62 146 66"/>
+      </g>
+
+      <!-- serpientes entrelazadas (doble hélice) -->
+      <g stroke="${c}" stroke-width="3.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M86 50 C92 53 97 56 100 60 C116 68 130 72 130 84 C130 96 116 100 100 106 C84 112 70 116 70 128 C70 140 84 144 100 150 C116 156 130 160 130 172 C130 184 116 188 100 194 C84 200 70 204 70 216 C70 226 82 230 100 232"/>
+        <path d="M114 50 C108 53 103 56 100 60 C84 68 70 72 70 84 C70 96 84 100 100 106 C116 112 130 116 130 128 C130 140 116 144 100 150 C84 156 70 160 70 172 C70 184 84 188 100 194 C116 200 130 204 130 216 C130 226 118 230 100 232"/>
+      </g>
       <!-- cabezas de serpiente -->
-      <circle cx="50" cy="33" r="3"/>
-      <circle cx="70" cy="33" r="3"/>
+      <circle cx="86" cy="49" r="4" fill="${c}"/>
+      <circle cx="114" cy="49" r="4" fill="${c}"/>
     </g>
   </svg>`
 }
@@ -173,7 +184,7 @@ export function recetaPlantillaStyles(): string {
     }
     .wm-svg{
       position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);
-      width:36mm;height:39mm;pointer-events:none;
+      width:33mm;height:43mm;pointer-events:none;
     }
     .rx-symbol{
       position:absolute;top:0;right:1mm;font-size:22pt;font-weight:300;
