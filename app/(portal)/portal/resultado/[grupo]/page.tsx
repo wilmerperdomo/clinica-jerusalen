@@ -58,14 +58,15 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           <p className="text-white/70 text-xs">{BRAND.nombre}</p>
         </div>
 
-        <div className="px-5 py-4 grid grid-cols-2 gap-2 text-sm border-b bg-slate-50">
-          <p><span className="text-gray-500">Paciente:</span> <b>{grupo.pacienteNombre}</b></p>
-          <p><span className="text-gray-500">Identidad:</span> {grupo.pacienteCodigo || '—'}</p>
+        <div className="px-4 sm:px-5 py-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm border-b bg-slate-50">
+          <p className="break-words"><span className="text-gray-500">Paciente:</span> <b>{grupo.pacienteNombre}</b></p>
+          <p className="break-words"><span className="text-gray-500">Identidad:</span> {grupo.pacienteCodigo || '—'}</p>
           <p><span className="text-gray-500">Fecha orden:</span> {fmtFecha(grupo.fecha)}</p>
           <p><span className="text-gray-500">Fecha resultado:</span> {fmtFecha(fechaResultado ?? undefined)}</p>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Tabla para tablet/escritorio */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-100 text-gray-600 text-xs uppercase">
@@ -93,6 +94,39 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Tarjetas apiladas para móvil */}
+        <div className="md:hidden divide-y">
+          {filas.map((f, i) => (
+            <div key={i} className="px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {f.campo
+                    ? <p className="text-sm font-medium text-gray-700 break-words">{f.campo}</p>
+                    : <p className="text-sm font-bold text-gray-900 break-words">{f.prueba}</p>}
+                  {f.campo && <p className="text-[11px] text-gray-400 break-words">{f.prueba}</p>}
+                </div>
+                <div className="shrink-0">{flag(f.indicador)}</div>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-gray-400">Resultado</p>
+                  <p className={`text-sm font-bold ${f.indicador === 'ALTO' ? 'text-red-600' : f.indicador === 'BAJO' ? 'text-blue-600' : 'text-gray-900'}`}>
+                    {f.valor || '—'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-gray-400">Unidad</p>
+                  <p className="text-sm text-gray-600 break-words">{f.unidad || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-gray-400">Referencia</p>
+                  <p className="text-sm text-gray-600 break-words">{f.rango || '—'}</p>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className="px-5 py-3 border-t bg-slate-50 text-xs text-gray-500 flex items-center gap-2">
