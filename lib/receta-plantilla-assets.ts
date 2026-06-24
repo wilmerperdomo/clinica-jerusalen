@@ -31,15 +31,24 @@ function escapeHtml(s: string): string {
 }
 
 function caduceoWatermarkSvg(): string {
-  return `<svg class="wm-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <g fill="none" stroke="${BRAND.navy}" stroke-width="2.2" opacity="0.07">
-      <line x1="60" y1="18" x2="60" y2="102"/>
-      <path d="M60 18 C48 28 38 38 32 52 C28 62 34 68 44 62 C52 57 58 48 60 42"/>
-      <path d="M60 18 C72 28 82 38 88 52 C92 62 86 68 76 62 C68 57 62 48 60 42"/>
-      <path d="M44 62 C36 72 32 82 36 92 C40 100 52 98 58 88"/>
-      <path d="M76 62 C84 72 88 82 84 92 C80 100 68 98 62 88"/>
-      <ellipse cx="60" cy="14" rx="10" ry="5"/>
-      <path d="M48 14 Q60 6 72 14"/>
+  return `<svg class="wm-svg" viewBox="0 0 120 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g fill="none" stroke="${BRAND.navy}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.08">
+      <!-- vara central -->
+      <line x1="60" y1="20" x2="60" y2="116"/>
+      <!-- esfera superior -->
+      <circle cx="60" cy="16" r="5" fill="${BRAND.navy}" fill-opacity="0.06"/>
+      <!-- alas -->
+      <path d="M58 30 C46 22 32 22 18 30 C30 30 40 33 50 40 C53 36 55 33 58 32 Z" fill="${BRAND.navy}" fill-opacity="0.05"/>
+      <path d="M62 30 C74 22 88 22 102 30 C90 30 80 33 70 40 C67 36 65 33 62 32 Z" fill="${BRAND.navy}" fill-opacity="0.05"/>
+      <path d="M58 38 C48 33 36 33 24 39 C35 39 44 42 52 47"/>
+      <path d="M62 38 C72 33 84 33 96 39 C85 39 76 42 68 47"/>
+      <!-- serpiente izquierda entrelazada -->
+      <path d="M60 34 C44 40 44 52 60 58 C76 64 76 76 60 82 C44 88 44 100 60 106"/>
+      <!-- serpiente derecha entrelazada -->
+      <path d="M60 34 C76 40 76 52 60 58 C44 64 44 76 60 82 C76 88 76 100 60 106"/>
+      <!-- cabezas de serpiente -->
+      <circle cx="50" cy="33" r="3"/>
+      <circle cx="70" cy="33" r="3"/>
     </g>
   </svg>`
 }
@@ -164,7 +173,7 @@ export function recetaPlantillaStyles(): string {
     }
     .wm-svg{
       position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);
-      width:38mm;height:38mm;pointer-events:none;
+      width:36mm;height:39mm;pointer-events:none;
     }
     .rx-symbol{
       position:absolute;top:0;right:1mm;font-size:22pt;font-weight:300;
