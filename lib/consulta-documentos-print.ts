@@ -256,6 +256,11 @@ function estilosActa(): string {
     .a-sign .cargo{font-size:10.5pt;color:#333}
     .a-sign .sello{font-size:10pt;font-weight:700;letter-spacing:0.06em;color:#111;margin-top:0.5mm}
 
+    .a-footer{margin-top:auto;margin-left:-20mm;margin-right:-20mm;
+      background:${BRAND.footerFrom};color:#fff;text-align:center;
+      font-size:8.5pt;letter-spacing:0.03em;padding:4mm 6mm}
+    .a-footer b{font-weight:600}
+
     @media print{.doc{min-height:279mm}}
   `
 }
@@ -318,6 +323,10 @@ export function htmlActaDefuncion(data: ActaDefuncionData): string {
           <div class="cargo">${escapeHtmlDoc(cargo)}</div>
           <div class="sello">FIRMA Y SELLO</div>
         </div>
+
+        <footer class="a-footer">
+          <b>www.clinicamedicajerusalen.com</b> &nbsp;|&nbsp; Abierto las 24 horas, 365 días del año
+        </footer>
       </div>
     </div>
     </body></html>`
@@ -405,6 +414,10 @@ export function htmlReferenciaMedica(data: ReferenciaMedicaData): string {
           <div class="cargo">${escapeHtmlDoc(cargo)}</div>
           <div class="sello">FIRMA Y SELLO</div>
         </div>
+
+        <footer class="a-footer">
+          <b>www.clinicamedicajerusalen.com</b> &nbsp;|&nbsp; Abierto las 24 horas, 365 días del año
+        </footer>
       </div>
     </div>
     </body></html>`
