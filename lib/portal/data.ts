@@ -3,6 +3,7 @@ import {
   agruparOrdenes, type OrdenLab, type PacienteLab, type GrupoLab, type LabPanelCampo, type PruebaLab,
 } from '@/lib/lab-utils'
 import { filasPrintDesdeGrupo, type FilaResultadoPrint } from '@/lib/lab-print'
+import type { LabArchivo } from '@/lib/lab-archivos'
 
 const ESTADOS_VISIBLES = ['VALIDADO', 'ENTREGADO']
 
@@ -11,6 +12,7 @@ export interface PortalData {
   grupos: GrupoLab[]
   pruebas: { id: number; nombre: string; es_panel?: boolean }[]
   panelCamposMap: Record<number, LabPanelCampo[]>
+  archivos: LabArchivo[]
 }
 
 /** Carga los grupos de laboratorio visibles (validados/entregados) de un paciente. */
@@ -18,7 +20,7 @@ export async function cargarPortalPaciente(pacienteId: number): Promise<PortalDa
   const admin = createAdminClient()
   if (!admin) return null
 
-  const [pacRes, ordRes, pruebasRes, camposRes] = await Promise.all([
+  const [pacRes, ordRes, pruebasRes, camposRes, archRes] = await Promise.all([
     admin.from('pacientes')
       .select('id, codigo, tipo, nombre, apellido1, apellido2, nombre_empresa, fecha_nac, celular, telefono, genero')
       .eq('id', pacienteId).maybeSingle(),
@@ -29,6 +31,7 @@ export async function cargarPortalPaciente(pacienteId: number): Promise<PortalDa
       .order('id', { ascending: false }),
     admin.from('laboratorio_info').select('id, nombre, es_panel'),
     admin.from('lab_panel_campos').select('*'),
+    admin.from('lab_archivos').select('*').eq('paciente_id', pacienteId).order('created_at', { ascending: false }),
   ])
 
   const paciente = (pacRes.data as PacienteLab) ?? null
@@ -46,7 +49,12 @@ export async function cargarPortalPaciente(pacienteId: number): Promise<PortalDa
   }
 
   const grupos = paciente ? agruparOrdenes(ordenes, [paciente]) : []
-  return { paciente, grupos, pruebas, panelCamposMap }
+  const archivos = (archRes.error ? [] : (archRes.data ?? [])) as LabArchivo[]
+  return { paciente, grupos, pruebas, panelCamposMap, archivos }
+}
+
+export function archivosDeGrupo(data: PortalData, grupoId: string): LabArchivo[] {
+  return data.archivos.filter(a => a.lab_grupo_id === grupoId)
 }
 
 /** Construye las filas de impresión para un grupo específico del paciente. */

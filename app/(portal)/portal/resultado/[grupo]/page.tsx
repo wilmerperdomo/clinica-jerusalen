@@ -1,9 +1,9 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Download, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Download, ShieldCheck, FileText } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { getSesionPortal } from '@/lib/portal/session'
-import { cargarPortalPaciente, filasDeGrupo } from '@/lib/portal/data'
+import { cargarPortalPaciente, filasDeGrupo, archivosDeGrupo } from '@/lib/portal/data'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Resultado' }
@@ -30,26 +30,46 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
   const data = await cargarPortalPaciente(sesion.pacienteId)
   if (!data) notFound()
   const res = filasDeGrupo(data, grupoId)
-  if (!res) notFound()
+  const archivos = archivosDeGrupo(data, grupoId)
+  if (!res && archivos.length === 0) notFound()
 
-  const { grupo, filas } = res
+  const grupo = res?.grupo ?? data.grupos.find(g => g.grupoId === grupoId)
+  if (!grupo) notFound()
+  const filas = res?.filas ?? []
   const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
+  const soloMaquila = archivos.length > 0 && filas.every(f => !f.valor?.trim())
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
         <Link href="/portal" className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">
           <ArrowLeft className="w-4 h-4" /> Volver
         </Link>
-        <a
-          href={`/portal/resultado/${encodeURIComponent(grupoId)}/print`}
-          target="_blank"
-          rel="noopener"
-          className="flex items-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
-          style={{ backgroundColor: '#0891b2' }}
-        >
-          <Download className="w-4 h-4" /> Descargar / Imprimir PDF
-        </a>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          {archivos.map(a => (
+            <a
+              key={a.id}
+              href={`/portal/resultado/${encodeURIComponent(grupoId)}/archivo/${a.id}`}
+              target="_blank"
+              rel="noopener"
+              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
+              style={{ backgroundColor: '#0d9488' }}
+            >
+              <FileText className="w-4 h-4" /> {a.nombre_archivo}
+            </a>
+          ))}
+          {!soloMaquila && filas.length > 0 && (
+            <a
+              href={`/portal/resultado/${encodeURIComponent(grupoId)}/print`}
+              target="_blank"
+              rel="noopener"
+              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
+              style={{ backgroundColor: '#0891b2' }}
+            >
+              <Download className="w-4 h-4" /> Informe del sistema
+            </a>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -65,6 +85,16 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           <p><span className="text-gray-500">Fecha resultado:</span> {fmtFecha(fechaResultado ?? undefined)}</p>
         </div>
 
+        {soloMaquila ? (
+          <div className="px-5 py-8 text-center text-sm text-gray-600">
+            <FileText className="w-10 h-10 mx-auto mb-3 text-teal-600 opacity-80" />
+            <p className="font-medium text-gray-800">Resultado adjunto del laboratorio</p>
+            <p className="text-xs text-gray-500 mt-2 max-w-sm mx-auto">
+              Use el botón de arriba para abrir o descargar el informe PDF con el encabezado de la clínica.
+            </p>
+          </div>
+        ) : (
+          <>
         {/* Tabla para tablet/escritorio */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
@@ -128,6 +158,8 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
             </div>
           ))}
         </div>
+          </>
+        )}
 
         <div className="px-5 py-3 border-t bg-slate-50 text-xs text-gray-500 flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />

@@ -7,7 +7,7 @@ import {
   CheckCircle2, Clock, X, Save, AlertCircle,
   Beaker, Edit2, Printer, MessageCircle, Trash2,
   LayoutGrid, List, BarChart3, Tag, ShieldCheck, Send, SlidersHorizontal,
-  KeyRound, Copy, Stethoscope, Package, Zap, TestTube2,
+  KeyRound, Copy, Stethoscope, Package, Zap, TestTube2, Upload, FileText,
 } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { linkWhatsAppMensaje } from '@/lib/mensajes-paciente'
@@ -28,6 +28,9 @@ import {
   imprimirEtiquetasTubo, imprimirResultadoGrupoLab,
   filasPrintDesdeGrupo, registrarAuditoriaLab,
 } from '@/lib/lab-print'
+import {
+  LAB_RESULTADOS_BUCKET, aceptaArchivoResultadoLab, type LabArchivo,
+} from '@/lib/lab-archivos'
 import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
 import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
 import { normalizarCodigoPaciente, edadPaciente } from '@/lib/paciente-utils'
@@ -135,6 +138,10 @@ export default function LaboratorioClient({
   const [acceso, setAcceso] = useState<{ usuario: string; password: string; telefono: string; nombre: string } | null>(null)
   const [generandoAcceso, setGenerandoAcceso] = useState(false)
 
+  const [archivosGrupo, setArchivosGrupo] = useState<LabArchivo[]>([])
+  const [subiendoArchivo, setSubiendoArchivo] = useState(false)
+  const inputArchivoRef = useRef<HTMLInputElement>(null)
+
   // Registro rápido de paciente nuevo (directo de laboratorio, sin consulta)
   const [mostrarNuevoPac, setMostrarNuevoPac] = useState(false)
   const [guardandoNuevoPac, setGuardandoNuevoPac] = useState(false)
@@ -168,6 +175,25 @@ export default function LaboratorioClient({
   const [guardandoPerfil, setGuardandoPerfil] = useState(false)
 
   const supabase = useMemo(() => sb(), [])
+
+  const cargarArchivosGrupo = useCallback(async (grupoId: string) => {
+    const { data, error } = await supabase
+      .from('lab_archivos')
+      .select('*')
+      .eq('lab_grupo_id', grupoId)
+      .order('created_at', { ascending: false })
+    if (error && !/lab_archivos|schema cache/i.test(error.message)) {
+      console.warn('lab_archivos:', error.message)
+      setArchivosGrupo([])
+      return
+    }
+    setArchivosGrupo((data ?? []) as LabArchivo[])
+  }, [supabase])
+
+  useEffect(() => {
+    if (grupoActual?.grupoId) cargarArchivosGrupo(grupoActual.grupoId)
+    else setArchivosGrupo([])
+  }, [grupoActual?.grupoId, cargarArchivosGrupo])
 
   const pacientesMerged = useMemo(() => {
     const map = new Map<number, PacienteLab>()
@@ -770,8 +796,100 @@ export default function LaboratorioClient({
     return error
   }
 
+  async function subirArchivoMaquila(file: File) {
+    if (!grupoActual) return
+    if (!aceptaArchivoResultadoLab(file)) {
+      alert('Seleccione un archivo PDF o imagen (JPG/PNG).')
+      return
+    }
+    setSubiendoArchivo(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? 'pdf'
+      const path = `${grupoActual.pacienteId}/${grupoActual.grupoId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: upErr } = await supabase.storage.from(LAB_RESULTADOS_BUCKET).upload(path, file, {
+        cacheControl: '3600', upsert: false,
+      })
+      if (upErr) throw upErr
+      const { error: dbErr } = await supabase.from('lab_archivos').insert({
+        lab_grupo_id: grupoActual.grupoId,
+        paciente_id: grupoActual.pacienteId,
+        nombre_archivo: file.name,
+        storage_path: path,
+        mime_type: file.type || null,
+        tamano_bytes: file.size,
+        tipo: 'EXTERNO',
+        subido_por: user?.id ?? null,
+      })
+      if (dbErr) throw dbErr
+      const ids = grupoActual.ordenes.map(o => o.id)
+      await supabase.from('consulta_analisis').update({
+        resultado_externo: true,
+        updated_at: new Date().toISOString(),
+      }).in('id', ids)
+      await cargarArchivosGrupo(grupoActual.grupoId)
+    } catch (e) {
+      alert('Error al subir: ' + (e instanceof Error ? e.message : 'desconocido'))
+    } finally {
+      setSubiendoArchivo(false)
+      if (inputArchivoRef.current) inputArchivoRef.current.value = ''
+    }
+  }
+
+  async function eliminarArchivoMaquila(archivo: LabArchivo) {
+    if (!confirm(`¿Eliminar "${archivo.nombre_archivo}"?`)) return
+    await supabase.storage.from(LAB_RESULTADOS_BUCKET).remove([archivo.storage_path])
+    await supabase.from('lab_archivos').delete().eq('id', archivo.id)
+    if (grupoActual) await cargarArchivosGrupo(grupoActual.grupoId)
+  }
+
+  function abrirArchivoMaquila(archivo: LabArchivo) {
+    window.open(`/api/lab/archivo/${archivo.id}`, '_blank')
+  }
+
+  async function persistirResultadosMaquila(modo: 'borrador' | 'validar' | 'entregar') {
+    if (!grupoActual) return
+    const pac = pacientesMerged.find(p => p.id === grupoActual.pacienteId)
+    const estado: EstadoLab = modo === 'entregar' ? 'ENTREGADO' : modo === 'validar' ? 'VALIDADO' : 'RESULTADO_LISTO'
+    const ids = grupoActual.ordenes.map(o => o.id)
+    const upd: Record<string, unknown> = {
+      estado_lab: estado,
+      resultado_externo: true,
+      resultado_resumen: 'Resultado adjunto (maquila)',
+      updated_at: new Date().toISOString(),
+    }
+    if (modo === 'validar') upd.validado_at = new Date().toISOString()
+    if (modo === 'entregar') {
+      upd.entregado = true
+      upd.fecha_resultado = fechaHoy
+      upd.notificado_at = new Date().toISOString()
+    }
+    const { error } = await supabase.from('consulta_analisis').update(upd).in('id', ids)
+    if (error) return alert('Error: ' + error.message)
+    for (const orden of grupoActual.ordenes) {
+      await registrarAuditoriaLab(supabase, orden.id, modo, 'Resultado externo PDF')
+    }
+    if (modo === 'entregar') {
+      const tel = pac?.celular || pac?.telefono || grupoActual.telefono
+      if (tel && confirm('¿Notificar al paciente por WhatsApp con el enlace al portal?')) {
+        await enviarResultadosWhatsApp({ ...grupoActual, telefono: tel })
+      }
+    }
+    setModalResultados(false)
+    setGrupoActual(null)
+    startTransition(() => { recargar() })
+  }
+
   async function persistirResultados(modo: 'borrador' | 'validar' | 'entregar') {
     if (!grupoActual) return
+    if (archivosGrupo.length > 0) {
+      if (modo === 'validar' || modo === 'entregar') {
+        return persistirResultadosMaquila(modo)
+      }
+      if (modo === 'borrador') {
+        return persistirResultadosMaquila('borrador')
+      }
+    }
     const pac = pacientesMerged.find(p => p.id === grupoActual.pacienteId)
 
     for (const orden of grupoActual.ordenes) {
@@ -1972,6 +2090,56 @@ export default function LaboratorioClient({
                 )
               })}
             </div>
+
+            <section className="mt-4 rounded-xl border border-teal-100 bg-teal-50/40 p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-teal-900 flex items-center gap-2">
+                    <Upload className="w-4 h-4" /> Resultado externo (maquila)
+                  </h4>
+                  <p className="text-xs text-teal-800/80 mt-0.5">
+                    Suba el PDF del laboratorio referido. Al descargar se agrega el encabezado y firma de la clínica.
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <input
+                    ref={inputArchivoRef}
+                    type="file"
+                    accept=".pdf,image/jpeg,image/png,image/jpg"
+                    className="hidden"
+                    onChange={e => {
+                      const f = e.target.files?.[0]
+                      if (f) subirArchivoMaquila(f)
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={subiendoArchivo}
+                    onClick={() => inputArchivoRef.current?.click()}
+                    className="w-full sm:w-auto px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Upload className="w-4 h-4" />
+                    {subiendoArchivo ? 'Subiendo…' : 'Subir PDF / imagen'}
+                  </button>
+                </div>
+              </div>
+              {archivosGrupo.length > 0 ? (
+                <ul className="space-y-2">
+                  {archivosGrupo.map(a => (
+                    <li key={a.id} className="flex items-center gap-2 bg-white border border-teal-100 rounded-lg px-3 py-2 text-sm">
+                      <FileText className="w-4 h-4 text-teal-600 shrink-0" />
+                      <span className="flex-1 min-w-0 truncate font-medium text-gray-800">{a.nombre_archivo}</span>
+                      <button type="button" onClick={() => abrirArchivoMaquila(a)}
+                        className="text-xs text-cyan-700 font-semibold hover:underline shrink-0">Ver</button>
+                      <button type="button" onClick={() => eliminarArchivoMaquila(a)}
+                        className="text-red-500 hover:text-red-700 shrink-0 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-gray-500 italic">Sin archivos adjuntos. Puede validar y entregar después de subir el PDF.</p>
+              )}
+            </section>
 
             <div className="flex flex-wrap items-center gap-2 pt-4 border-t mt-4">
               {grupoActual && (grupoActual.estado === 'VALIDADO' || grupoActual.estado === 'ENTREGADO') && (

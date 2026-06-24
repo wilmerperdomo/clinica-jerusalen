@@ -76,6 +76,7 @@ export interface OrdenLab {
   entrega_email?: boolean
   entrega_fisico?: boolean
   urgente?: boolean
+  resultado_externo?: boolean
 }
 
 export interface Medico {
