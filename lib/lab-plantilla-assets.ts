@@ -87,8 +87,8 @@ export function labPlantillaInformeStyles(): string {
   return `
     .plantilla-hdr{text-align:center;margin:0 0 12px;padding-bottom:8px;border-bottom:2px solid #003366}
     .plantilla-hdr-img{width:100%;max-height:96px;object-fit:contain;object-position:top center}
-    .plantilla-firma{text-align:center;margin-top:8px;padding:8px 0 4px}
-    .plantilla-firma-img{display:block;margin:0 auto;width:auto;max-width:340px;height:auto;max-height:220px;object-fit:contain}
+    .plantilla-firma{text-align:center;margin-top:16px;padding:12px 0 8px;border-top:1px solid #e2e8f0}
+    .plantilla-firma-img{display:block;margin:0 auto;width:auto;max-width:260px;height:auto;max-height:160px;object-fit:contain}
     .validado-por{text-align:center;font-size:10px;color:#475569;margin-top:8px}
   `
 }

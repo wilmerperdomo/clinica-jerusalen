@@ -14,14 +14,17 @@ const outDir = path.join(root, 'public', 'lab')
 const pdfPath = path.join(outDir, 'plantilla-informe.pdf')
 
 const SCALE = 2
-const SEAL_SCALE = 3
+const SEAL_SCALE = 4
 /** Solo logo y datos del laboratorio referido (sin paciente) */
 const HEADER_RATIO = 0.12
-/** Zona superior derecha pág. 2: sello + firma (sin QR ni número de página) */
-const SEAL_Y_RATIO = 0
-const SEAL_H_RATIO = 0.24
-const SEAL_X_RATIO = 0.32
-const SEAL_W_RATIO = 0.66
+/**
+ * Pág. 2: sello circular + firma manuscrita (zona media-derecha, sin QR ni texto Masterlab).
+ * Coordenadas relativas a la página completa.
+ */
+const SEAL_X_RATIO = 0.42
+const SEAL_Y_RATIO = 0.56
+const SEAL_W_RATIO = 0.48
+const SEAL_H_RATIO = 0.20
 
 class NodeCanvasFactory {
   create(width, height) {
@@ -89,7 +92,13 @@ async function main() {
   const sealH = Math.round(pSeal.height * SEAL_H_RATIO)
   const seal = cropCanvas(pSeal, sealX, sealY, sealW, sealH)
   fs.writeFileSync(path.join(outDir, 'plantilla-firma-sello.png'), seal.toBuffer('image/png'))
-  console.log('OK plantilla-firma-sello.png', seal.width, 'x', seal.height)
+  console.log('OK plantilla-firma-sello.png', seal.width, 'x', seal.height, `(pág ${pageSeal})`)
+
+  // Vista previa de página 2 completa (depuración opcional)
+  if (process.env.DEBUG_PLANTILLA === '1') {
+    fs.writeFileSync(path.join(outDir, '_debug-pagina2.png'), pSeal.toBuffer('image/png'))
+    console.log('DEBUG _debug-pagina2.png')
+  }
 }
 
 main().catch(err => {
