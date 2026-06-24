@@ -84,23 +84,133 @@ export function imprimirRecetaMedica(data: DocumentoPrintBase & {
   abrirVentanaImpresion(htmlRecetaMedica(data), `Receta ${data.numero_doc}`)
 }
 
-export function imprimirConstanciaMedica(data: DocumentoPrintBase & { texto: string }) {
-  const html = `
-    <style>${estilosBase()}</style>
-    ${logoHtml(data.baseUrl)}
-    <p class="doc-no">Constancia No. ${data.numero_doc}</p>
-    <h1>Constancia Médica</h1>
-    <div class="cuerpo">
-      <p>Yo, <strong>${data.medico_nombre ?? 'el médico tratante'}</strong>${data.medico_registro ? `, con registro profesional ${data.medico_registro}` : ''},
-      certifico que soy el médico tratante de <strong>${data.paciente_nombre}</strong>,
-      con número de identidad <strong>${data.paciente_codigo ?? '—'}</strong>${data.paciente_edad ? `, de ${data.paciente_edad} de edad` : ''}.</p>
-      <p style="margin-top:14px">${data.texto}</p>
-      <p style="margin-top:14px">Y para los fines que estime convenientes se extiende la presente constancia médica en la ciudad de Tegucigalpa, M.D.C., a los ${data.fecha}.</p>
+function escapeHtmlDoc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+/** Texto editable → párrafos justificados, con soporte de **negrita**. */
+function cuerpoConstanciaHtml(texto: string): string {
+  const bloques = texto.replace(/\r\n/g, '\n').split(/\n{2,}/).map(b => b.trim()).filter(Boolean)
+  return bloques.map(bloque => {
+    const conSaltos = escapeHtmlDoc(bloque).replace(/\n/g, '<br>')
+    const conNegrita = conSaltos.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    return `<p>${conNegrita}</p>`
+  }).join('')
+}
+
+/** Estilos de la constancia profesional (carta vertical, estilo oficial Jerusalén). */
+function estilosConstancia(): string {
+  return `
+    *{margin:0;padding:0;box-sizing:border-box}
+    @page{size:letter portrait;margin:0}
+    html,body{width:216mm;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#1a1a1a;font-size:12pt;line-height:1.55}
+    .doc{position:relative;width:216mm;min-height:279mm;display:flex;flex-direction:column;
+      padding:16mm 22mm 0;overflow:hidden}
+
+    .wm{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;
+      pointer-events:none;z-index:0}
+    .wm span{font-family:'Brush Script MT','Segoe Script',cursive;font-size:54pt;color:${BRAND.navy};
+      opacity:0.06;white-space:nowrap;transform:rotate(-8deg)}
+
+    .doc-inner{position:relative;z-index:1;flex:1;display:flex;flex-direction:column}
+
+    /* Encabezado */
+    .c-hdr{text-align:center;border-bottom:2pt solid ${BRAND.navy};padding-bottom:4mm;margin-bottom:7mm}
+    .c-hdr .logo-row{display:flex;align-items:center;justify-content:center;gap:5mm;margin-bottom:1.5mm}
+    .c-hdr .logo-row img{width:18mm!important;max-width:18mm!important;height:auto!important;margin:0!important}
+    .c-name{font-family:Georgia,'Times New Roman',serif;font-size:21pt;font-weight:700;color:${BRAND.navy};
+      letter-spacing:0.01em;line-height:1.05}
+    .c-name .j{font-family:'Brush Script MT','Segoe Script',cursive;font-weight:400}
+    .c-24h{font-size:11pt;font-weight:700;color:${BRAND.navy};margin-top:0.5mm}
+    .c-addr{font-size:8.5pt;color:#444;margin-top:0.5mm}
+
+    .doc-no{position:absolute;top:0;right:0;font-size:8pt;color:#777;font-family:Consolas,monospace}
+
+    /* Título */
+    .c-title{text-align:center;margin-bottom:9mm}
+    .c-title h1{font-size:15pt;font-weight:800;letter-spacing:0.08em;color:#111}
+    .c-title h2{font-size:13pt;font-weight:800;letter-spacing:0.1em;color:${BRAND.navy};margin-top:2mm}
+
+    /* Cuerpo */
+    .c-body{flex:1}
+    .c-body p{text-align:justify;margin-bottom:5mm;text-justify:inter-word}
+
+    /* Firma */
+    .c-sign{margin-top:14mm;text-align:center}
+    .c-sign .dr{font-size:12pt;font-weight:700;color:#111}
+    .c-sign .cargo{font-size:11pt;color:#333;margin-top:0.5mm}
+    .c-sign .line{width:70mm;border-top:1pt solid #333;margin:18mm auto 0}
+    .c-sign .firma-lbl{font-size:11pt;font-weight:700;letter-spacing:0.08em;color:#111;margin-top:1.5mm}
+
+    /* Pie */
+    .c-footer{margin-top:auto;margin-left:-22mm;margin-right:-22mm;
+      background:${BRAND.footerFrom};color:#fff;text-align:center;
+      font-size:8.5pt;letter-spacing:0.03em;padding:4mm 6mm}
+    .c-footer b{font-weight:600}
+
+    @media print{.doc{min-height:279mm}}
+  `
+}
+
+export function htmlConstanciaMedica(data: DocumentoPrintBase & {
+  texto: string
+  subtitulo?: string
+  cargo_medico?: string
+}): string {
+  const origin = data.baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')
+  const subtitulo = (data.subtitulo ?? 'INCAPACIDAD').trim().toUpperCase()
+  const cargo = (data.cargo_medico ?? 'Médico General').trim()
+  const medico = data.medico_nombre?.trim()
+    ? (data.medico_nombre.trim().toLowerCase().startsWith('dr') ? data.medico_nombre.trim() : `DR. ${data.medico_nombre.trim()}`)
+    : 'DR. _______________________'
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <title>Constancia ${escapeHtmlDoc(data.numero_doc)}</title>
+    <style>${estilosConstancia()}</style></head><body>
+    <div class="doc">
+      <div class="wm"><span>Clínicas Médicas Jerusalén</span></div>
+      <div class="doc-inner">
+        <span class="doc-no">Constancia No. ${escapeHtmlDoc(data.numero_doc)}</span>
+        <header class="c-hdr">
+          <div class="logo-row">
+            ${logoTicketHtml(origin, 64)}
+            <div>
+              <div class="c-name">Clínica Médica <span class="j">Jerusalén</span></div>
+              <div class="c-24h">Atención 365 días del año · 24 Horas</div>
+            </div>
+          </div>
+          <div class="c-addr">Col. Alemán, Calle Principal, Antiguo Local Clínica Sinaí · Tel.: 2246-3051</div>
+        </header>
+
+        <div class="c-title">
+          <h1>CONSTANCIA MÉDICA</h1>
+          ${subtitulo ? `<h2>${escapeHtmlDoc(subtitulo)}</h2>` : ''}
+        </div>
+
+        <main class="c-body">${cuerpoConstanciaHtml(data.texto)}</main>
+
+        <div class="c-sign">
+          <div class="dr">${escapeHtmlDoc(medico)}</div>
+          <div class="cargo">${escapeHtmlDoc(cargo)}</div>
+          <div class="line"></div>
+          <div class="firma-lbl">FIRMA</div>
+        </div>
+
+        <footer class="c-footer">
+          <b>www.clinicamedicajerusalen.com</b> &nbsp;|&nbsp; Abierto las 24 horas, 365 días del año
+        </footer>
+      </div>
     </div>
-    <div class="firma">
-      <p class="firma-linea">${data.medico_nombre ?? 'Médico tratante'}<br>Firma y sello</p>
-    </div>`
-  abrirVentanaImpresion(html, `Constancia ${data.numero_doc}`)
+    </body></html>`
+}
+
+export function imprimirConstanciaMedica(data: DocumentoPrintBase & {
+  texto: string
+  subtitulo?: string
+  cargo_medico?: string
+}) {
+  abrirVentanaImpresion(htmlConstanciaMedica(data), `Constancia ${data.numero_doc}`)
 }
 
 export function imprimirActaDefuncion(data: DocumentoPrintBase & { texto: string }) {

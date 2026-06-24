@@ -76,6 +76,8 @@ export default function ConsultaDocumentosPanel({
   const [medicoNombre, setMedicoNombre] = useState('')
   const [medicoRegistro, setMedicoRegistro] = useState('')
   const [textoConstancia, setTextoConstancia] = useState('')
+  const [subtituloConstancia, setSubtituloConstancia] = useState('INCAPACIDAD')
+  const [cargoMedico, setCargoMedico] = useState('Médico General')
   const [textoDefuncion, setTextoDefuncion] = useState('')
   const [notaArchivo, setNotaArchivo] = useState('')
   const [catArchivo, setCatArchivo] = useState('Laboratorio')
@@ -98,7 +100,10 @@ export default function ConsultaDocumentosPanel({
     const cm = (d ?? []).find(x => x.tipo === 'CONSTANCIA')
     const cd = (d ?? []).find(x => x.tipo === 'DEFUNCION')
     if (cm?.contenido) {
-      setTextoConstancia(String((cm.contenido as { texto?: string }).texto ?? ''))
+      const c = cm.contenido as { texto?: string; subtitulo?: string; cargo_medico?: string }
+      setTextoConstancia(String(c.texto ?? ''))
+      if (c.subtitulo) setSubtituloConstancia(c.subtitulo)
+      if (c.cargo_medico) setCargoMedico(c.cargo_medico)
     } else {
       setTextoConstancia('')
     }
@@ -246,7 +251,11 @@ export default function ConsultaDocumentosPanel({
   async function guardarEImprimirConstancia() {
     if (!textoConstancia.trim()) { alert('Escriba el texto de la constancia.'); return }
     const prev = docs.find(d => d.tipo === 'CONSTANCIA')
-    const doc = await registrarDocumento('CONSTANCIA', { texto: textoConstancia }, prev?.id)
+    const doc = await registrarDocumento('CONSTANCIA', {
+      texto: textoConstancia,
+      subtitulo: subtituloConstancia,
+      cargo_medico: cargoMedico,
+    }, prev?.id)
     if (!doc) return
     imprimirConstanciaMedica({
       numero_doc: doc.numero_doc,
@@ -257,6 +266,9 @@ export default function ConsultaDocumentosPanel({
       medico_nombre: medicoNombre,
       medico_registro: medicoRegistro,
       texto: textoConstancia,
+      subtitulo: subtituloConstancia,
+      cargo_medico: cargoMedico,
+      baseUrl: printBase,
     })
   }
 
@@ -395,7 +407,28 @@ export default function ConsultaDocumentosPanel({
               </p>
             ) : (
               <>
-                <div className="flex justify-end mt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                  <div>
+                    <label className="text-[11px] font-medium text-emerald-800">Tipo de constancia (subtítulo)</label>
+                    <input
+                      value={subtituloConstancia}
+                      onChange={e => setSubtituloConstancia(e.target.value)}
+                      placeholder="INCAPACIDAD"
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 focus:ring-emerald-300 outline-none bg-white uppercase"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-emerald-800">Cargo del médico</label>
+                    <input
+                      value={cargoMedico}
+                      onChange={e => setCargoMedico(e.target.value)}
+                      placeholder="Médico General"
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 focus:ring-emerald-300 outline-none bg-white"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-[11px] text-emerald-700/80">Use <b>**texto**</b> para resaltar en negrita.</span>
                   <button type="button" onClick={() => setTextoConstancia(plantillaConstancia(ctxPlantilla))}
                     className="flex items-center gap-1 text-[11px] text-emerald-700 hover:text-emerald-900 font-medium">
                     <RotateCcw className="w-3 h-3" /> Restaurar plantilla
@@ -404,8 +437,8 @@ export default function ConsultaDocumentosPanel({
                 <textarea
                   value={textoConstancia}
                   onChange={e => setTextoConstancia(e.target.value)}
-                  rows={8}
-                  placeholder="Diagnóstico, recomendaciones, incapacidad, etc."
+                  rows={10}
+                  placeholder="Historia clínica, diagnóstico, días de incapacidad y fechas de reposo..."
                   className="w-full border rounded-lg px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-emerald-300 outline-none bg-white font-[inherit] leading-relaxed"
                 />
                 <button type="button" onClick={guardarEImprimirConstancia} disabled={guardando}

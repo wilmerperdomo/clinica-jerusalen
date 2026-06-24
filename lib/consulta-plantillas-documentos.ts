@@ -9,11 +9,11 @@ import { calcularEdad, nombrePaciente, type PacienteConsulta } from '@/lib/consu
  * {{FECHA}} {{MEDICO}} {{DIAGNOSTICO}}
  */
 
-export const PLANTILLA_CONSTANCIA = `Luego de mi evaluación médica, considero que {{PACIENTE}}, identificado(a) con número de identidad {{IDENTIDAD}}, de {{EDAD}} de edad, presenta el siguiente cuadro clínico:
+export const PLANTILLA_CONSTANCIA = `Por medio de la presente se hace constar **{{PACIENTE}}** de {{EDAD}} de edad, con número de identidad **{{IDENTIDAD}}**, acudió a este centro asistencial el día **{{FECHA}}**, con historia de [describa los síntomas, días de evolución e intensidad del cuadro clínico].
 
-{{DIAGNOSTICO}}
+Se realizó al paciente interrogatorio y exploración física completa, diagnosticándose con: **{{DIAGNOSTICO}}** Se indica farmacoterapia, exámenes complementarios e hidratación. Además, se indica reposo en casa por **[N] días** válidos a partir de **[indique las fechas exactas]**.
 
-Se extiende la presente para los fines que el interesado estime convenientes.`
+Para los fines que el interesado convenga, se extiende la presente constancia el día {{FECHA}} en Tegucigalpa, M.D.C., Francisco Morazán.`
 
 export const PLANTILLA_DEFUNCION = `Mediante el presente documento médico constato que {{PACIENTE}}, con número de identidad {{IDENTIDAD}}, de {{EDAD}} de edad, residente en {{DIRECCION}}, cuya fecha de nacimiento fue el {{FECHA_NAC}}, en fecha {{FECHA}}:
 

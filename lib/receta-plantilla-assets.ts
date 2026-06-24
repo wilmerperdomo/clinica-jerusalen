@@ -30,40 +30,6 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function caduceoWatermarkSvg(): string {
-  const c = BRAND.navy
-  return `<svg class="wm-svg" viewBox="0 0 200 260" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <g opacity="0.1">
-      <!-- vara central -->
-      <line x1="100" y1="44" x2="100" y2="244" stroke="${c}" stroke-width="3.4" stroke-linecap="round"/>
-      <!-- esfera superior -->
-      <circle cx="100" cy="40" r="6.5" fill="${c}"/>
-
-      <!-- alas heráldicas con plumas, abiertas hacia arriba -->
-      <g fill="${c}" fill-opacity="0.5">
-        <path d="M98 76 C78 56 56 46 40 50 C44 56 47 60 50 66 C52 62 55 61 58 64 C61 70 64 74 67 80 C70 75 73 74 76 76 C80 80 84 82 88 84 C91 80 95 78 98 76 Z"/>
-        <path d="M102 76 C122 56 144 46 160 50 C156 56 153 60 150 66 C148 62 145 61 142 64 C139 70 136 74 133 80 C130 75 127 74 124 76 C120 80 116 82 112 84 C109 80 105 78 102 76 Z"/>
-      </g>
-      <!-- separación de plumas -->
-      <g stroke="#ffffff" stroke-width="1" fill="none" stroke-linecap="round" opacity="0.5">
-        <path d="M94 73 C76 58 58 52 44 55"/>
-        <path d="M90 75 C74 64 62 62 54 66"/>
-        <path d="M106 73 C124 58 142 52 156 55"/>
-        <path d="M110 75 C126 64 138 62 146 66"/>
-      </g>
-
-      <!-- serpientes entrelazadas (doble hélice) -->
-      <g stroke="${c}" stroke-width="3.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M86 50 C92 53 97 56 100 60 C116 68 130 72 130 84 C130 96 116 100 100 106 C84 112 70 116 70 128 C70 140 84 144 100 150 C116 156 130 160 130 172 C130 184 116 188 100 194 C84 200 70 204 70 216 C70 226 82 230 100 232"/>
-        <path d="M114 50 C108 53 103 56 100 60 C84 68 70 72 70 84 C70 96 84 100 100 106 C116 112 130 116 130 128 C130 140 116 144 100 150 C84 156 70 160 70 172 C70 184 84 188 100 194 C116 200 130 204 130 216 C130 226 118 230 100 232"/>
-      </g>
-      <!-- cabezas de serpiente -->
-      <circle cx="86" cy="49" r="4" fill="${c}"/>
-      <circle cx="114" cy="49" r="4" fill="${c}"/>
-    </g>
-  </svg>`
-}
-
 function listaServiciosHtml(): string {
   return SERVICIOS_CLINICA.map(s =>
     `<li>${escapeHtml(s)}</li>`,
@@ -182,10 +148,6 @@ export function recetaPlantillaStyles(): string {
       flex:1;position:relative;min-width:0;display:flex;flex-direction:column;
       padding-left:1mm;
     }
-    .wm-svg{
-      position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);
-      width:33mm;height:43mm;pointer-events:none;
-    }
     .rx-symbol{
       position:absolute;top:0;right:1mm;font-size:22pt;font-weight:300;
       color:${BRAND.navy};opacity:0.12;font-family:Georgia,serif;line-height:1;
@@ -287,7 +249,6 @@ export function htmlRecetaPlantilla(data: RecetaPlantillaData): string {
         <div class="body-grid">
           <aside class="services"><ul>${listaServiciosHtml()}</ul></aside>
           <section class="rx-area">
-            ${caduceoWatermarkSvg()}
             <span class="rx-symbol">℞</span>
             <div class="rx-content">${meds}${extra}</div>
           </section>
