@@ -208,7 +208,10 @@ export async function getModulosPermitidos(
   esSuperAdmin: boolean,
   esAdmin = false,
 ): Promise<string[]> {
-  if (esSuperAdmin) return listarClavesModulos()
+  if (esSuperAdmin) {
+    const claves = await listarClavesModulos()
+    return Array.from(new Set([...claves, ...MODULOS_SUPER_ADMIN_FALLBACK]))
+  }
   if (!rolId) return []
 
   const supabase = await createClient()

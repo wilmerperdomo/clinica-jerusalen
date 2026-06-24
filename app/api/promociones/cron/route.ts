@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 
 function autorizadoPorCron(req: Request) {
   const secret = process.env.CRON_SECRET?.trim()
-  if (!secret) return true
+  if (!secret) return false
   return req.headers.get('authorization') === `Bearer ${secret}`
 }
 
