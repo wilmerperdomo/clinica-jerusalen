@@ -195,6 +195,8 @@ export default function ConsultaDocumentosPanel({
     }
   }
 
+  const printBase = typeof window !== 'undefined' ? window.location.origin : ''
+
   async function imprimirReceta() {
     const existentes = docs.filter(d => d.tipo === 'RECETA')
     let doc = existentes[0]
@@ -216,6 +218,7 @@ export default function ConsultaDocumentosPanel({
       items: recetaItems,
       tratamiento,
       dias_reposo: diasReposo,
+      baseUrl: printBase,
     })
   }
 
@@ -236,6 +239,7 @@ export default function ConsultaDocumentosPanel({
       items: recetaItems,
       tratamiento,
       dias_reposo: diasReposo,
+      baseUrl: printBase,
     })
   }
 
@@ -371,7 +375,7 @@ export default function ConsultaDocumentosPanel({
               </div>
             )}
             <p className="text-[11px] text-purple-700/80 mt-2">
-              {recetaItems.length} medicamento(s) en la receta actual · correlativo automático al imprimir
+              {recetaItems.length} medicamento(s) · plantilla oficial de receta · correlativo al imprimir
             </p>
           </div>
 

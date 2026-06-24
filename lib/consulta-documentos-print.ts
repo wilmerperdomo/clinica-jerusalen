@@ -1,6 +1,7 @@
+import { calcularEdad } from '@/lib/consultas-utils'
+import { htmlRecetaPlantilla } from '@/lib/receta-plantilla-assets'
 import { BRAND, FISCAL } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
-import { calcularEdad } from '@/lib/consultas-utils'
 
 export interface RecetaPrintItem {
   no_producto: string
@@ -48,9 +49,31 @@ function abrirVentanaImpresion(html: string, titulo: string) {
     alert('Permita ventanas emergentes para imprimir.')
     return
   }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title></head><body>${html}
-    <script>window.onload=function(){setTimeout(function(){window.print()},400)}<\/script></body></html>`)
+  w.document.write(html.replace(
+    '</body>',
+    '<script>window.onload=function(){setTimeout(function(){window.print()},500)}<\/script></body>',
+  ))
   w.document.close()
+}
+
+/** HTML de receta con plantilla oficial de la clínica. */
+export function htmlRecetaMedica(data: DocumentoPrintBase & {
+  items: RecetaPrintItem[]
+  tratamiento?: string
+  dias_reposo?: number
+}): string {
+  const origin = data.baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')
+  return htmlRecetaPlantilla({
+    origin,
+    numero_doc: data.numero_doc,
+    paciente_nombre: data.paciente_nombre,
+    paciente_edad: data.paciente_edad,
+    fecha: data.fecha,
+    medico_nombre: data.medico_nombre,
+    items: data.items,
+    tratamiento: data.tratamiento,
+    dias_reposo: data.dias_reposo,
+  })
 }
 
 export function imprimirRecetaMedica(data: DocumentoPrintBase & {
@@ -58,36 +81,7 @@ export function imprimirRecetaMedica(data: DocumentoPrintBase & {
   tratamiento?: string
   dias_reposo?: number
 }) {
-  const meds = data.items.length === 0
-    ? '<p style="text-align:center;color:#888;font-style:italic;padding:20px">Sin medicamentos en esta receta</p>'
-    : data.items.map(m => `
-      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <p style="font-weight:700;color:${BRAND.navy}">${m.no_producto}</p>
-        <p style="font-size:12px;color:#555;margin-top:4px">
-          ${m.cant ? `Cantidad: ${m.cant}` : ''}${m.via ? ` · Vía: ${m.via}` : ''}
-          ${m.indicacion ? `<br>${m.indicacion}` : ''}
-        </p>
-      </div>`).join('')
-
-  const html = `
-    <style>${estilosBase()}</style>
-    ${logoHtml(data.baseUrl)}
-    <p class="doc-no">Receta No. ${data.numero_doc}</p>
-    <h1>Receta Médica</h1>
-    <table style="width:100%;font-size:13px;margin-bottom:16px">
-      <tr><td><b>Paciente:</b> ${data.paciente_nombre}</td><td style="text-align:right"><b>Fecha:</b> ${data.fecha}</td></tr>
-      <tr><td><b>Identidad:</b> ${data.paciente_codigo ?? '—'}</td><td style="text-align:right"><b>Edad:</b> ${data.paciente_edad ?? '—'}</td></tr>
-    </table>
-    <div style="overflow:auto">
-      <span style="font-size:42px;font-weight:bold;color:${BRAND.navy};float:left;margin-right:12px;line-height:1">℞</span>
-      ${meds}
-    </div>
-    ${data.tratamiento ? `<p style="margin-top:12px"><b>Tratamiento:</b> ${data.tratamiento}</p>` : ''}
-    ${data.dias_reposo && data.dias_reposo > 0 ? `<p><b>Días de reposo:</b> ${data.dias_reposo}</p>` : ''}
-    <div class="firma">
-      <p class="firma-linea">${data.medico_nombre ?? 'Médico tratante'}<br>Firma y sello</p>
-    </div>`
-  abrirVentanaImpresion(html, `Receta ${data.numero_doc}`)
+  abrirVentanaImpresion(htmlRecetaMedica(data), `Receta ${data.numero_doc}`)
 }
 
 export function imprimirConstanciaMedica(data: DocumentoPrintBase & { texto: string }) {

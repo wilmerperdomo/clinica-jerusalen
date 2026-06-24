@@ -31,6 +31,8 @@ import {
   normalizarConsultaDetalle,
   valorConsultaDetalle,
 } from '@/lib/consulta-detalle-utils'
+import { imprimirRecetaMedica, edadPacientePrint } from '@/lib/consulta-documentos-print'
+import { formatearNombreMedico } from '@/lib/medico-utils'
 
 /* ─── tipos locales ─────────────────────────────────────── */
 type Paciente = PacienteConsulta & { id: number; codigo: string }
@@ -234,8 +236,18 @@ export default function ConsultasClient({
   const [ultimoAutoguardado, setUltimoAutoguardado] = useState<Date | null>(null)
   const [guardandoBorrador,  setGuardandoBorrador]  = useState(false)
   const [cambiandoConsulta,  setCambiandoConsulta]  = useState(false)
+  const [medicoNombre, setMedicoNombre] = useState('')
 
   const sb = supabase()
+
+  useEffect(() => {
+    sb.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return
+      const { data: p } = await sb.from('perfiles').select('nombre,apellido,genero')
+        .eq('id', user.id).maybeSingle()
+      if (p) setMedicoNombre(formatearNombreMedico(p.nombre, p.apellido, p.genero))
+    })
+  }, [sb])
 
   useEffect(() => {
     startTransition(() => { recargar() })
@@ -770,6 +782,23 @@ export default function ConsultasClient({
   }, [formMedico, recetaItems, servicioItems, labItems, valorConsultaEdit, consultaNotaCobro, modalMedico, consultaActual?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── helpers receta ── */
+  function vistaPreviaReceta() {
+    if (!consultaActual) return
+    const fecha = new Date().toLocaleDateString('es-HN', { day: 'numeric', month: 'long', year: 'numeric' })
+    imprimirRecetaMedica({
+      numero_doc: String(consultaActual.id).padStart(6, '0'),
+      fecha,
+      paciente_nombre: nombrePaciente(consultaActual.paciente),
+      paciente_codigo: consultaActual.paciente?.codigo,
+      paciente_edad: edadPacientePrint(consultaActual.paciente?.fecha_nac),
+      medico_nombre: medicoNombre,
+      items: recetaItems,
+      tratamiento: formMedico.tratamiento,
+      dias_reposo: Number(formMedico.dias_reposo) || 0,
+      baseUrl: typeof window !== 'undefined' ? window.location.origin : '',
+    })
+  }
+
   function agregarMedicamento() {
     if (!medForm.no_producto.trim()) return
     setRecetaItems(prev => [...prev, { ...medForm }])
@@ -1792,13 +1821,20 @@ export default function ConsultasClient({
 
             {/* ══ CATÁLOGO DE MEDICAMENTOS ══ */}
             <div className="border-t pt-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
                   <Pill className="w-4 h-4 text-purple-500" /> Catálogo de medicamentos
                   {recetaItems.length > 0 && (
                     <span className="ml-1 bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">{recetaItems.length}</span>
                   )}
                 </p>
+                <button
+                  type="button"
+                  onClick={vistaPreviaReceta}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-purple-300 text-purple-800 hover:bg-purple-50"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Imprimir receta
+                </button>
               </div>
 
               {/* Buscador de medicamentos */}

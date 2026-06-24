@@ -111,6 +111,7 @@ function imprimirReceta(paciente: Paciente, consulta: Consulta) {
     })),
     tratamiento: consulta.tratamiento,
     dias_reposo: Number(consulta.dias_reposo) > 0 ? Number(consulta.dias_reposo) : undefined,
+    baseUrl: typeof window !== 'undefined' ? window.location.origin : '',
   })
 }
 
