@@ -14,6 +14,7 @@ import { useConfirm } from '@/components/confirm-dialog'
 import ResponsiveModal from '@/components/responsive-modal'
 import BuscarPacienteInput from '@/components/buscar-paciente-input'
 import ConsultaDocumentosPanel from '@/components/consulta-documentos-panel'
+import ConsultaSeguimientoPanel from '@/components/consulta-seguimiento-panel'
 import ConsultaHistorialPanel from '@/components/consulta-historial-panel'
 import { PacientePlanBadge, PacientePlanBanner } from '@/components/paciente-plan-badge'
 import { BRAND } from '@/lib/brand'
@@ -33,6 +34,13 @@ import {
 } from '@/lib/consulta-detalle-utils'
 import { imprimirRecetaMedica, edadPacientePrint } from '@/lib/consulta-documentos-print'
 import { formatearNombreMedico } from '@/lib/medico-utils'
+import {
+  crearCitaSeguimiento,
+  formSeguimientoInicial,
+  validarFormSeguimiento,
+  type FormSeguimiento,
+} from '@/lib/consulta-seguimiento-utils'
+import { fmtFecha, linkWhatsApp } from '@/lib/agenda-utils'
 
 /* ─── tipos locales ─────────────────────────────────────── */
 type Paciente = PacienteConsulta & { id: number; codigo: string }
@@ -237,6 +245,7 @@ export default function ConsultasClient({
   const [guardandoBorrador,  setGuardandoBorrador]  = useState(false)
   const [cambiandoConsulta,  setCambiandoConsulta]  = useState(false)
   const [medicoNombre, setMedicoNombre] = useState('')
+  const [formSeguimiento, setFormSeguimiento] = useState<FormSeguimiento>(() => formSeguimientoInicial(fechaHoy))
 
   const sb = supabase()
 
@@ -542,6 +551,13 @@ export default function ConsultasClient({
     setBuscarLab('')
     setValorConsultaEdit(String(data.consulta_valor ?? 0))
     setConsultaNotaCobro(data.consulta_nota ?? '')
+    const servicioConsulta = serviciosConsulta.find(s =>
+      s.nombre === (data.tipo_nombre || data.tipo?.nombre),
+    )
+    setFormSeguimiento(formSeguimientoInicial(
+      fechaHoy,
+      servicioConsulta ? String(servicioConsulta.id) : '',
+    ))
     return true
   }
 
@@ -763,13 +779,69 @@ export default function ConsultasClient({
 
   async function guardarExamenMedico() {
     if (!consultaActual) return
+
+    const errSeguimiento = validarFormSeguimiento(formSeguimiento, fechaHoy)
+    if (errSeguimiento) {
+      alert(errSeguimiento)
+      return
+    }
+
     const ok = await persistirExamenMedico(true, false)
     if (!ok) return
+
+    if (formSeguimiento.activo) {
+      const servSel = formSeguimiento.servicioId
+        ? serviciosConsulta.find(s => s.id === Number(formSeguimiento.servicioId))
+        : serviciosConsulta.find(s => s.nombre === (consultaActual.tipo_nombre || consultaActual.tipo?.nombre))
+
+      const { error: errCita, cita } = await crearCitaSeguimiento(sb, {
+        pacienteId: consultaActual.paciente_id,
+        sucursalId: consultaActual.sucursal_id ?? sucursalOperativa,
+        consultaId: consultaActual.id,
+        form: formSeguimiento,
+        servicioId: servSel?.id ?? null,
+        servicioNombre: servSel?.nombre ?? consultaActual.tipo_nombre ?? consultaActual.tipo?.nombre ?? null,
+        fechaHoy,
+        confirmConflicto: async () => {
+          const { confirmed } = await confirmDialog({
+            title: 'Horario ocupado',
+            message: 'Ya existe una cita activa a esta hora. ¿Desea agendar de todos modos?',
+            variant: 'warning',
+            confirmLabel: 'Sí, agendar',
+          })
+          return confirmed
+        },
+      })
+
+      if (errCita) {
+        alert(`Consulta finalizada correctamente, pero no se pudo agendar la cita: ${errCita}`)
+      } else if (cita) {
+        const msgOk = `Próxima cita agendada: ${fmtFecha(cita.fecha)} a las ${cita.hora.slice(0, 5)}.`
+        if (formSeguimiento.enviarWhatsApp && consultaActual.paciente) {
+          const url = linkWhatsApp({
+            fecha: cita.fecha,
+            hora: cita.hora,
+            estado: 'ACTIVO',
+            nota: cita.nota,
+            servicio_nombre: cita.servicio_nombre,
+            paciente: consultaActual.paciente,
+          })
+          if (url) {
+            window.open(url, '_blank', 'noopener,noreferrer')
+          } else {
+            alert(`${msgOk}\nNo hay celular válido para WhatsApp.`)
+          }
+        } else {
+          alert(msgOk)
+        }
+      }
+    }
 
     setModalMedico(false)
     setRecetaItems([])
     setServicioItems([])
     setLabItems([])
+    setFormSeguimiento(formSeguimientoInicial(fechaHoy))
     setUltimoAutoguardado(null)
     startTransition(() => { recargar() })
   }
@@ -1952,6 +2024,16 @@ export default function ConsultasClient({
                 </div>
               )}
             </div>
+
+            {/* ══ SEGUIMIENTO / PRÓXIMA CITA ══ */}
+            <ConsultaSeguimientoPanel
+              value={formSeguimiento}
+              onChange={setFormSeguimiento}
+              fechaHoy={fechaHoy}
+              serviciosConsulta={serviciosConsulta}
+              diasReposo={Number(formMedico.dias_reposo) || 0}
+              celularPaciente={consultaActual.paciente?.celular}
+            />
 
             {/* ══ DOCUMENTOS CLÍNICOS Y EXÁMENES ══ */}
             <ConsultaDocumentosPanel
