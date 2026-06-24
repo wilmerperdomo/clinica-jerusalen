@@ -1,5 +1,10 @@
 import { BRAND, FISCAL } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
+import {
+  labEncabezadoPlantillaHtml,
+  labFirmaSelloPlantillaHtml,
+  labPlantillaInformeStyles,
+} from '@/lib/lab-plantilla-assets'
 
 export interface ResultadoLabPrint {
   paciente_nombre: string
@@ -11,7 +16,70 @@ export interface ResultadoLabPrint {
   rango_texto?: string
   observacion?: string
   anormal?: boolean
+  validadoPor?: string
   baseUrl?: string
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function resultadoStyles(): string {
+  return `
+    *{box-sizing:border-box}
+    body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;margin:0;padding:0;color:#1f2937;font-size:12px;line-height:1.45;background:#fff}
+    .page{max-width:780px;margin:0 auto;padding:22px 30px}
+    .hdr{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #003366;padding-bottom:12px;margin-bottom:14px}
+    .hdr .brand{display:flex;align-items:center;gap:12px}
+    .hdr .brand .logo img{height:54px;width:auto}
+    .hdr .brand .name{font-size:17px;font-weight:800;color:#003366}
+    .hdr .brand .tag{font-size:10px;color:#64748b}
+    .hdr .meta{text-align:right;font-size:10px;color:#475569}
+    .title{text-align:center;font-size:14px;font-weight:800;color:#003366;letter-spacing:1px;margin:0 0 14px;text-transform:uppercase}
+    table.info{width:100%;border-collapse:collapse;margin:12px 0}
+    table.info td{padding:7px 8px;border-bottom:1px solid #eef2f7;font-size:11px}
+    table.info td:first-child{color:#475569;width:38%;font-weight:600}
+    .valor{font-size:22px;font-weight:800;color:#003366;margin:16px 0;text-align:center}
+    .anormal{color:#b91c1c}
+    .rango,.obs{font-size:11px;color:#475569;margin:8px 0}
+    .firma-block{margin-top:28px}
+    ${labPlantillaInformeStyles()}
+    @media print{@page{size:A4;margin:12mm}.page{padding:0}}
+  `
+}
+
+export function htmlResultadoLaboratorio(data: ResultadoLabPrint, origin = ''): string {
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <title>Resultado — ${escapeHtml(data.prueba_nombre)}</title>
+    <style>${resultadoStyles()}</style></head><body>
+    <div class="page">
+      ${labEncabezadoPlantillaHtml(origin)}
+      <div class="hdr">
+        <div class="brand">
+          <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
+          <div>
+            <div class="name">${escapeHtml(BRAND.nombre)}</div>
+            <div class="tag">Laboratorio Clínico</div>
+          </div>
+        </div>
+        <div class="meta">Tel: ${escapeHtml(FISCAL.telefonos)}<br>RTN: ${escapeHtml(FISCAL.rtn)}</div>
+      </div>
+      <div class="title">Resultado de Laboratorio</div>
+      <table class="info">
+        <tr><td>Paciente</td><td>${escapeHtml(data.paciente_nombre)}</td></tr>
+        <tr><td>Identidad</td><td>${escapeHtml(data.paciente_codigo ?? '—')}</td></tr>
+        <tr><td>Prueba</td><td>${escapeHtml(data.prueba_nombre)}</td></tr>
+        <tr><td>Fecha</td><td>${escapeHtml(data.fecha)}</td></tr>
+      </table>
+      <p class="valor ${data.anormal ? 'anormal' : ''}">${escapeHtml(data.valor_resultado ?? '—')}${data.unidad ? ` ${escapeHtml(data.unidad)}` : ''}</p>
+      ${data.rango_texto ? `<p class="rango"><b>Rango de referencia:</b> ${escapeHtml(data.rango_texto)}</p>` : ''}
+      ${data.observacion ? `<p class="obs"><b>Observación:</b> ${escapeHtml(data.observacion)}</p>` : ''}
+      <div class="firma-block">
+        ${labFirmaSelloPlantillaHtml(origin)}
+        ${data.validadoPor ? `<div class="validado-por">Validado por: <b>${escapeHtml(data.validadoPor)}</b></div>` : ''}
+      </div>
+    </div>
+    </body></html>`
 }
 
 export function imprimirResultadoLaboratorio(data: ResultadoLabPrint) {
@@ -21,35 +89,8 @@ export function imprimirResultadoLaboratorio(data: ResultadoLabPrint) {
     alert('Permita ventanas emergentes para imprimir.')
     return
   }
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Resultado ${data.prueba_nombre}</title>
-  <style>
-    body{font-family:Arial,sans-serif;padding:28px;font-size:13px;color:#1a1a1a;line-height:1.5}
-    h1{font-size:17px;text-align:center;color:#003366;margin:12px 0}
-    .logo{text-align:center;margin-bottom:10px}
-    table{width:100%;border-collapse:collapse;margin:16px 0}
-    td{padding:6px 0;border-bottom:1px solid #eee}
-    .valor{font-size:22px;font-weight:bold;color:#003366;margin:12px 0}
-    .anormal{color:#b91c1c;font-weight:bold}
-    .firma{margin-top:40px;text-align:center;border-top:1px solid #333;width:260px;margin-left:auto;margin-right:auto;padding-top:6px;font-size:11px}
-    @media print{@page{margin:12mm}}
-  </style></head><body>
-  <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
-  <p style="text-align:center;font-size:12px;font-weight:bold;color:#003366">${BRAND.nombre}</p>
-  <p style="text-align:center;font-size:11px;color:#555">Tel: ${FISCAL.telefonos}</p>
-  <h1>RESULTADO DE LABORATORIO</h1>
-  <table>
-    <tr><td><b>Paciente</b></td><td>${data.paciente_nombre}</td></tr>
-    <tr><td><b>Identidad</b></td><td>${data.paciente_codigo ?? '—'}</td></tr>
-    <tr><td><b>Prueba</b></td><td>${data.prueba_nombre}</td></tr>
-    <tr><td><b>Fecha</b></td><td>${data.fecha}</td></tr>
-  </table>
-  <p class="valor ${data.anormal ? 'anormal' : ''}">${data.valor_resultado ?? '—'}${data.unidad ? ` ${data.unidad}` : ''}</p>
-  ${data.rango_texto ? `<p><b>Rango de referencia:</b> ${data.rango_texto}</p>` : ''}
-  ${data.observacion ? `<p><b>Observación:</b> ${data.observacion}</p>` : ''}
-  <div class="firma">Responsable de laboratorio<br>Firma y sello</div>
-  <script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script>
-  </body></html>`
-  w.document.write(html)
+  const html = htmlResultadoLaboratorio(data, origin)
+  w.document.write(html.replace('</body>', '<script>window.onload=()=>setTimeout(()=>window.print(),400)<\/script></body>'))
   w.document.close()
 }
 

@@ -1,5 +1,10 @@
 import { BRAND, FISCAL } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
+import {
+  labEncabezadoPlantillaHtml,
+  labFirmaSelloPlantillaHtml,
+  labPlantillaInformeStyles,
+} from '@/lib/lab-plantilla-assets'
 import { indicadorDesdeRango, type GrupoLab, type PruebaLab, type IndicadorRango } from '@/lib/lab-utils'
 import { linkWhatsAppResultado } from '@/lib/lab-resultado-print'
 
@@ -104,9 +109,9 @@ function informeStyles(): string {
     .flag.bajo{background:#dbeafe;color:#1d4ed8}
     .flag.normal{background:#dcfce7;color:#166534}
     .obs{color:#64748b;font-size:10px}
-    .firma{margin-top:46px;display:flex;justify-content:space-between;gap:40px}
-    .firma .box{flex:1;text-align:center;border-top:1px solid #334155;padding-top:6px;font-size:10px;color:#475569}
+    .firma-block{margin-top:32px}
     .foot{margin-top:18px;border-top:1px solid #e2e8f0;padding-top:8px;font-size:9px;color:#94a3b8;text-align:center}
+    ${labPlantillaInformeStyles()}
     .portal{margin-top:12px;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:10px 14px;font-size:10px;color:#155e75;text-align:center}
     .urg{display:inline-block;background:#dc2626;color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;vertical-align:middle;letter-spacing:.5px}
     .obsbox{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 14px;margin-bottom:6px;font-size:10px;color:#92400e}
@@ -177,6 +182,7 @@ export function htmlInformeResultadosLab(
     <title>Resultados — ${escapeHtml(grupo.pacienteNombre)}</title>
     <style>${informeStyles()}</style></head><body>
     <div class="page">
+      ${labEncabezadoPlantillaHtml(origin)}
       <div class="hdr">
         <div class="brand">
           <div class="logo">${logoTicketHtml(origin, 'mobile')}</div>
@@ -210,9 +216,9 @@ export function htmlInformeResultadosLab(
         <tbody>${cuerpo.join('')}</tbody>
       </table>
 
-      <div class="firma">
-        <div class="box">${escapeHtml(meta.validadoPor || 'Responsable de laboratorio')}<br>Validado por</div>
-        <div class="box">Firma y sello autorizado</div>
+      <div class="firma-block">
+        ${labFirmaSelloPlantillaHtml(origin)}
+        ${meta.validadoPor ? `<div class="validado-por">Validado por: <b>${escapeHtml(meta.validadoPor)}</b></div>` : ''}
       </div>
 
       ${portalBox}
