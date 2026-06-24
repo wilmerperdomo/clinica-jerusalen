@@ -1,14 +1,53 @@
-/** Plantilla visual de receta médica — public/consultas/receta-plantilla.png */
+/** Receta médica — diseño nativo media carta horizontal (8.5" × 5.5" / 216 × 140 mm) */
 
-export const RECETA_PLANTILLA_PATH = '/consultas/receta-plantilla.png'
+import { BRAND, FISCAL } from '@/lib/brand'
+import { logoTicketHtml } from '@/lib/brand-logo'
 
-export function recetaPlantillaSrc(origin = ''): string {
-  if (!origin) return RECETA_PLANTILLA_PATH
-  return `${origin.replace(/\/$/, '')}${RECETA_PLANTILLA_PATH}`
-}
+/** Media carta apaisada — mitad de hoja carta en horizontal */
+export const RECETA_PAGE_W = '216mm'
+export const RECETA_PAGE_H = '140mm'
+
+const SERVICIOS_CLINICA = [
+  'Atención de Niños y Adultos',
+  'Electrocardiograma',
+  'Hemograma 24 horas',
+  'Laboratorio',
+  'Ultrasonidos 3D y 4D',
+  'Toma de Presión Arterial',
+  'Medicina General',
+  'Cirugía Menor',
+  'Aplicación de Oxígeno',
+  'Atención de Partos',
+  'Hospitalización',
+  'Desintoxicación Alcohólica',
+  'Nebulizaciones',
+  'Control Prenatal',
+  'Control de Embarazo',
+  'Control niño sano',
+] as const
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function caduceoWatermarkSvg(): string {
+  return `<svg class="wm-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g fill="none" stroke="${BRAND.navy}" stroke-width="2.2" opacity="0.07">
+      <line x1="60" y1="18" x2="60" y2="102"/>
+      <path d="M60 18 C48 28 38 38 32 52 C28 62 34 68 44 62 C52 57 58 48 60 42"/>
+      <path d="M60 18 C72 28 82 38 88 52 C92 62 86 68 76 62 C68 57 62 48 60 42"/>
+      <path d="M44 62 C36 72 32 82 36 92 C40 100 52 98 58 88"/>
+      <path d="M76 62 C84 72 88 82 84 92 C80 100 68 98 62 88"/>
+      <ellipse cx="60" cy="14" rx="10" ry="5"/>
+      <path d="M48 14 Q60 6 72 14"/>
+    </g>
+  </svg>`
+}
+
+function listaServiciosHtml(): string {
+  return SERVICIOS_CLINICA.map(s =>
+    `<li>${escapeHtml(s)}</li>`,
+  ).join('')
 }
 
 export interface RecetaPlantillaItem {
@@ -40,7 +79,7 @@ function formatMedicamentos(items: RecetaPlantillaItem[]): string {
       m.via ? `Vía: ${m.via}` : '',
     ].filter(Boolean).join(' · ')
     return `<div class="rx-item">
-      <p class="rx-med"><b>${i + 1}.</b> ${escapeHtml(m.no_producto)}</p>
+      <p class="rx-med"><span class="rx-n">${i + 1}.</span> ${escapeHtml(m.no_producto)}</p>
       ${det ? `<p class="rx-det">${escapeHtml(det)}</p>` : ''}
       ${m.indicacion ? `<p class="rx-ind">${escapeHtml(m.indicacion)}</p>` : ''}
     </div>`
@@ -48,57 +87,149 @@ function formatMedicamentos(items: RecetaPlantillaItem[]): string {
 }
 
 export function recetaPlantillaStyles(): string {
-  /* Posiciones calibradas sobre receta-plantilla.png (1024×644 px) */
-  const pageH = 'calc(279mm * 644 / 1024)'
   return `
     *{box-sizing:border-box;margin:0;padding:0}
-    @page{size:279mm ${pageH};margin:0}
-    body{margin:0;padding:0;background:#fff}
-    .receta-page{
-      position:relative;width:279mm;height:${pageH};margin:0 auto;
-      page-break-after:always;overflow:hidden;
+    @page{size:${RECETA_PAGE_W} ${RECETA_PAGE_H};margin:0}
+    html,body{width:${RECETA_PAGE_W};height:${RECETA_PAGE_H};margin:0;padding:0;background:#fff;
+      -webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#1a2332;font-size:9pt;line-height:1.35}
+
+    .receta{
+      width:${RECETA_PAGE_W};min-height:${RECETA_PAGE_H};height:${RECETA_PAGE_H};
+      padding:3.5mm 4mm 3mm;display:flex;flex-direction:column;overflow:hidden;
     }
-    .receta-bg{
-      position:absolute;inset:0;width:100%;height:100%;
-      object-fit:fill;pointer-events:none;user-select:none;
+
+    /* ── Encabezado ── */
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:3mm;margin-bottom:2mm;flex-shrink:0}
+    .hdr-brand{display:flex;align-items:flex-start;gap:2.5mm;min-width:0;flex:1}
+    .hdr-logo{flex-shrink:0;line-height:0}
+    .hdr-logo img{width:14mm!important;max-width:14mm!important;height:auto!important;margin:0!important}
+    .hdr-titles{min-width:0}
+    .clinic-name{
+      font-family:Georgia,'Times New Roman',serif;font-size:13pt;font-weight:700;
+      color:${BRAND.navy};letter-spacing:0.02em;line-height:1.15;
     }
-    .receta-overlay{position:absolute;inset:0;font-family:Arial,Helvetica,sans-serif;color:#111}
-    .f-campo{
-      position:absolute;line-height:1.05;font-weight:600;
-      transform:translateY(-100%);
+    .clinic-verse{font-size:5.8pt;font-style:italic;color:#444;margin-top:0.8mm;line-height:1.25;max-width:95mm}
+    .hdr-badges{display:flex;flex-wrap:wrap;gap:2mm;margin-top:1.2mm;align-items:center}
+    .badge-24h{font-size:6.5pt;font-weight:700;color:${BRAND.navyMid};letter-spacing:0.03em}
+    .badge-amb{font-size:6.5pt;font-weight:800;color:#c0392b;letter-spacing:0.04em}
+    .hdr-contact{
+      flex-shrink:0;text-align:right;font-size:5.8pt;color:#333;line-height:1.35;max-width:58mm;
     }
-    .f-nombre{
-      top:32.76%;left:21%;width:24%;font-size:10.5pt;
+    .hdr-contact b{color:${BRAND.navy};font-size:6pt;display:block;margin-bottom:0.5mm}
+    .hdr-contact .web{color:${BRAND.navyMid};font-weight:600;margin-top:0.8mm}
+
+    /* ── Cuerpo con borde ── */
+    .form-box{
+      flex:1;display:flex;flex-direction:column;border:1.6pt solid #111;
+      border-radius:4mm;padding:2.5mm 3mm 2mm;min-height:0;position:relative;
     }
-    .f-edad{
-      top:32.61%;left:57%;width:5%;font-size:10.5pt;text-align:center;
+    .doc-no{
+      position:absolute;top:2mm;right:3mm;font-size:6pt;color:#666;
+      font-family:Consolas,monospace;letter-spacing:0.04em;
     }
-    .f-fecha{
-      top:31.99%;left:82%;width:16%;font-size:10pt;
+
+    .patient-row{
+      display:flex;align-items:flex-end;gap:3mm;margin-bottom:2mm;padding-bottom:1mm;
+      border-bottom:0.6pt solid #ccc;flex-shrink:0;
     }
-    .f-rx{
-      position:absolute;top:35.5%;left:29.5%;right:5.5%;bottom:14%;
-      overflow:hidden;font-size:10.5pt;line-height:1.45;
+    .field{display:flex;align-items:baseline;gap:1.5mm;min-width:0}
+    .field label{font-size:8pt;font-weight:700;color:#111;white-space:nowrap;flex-shrink:0}
+    .field-val{
+      flex:1;border-bottom:0.6pt solid #222;font-size:8.5pt;font-weight:600;
+      color:#0a1628;padding-bottom:0.3mm;min-height:4mm;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     }
-    .rx-item{margin-bottom:8px}
-    .rx-med{font-weight:700;color:#0a1628}
-    .rx-det,.rx-ind{font-size:10pt;color:#333;margin-top:1px;padding-left:14px}
-    .rx-trat{margin-top:10px;font-size:10.5pt;color:#111}
-    .rx-reposo{margin-top:4px;font-size:10pt;font-weight:600}
-    .rx-empty{color:#666;font-style:italic;padding-top:8px}
-    .f-doctor{
-      top:94.41%;left:20%;width:28%;font-size:10.5pt;font-weight:700;
-      text-transform:uppercase;transform:translateY(-100%);
+    .field-nombre{flex:1.8;min-width:0}
+    .field-edad{flex:0 0 22mm}
+    .field-edad .field-val{text-align:center}
+    .field-fecha{flex:0 0 38mm}
+
+    .body-grid{display:flex;flex:1;min-height:0;gap:2.5mm;margin-top:0.5mm}
+    .services{
+      flex:0 0 27%;font-size:5.6pt;color:#222;line-height:1.28;
+      border-right:0.5pt solid #ddd;padding-right:2mm;overflow:hidden;
     }
+    .services ul{list-style:none;padding:0}
+    .services li{
+      position:relative;padding-left:2.5mm;margin-bottom:0.6mm;
+    }
+    .services li::before{
+      content:'';position:absolute;left:0;top:1.2mm;width:1mm;height:1mm;
+      border-radius:50%;background:${BRAND.navy};
+    }
+
+    .rx-area{
+      flex:1;position:relative;min-width:0;display:flex;flex-direction:column;
+      padding-left:1mm;
+    }
+    .wm-svg{
+      position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);
+      width:38mm;height:38mm;pointer-events:none;
+    }
+    .rx-symbol{
+      position:absolute;top:0;right:1mm;font-size:22pt;font-weight:300;
+      color:${BRAND.navy};opacity:0.12;font-family:Georgia,serif;line-height:1;
+    }
+    .rx-content{
+      position:relative;z-index:1;flex:1;overflow:hidden;
+      font-size:8.5pt;line-height:1.4;padding-top:0.5mm;
+    }
+    .rx-item{margin-bottom:1.8mm}
+    .rx-med{font-weight:700;color:${BRAND.navy}}
+    .rx-n{color:${BRAND.gold};margin-right:1mm}
+    .rx-det,.rx-ind{font-size:7.8pt;color:#444;padding-left:3.5mm;margin-top:0.3mm}
+    .rx-trat{margin-top:2mm;font-size:8pt;padding-top:1.5mm;border-top:0.4pt dashed #ccc}
+    .rx-reposo{margin-top:1mm;font-size:8pt;font-weight:700;color:#333}
+    .rx-empty{color:#888;font-style:italic;font-size:8pt;padding-top:2mm}
+
+    .sig-row{
+      display:flex;align-items:flex-end;gap:4mm;margin-top:2mm;padding-top:1.5mm;
+      border-top:0.6pt solid #ccc;flex-shrink:0;
+    }
+    .field-dr{flex:1;display:flex;align-items:baseline;gap:1.5mm}
+    .field-dr label{font-size:8pt;font-weight:800;letter-spacing:0.06em}
+    .field-dr .field-val{text-transform:uppercase;font-size:8.5pt}
+    .field-sello{flex:1;display:flex;align-items:baseline;gap:1.5mm}
+    .field-sello label{font-size:7pt;font-weight:700;white-space:nowrap;color:#333}
+    .field-sello .field-val{min-height:5mm;border-bottom-style:dashed}
+
     @media print{
-      body{padding:0}
-      .receta-page{width:279mm;height:${pageH}}
+      .receta{width:${RECETA_PAGE_W};height:${RECETA_PAGE_H}}
     }
   `
 }
 
+function encabezadoHtml(origin: string, numeroDoc?: string): string {
+  const logo = logoTicketHtml(origin, 52)
+  const docNo = numeroDoc
+    ? `<span class="doc-no">Receta No. ${escapeHtml(numeroDoc)}</span>`
+    : ''
+
+  return `${docNo}
+  <header class="hdr">
+    <div class="hdr-brand">
+      <div class="hdr-logo">${logo}</div>
+      <div class="hdr-titles">
+        <div class="clinic-name">${escapeHtml(BRAND.nombre)}</div>
+        <p class="clinic-verse">Mas a Jehová vuestro Dios serviréis, y él bendecirá tu pan y tus aguas; y yo quitaré toda enfermedad de en medio de ti. Éxodo 23:25</p>
+        <div class="hdr-badges">
+          <span class="badge-24h">Atención 365 días del año · 24 horas</span>
+          <span class="badge-amb">SERVICIO DE AMBULANCIA</span>
+        </div>
+      </div>
+    </div>
+    <div class="hdr-contact">
+      <b>Col. Alemán, Calle Principal</b>
+      Antiguo Local Clínica Sinaí · Tel. ${escapeHtml(FISCAL.telefonos.split('|')[0]?.trim() ?? '2246-3051')}
+      <br><b>Sucursal El Tizatillo</b>
+      Km 6 carretera al Sur, 100 m arriba Villa Foresta
+      <div class="web">${escapeHtml(FISCAL.web)}</div>
+    </div>
+  </header>`
+}
+
 export function htmlRecetaPlantilla(data: RecetaPlantillaData): string {
-  const src = recetaPlantillaSrc(data.origin ?? '')
+  const origin = data.origin ?? ''
   const meds = formatMedicamentos(data.items)
   const extra = [
     data.tratamiento?.trim()
@@ -109,18 +240,49 @@ export function htmlRecetaPlantilla(data: RecetaPlantillaData): string {
       : '',
   ].join('')
 
+  const medico = data.medico_nombre?.trim()
+    ? (data.medico_nombre.trim().toLowerCase().startsWith('dr') ? data.medico_nombre.trim() : `Dr. ${data.medico_nombre.trim()}`)
+    : ''
+
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
     <title>Receta ${escapeHtml(data.numero_doc ?? '')}</title>
     <style>${recetaPlantillaStyles()}</style></head><body>
-    <div class="receta-page">
-      <img class="receta-bg" src="${src}" alt="" />
-      <div class="receta-overlay">
-        <span class="f-campo f-nombre">${escapeHtml(data.paciente_nombre)}</span>
-        <span class="f-campo f-edad">${escapeHtml(data.paciente_edad ?? '')}</span>
-        <span class="f-campo f-fecha">${escapeHtml(data.fecha)}</span>
-        <div class="f-rx">${meds}${extra}</div>
-        <span class="f-campo f-doctor">${escapeHtml(data.medico_nombre ?? '')}</span>
-      </div>
+    <div class="receta">
+      ${encabezadoHtml(origin, data.numero_doc)}
+      <main class="form-box">
+        <div class="patient-row">
+          <div class="field field-nombre">
+            <label>Nombre:</label>
+            <span class="field-val">${escapeHtml(data.paciente_nombre)}</span>
+          </div>
+          <div class="field field-edad">
+            <label>Edad:</label>
+            <span class="field-val">${escapeHtml(data.paciente_edad ?? '')}</span>
+          </div>
+          <div class="field field-fecha">
+            <label>Fecha:</label>
+            <span class="field-val">${escapeHtml(data.fecha)}</span>
+          </div>
+        </div>
+        <div class="body-grid">
+          <aside class="services"><ul>${listaServiciosHtml()}</ul></aside>
+          <section class="rx-area">
+            ${caduceoWatermarkSvg()}
+            <span class="rx-symbol">℞</span>
+            <div class="rx-content">${meds}${extra}</div>
+          </section>
+        </div>
+        <footer class="sig-row">
+          <div class="field field-dr">
+            <label>DR.</label>
+            <span class="field-val">${escapeHtml(medico)}</span>
+          </div>
+          <div class="field field-sello">
+            <label>FIRMA Y SELLO</label>
+            <span class="field-val"></span>
+          </div>
+        </footer>
+      </main>
     </div>
     </body></html>`
 }

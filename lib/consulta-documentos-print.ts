@@ -44,7 +44,7 @@ function estilosBase(): string {
 }
 
 function abrirVentanaImpresion(html: string, titulo: string) {
-  const w = window.open('', '_blank', 'width=900,height=800')
+  const w = window.open('', '_blank', 'width=920,height=640')
   if (!w) {
     alert('Permita ventanas emergentes para imprimir.')
     return
@@ -56,7 +56,7 @@ function abrirVentanaImpresion(html: string, titulo: string) {
   w.document.close()
 }
 
-/** HTML de receta con plantilla oficial de la clínica. */
+/** HTML de receta — diseño nativo media carta (216 × 140 mm). */
 export function htmlRecetaMedica(data: DocumentoPrintBase & {
   items: RecetaPrintItem[]
   tratamiento?: string

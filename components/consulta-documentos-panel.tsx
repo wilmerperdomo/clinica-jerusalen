@@ -375,7 +375,7 @@ export default function ConsultaDocumentosPanel({
               </div>
             )}
             <p className="text-[11px] text-purple-700/80 mt-2">
-              {recetaItems.length} medicamento(s) · plantilla oficial de receta · correlativo al imprimir
+              {recetaItems.length} medicamento(s) · media carta horizontal · correlativo al imprimir
             </p>
           </div>
 
