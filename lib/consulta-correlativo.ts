@@ -1,11 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export type TipoDocCorrelativo = 'RECETA' | 'CONSTANCIA' | 'DEFUNCION'
+export type TipoDocCorrelativo = 'RECETA' | 'CONSTANCIA' | 'DEFUNCION' | 'REFERENCIA'
 
 const PREFIJOS: Record<TipoDocCorrelativo, string> = {
   RECETA: 'REC',
   CONSTANCIA: 'CM',
   DEFUNCION: 'CD',
+  REFERENCIA: 'RM',
 }
 
 export function formatearNumeroDocumento(

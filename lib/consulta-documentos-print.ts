@@ -327,6 +327,93 @@ export function imprimirActaDefuncion(data: ActaDefuncionData) {
   abrirVentanaImpresion(htmlActaDefuncion(data), `Acta defunción ${data.numero_doc}`)
 }
 
+export interface ReferenciaMedicaData extends DocumentoPrintBase {
+  texto: string
+  destino?: string
+  sospechas?: string[]
+  cargo_medico?: string
+  paciente_fecha_nac?: string
+}
+
+function estilosReferencia(): string {
+  return estilosActa() + `
+    .r-destino{margin-top:3mm;font-size:10.5pt;text-align:justify}
+    .r-destino b{color:${BRAND.navy}}
+    .r-sospecha-sec{font-size:10.5pt;font-weight:800;color:${BRAND.navy};margin-top:4mm}
+    .r-sospechas{margin-top:1.5mm;padding-left:9mm}
+    .r-sospechas li{margin-bottom:1mm;font-size:10pt}
+  `
+}
+
+export function htmlReferenciaMedica(data: ReferenciaMedicaData): string {
+  const origin = data.baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')
+  const cargo = (data.cargo_medico ?? 'Médico General').trim()
+  const medico = data.medico_nombre?.trim()
+    ? (/^dr/i.test(data.medico_nombre.trim()) ? data.medico_nombre.trim() : `DR. ${data.medico_nombre.trim()}`)
+    : 'DR. _______________________'
+
+  const destino = data.destino?.trim()
+  const destinoHtml = destino
+    ? `<p class="r-destino">Por los motivos anteriormente descritos se refiere para confirmación y tratamiento por especialista en: <b>${escapeHtmlDoc(destino)}</b>.</p>`
+    : ''
+
+  const sospechas = (data.sospechas ?? []).map(s => s.trim()).filter(Boolean)
+  const sospechasHtml = sospechas.length
+    ? `<div class="r-sospecha-sec">Sospecha de:</div>
+       <ol class="r-sospechas">${sospechas.map(s => `<li>${escapeHtmlDoc(s)}</li>`).join('')}</ol>`
+    : ''
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <title>Referencia ${escapeHtmlDoc(data.numero_doc)}</title>
+    <style>${estilosReferencia()}</style></head><body>
+    <div class="doc">
+      <div class="wm"><span>Clínicas Médicas Jerusalén</span></div>
+      <div class="doc-inner">
+        <span class="doc-no">Referencia No. ${escapeHtmlDoc(data.numero_doc)}</span>
+        <header class="a-hdr">
+          <div class="logo-row">
+            ${logoTicketHtml(origin, 60)}
+            <div>
+              <div class="a-name">Clínica Médica <span class="j">Jerusalén</span></div>
+              <div class="a-24h">Atención 365 días del año · 24 Horas</div>
+            </div>
+          </div>
+          <div class="a-addr">Col. Alemán, Calle Principal, Antiguo Local Clínica Sinaí · Tel.: 2246-3051</div>
+        </header>
+
+        <div class="a-title">REFERENCIA MÉDICA</div>
+
+        <div class="a-sec">Datos generales</div>
+        <div class="a-datos">
+          <div class="row">
+            <span><b>Nombre:</b> ${escapeHtmlDoc(data.paciente_nombre || '—')}</span>
+            <span><b>Edad:</b> ${escapeHtmlDoc(data.paciente_edad ?? '—')}</span>
+            <span><b>Fecha:</b> ${escapeHtmlDoc(data.fecha)}</span>
+          </div>
+          <div><b>Fecha de nacimiento:</b> ${escapeHtmlDoc(fmtFechaLargaDoc(data.paciente_fecha_nac))}</div>
+          <div><b>Número de identidad:</b> ${escapeHtmlDoc(data.paciente_codigo ?? '—')}</div>
+        </div>
+
+        <main class="a-body">${cuerpoDocHtml(data.texto)}</main>
+
+        ${destinoHtml}
+        ${sospechasHtml}
+
+        <div class="a-sign">
+          <div class="line"></div>
+          <div class="dr">${escapeHtmlDoc(medico)}</div>
+          <div class="cargo">${escapeHtmlDoc(cargo)}</div>
+          <div class="sello">FIRMA Y SELLO</div>
+        </div>
+      </div>
+    </div>
+    </body></html>`
+}
+
+export function imprimirReferenciaMedica(data: ReferenciaMedicaData) {
+  abrirVentanaImpresion(htmlReferenciaMedica(data), `Referencia ${data.numero_doc}`)
+}
+
 export function edadPacientePrint(fechaNac?: string): string {
   const e = calcularEdad(fechaNac)
   return e || '—'

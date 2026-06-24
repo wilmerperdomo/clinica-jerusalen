@@ -4,17 +4,18 @@ import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   FileText, FileHeart, Skull, Pill, Printer, Save, Upload,
-  FolderOpen, Trash2, Lock, CheckCircle2, Image as ImageIcon, RotateCcw,
+  FolderOpen, Trash2, Lock, CheckCircle2, Image as ImageIcon, RotateCcw, ExternalLink,
 } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { nombrePaciente, type PacienteConsulta } from '@/lib/consultas-utils'
 import { formatearNombreMedico } from '@/lib/medico-utils'
 import { reservarCorrelativoDocumento, type TipoDocCorrelativo } from '@/lib/consulta-correlativo'
 import {
-  imprimirRecetaMedica, imprimirConstanciaMedica, imprimirActaDefuncion, edadPacientePrint,
+  imprimirRecetaMedica, imprimirConstanciaMedica, imprimirActaDefuncion,
+  imprimirReferenciaMedica, edadPacientePrint,
   type RecetaPrintItem,
 } from '@/lib/consulta-documentos-print'
-import { plantillaConstancia, plantillaDefuncion } from '@/lib/consulta-plantillas-documentos'
+import { plantillaConstancia, plantillaDefuncion, plantillaReferencia } from '@/lib/consulta-plantillas-documentos'
 
 interface RecetaItem extends RecetaPrintItem {}
 
@@ -82,6 +83,10 @@ export default function ConsultaDocumentosPanel({
   const [tipoMuerte, setTipoMuerte] = useState('NATURAL')
   const [causasDefuncion, setCausasDefuncion] = useState('')
   const [cargoDefuncion, setCargoDefuncion] = useState('Médico General')
+  const [textoReferencia, setTextoReferencia] = useState('')
+  const [destinoReferencia, setDestinoReferencia] = useState('')
+  const [sospechasReferencia, setSospechasReferencia] = useState('')
+  const [cargoReferencia, setCargoReferencia] = useState('Médico General')
   const [notaArchivo, setNotaArchivo] = useState('')
   const [catArchivo, setCatArchivo] = useState('Laboratorio')
   const [subiendo, setSubiendo] = useState(false)
@@ -102,6 +107,7 @@ export default function ConsultaDocumentosPanel({
 
     const cm = (d ?? []).find(x => x.tipo === 'CONSTANCIA')
     const cd = (d ?? []).find(x => x.tipo === 'DEFUNCION')
+    const cr = (d ?? []).find(x => x.tipo === 'REFERENCIA')
     if (cm?.contenido) {
       const c = cm.contenido as { texto?: string; subtitulo?: string; cargo_medico?: string }
       setTextoConstancia(String(c.texto ?? ''))
@@ -118,6 +124,15 @@ export default function ConsultaDocumentosPanel({
       if (c.cargo_medico) setCargoDefuncion(c.cargo_medico)
     } else {
       setTextoDefuncion('')
+    }
+    if (cr?.contenido) {
+      const c = cr.contenido as { texto?: string; destino?: string; sospechas?: string[]; cargo_medico?: string }
+      setTextoReferencia(String(c.texto ?? ''))
+      if (c.destino) setDestinoReferencia(c.destino)
+      if (Array.isArray(c.sospechas)) setSospechasReferencia(c.sospechas.join('\n'))
+      if (c.cargo_medico) setCargoReferencia(c.cargo_medico)
+    } else {
+      setTextoReferencia('')
     }
   }, [sb, consultaId])
 
@@ -140,6 +155,11 @@ export default function ConsultaDocumentosPanel({
   useEffect(() => {
     if (docs.some(d => d.tipo === 'DEFUNCION')) return
     setTextoDefuncion(plantillaDefuncion(ctxPlantilla))
+  }, [docs, consultaId, pacienteCompleto, medicoNombre, impresionDiagnostica, fechaConsulta]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (docs.some(d => d.tipo === 'REFERENCIA')) return
+    setTextoReferencia(plantillaReferencia(ctxPlantilla))
   }, [docs, consultaId, pacienteCompleto, medicoNombre, impresionDiagnostica, fechaConsulta]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -307,6 +327,34 @@ export default function ConsultaDocumentosPanel({
     })
   }
 
+  async function guardarEImprimirReferencia() {
+    if (!textoReferencia.trim()) { alert('Escriba la narrativa de la referencia médica.'); return }
+    if (!destinoReferencia.trim()) { alert('Indique el hospital o especialidad de destino.'); return }
+    const sospechasArr = sospechasReferencia.split('\n').map(s => s.trim()).filter(Boolean)
+    const prev = docs.find(d => d.tipo === 'REFERENCIA')
+    const doc = await registrarDocumento('REFERENCIA', {
+      texto: textoReferencia,
+      destino: destinoReferencia,
+      sospechas: sospechasArr,
+      cargo_medico: cargoReferencia,
+    }, prev?.id)
+    if (!doc) return
+    imprimirReferenciaMedica({
+      numero_doc: doc.numero_doc,
+      fecha: fechaHoy,
+      paciente_nombre: pacNombre,
+      paciente_codigo: pacCodigo,
+      paciente_edad: pacEdad,
+      paciente_fecha_nac: paciente?.fecha_nac,
+      medico_nombre: medicoNombre,
+      texto: textoReferencia,
+      destino: destinoReferencia,
+      sospechas: sospechasArr,
+      cargo_medico: cargoReferencia,
+      baseUrl: printBase,
+    })
+  }
+
   async function subirArchivo(file: File) {
     if (!file) return
     setSubiendo(true)
@@ -352,6 +400,7 @@ export default function ConsultaDocumentosPanel({
   }
 
   const recetasEmitidas = docs.filter(d => d.tipo === 'RECETA')
+  const docReferencia = docs.find(d => d.tipo === 'REFERENCIA')
   const docConstancia = docs.find(d => d.tipo === 'CONSTANCIA')
   const docDefuncion = docs.find(d => d.tipo === 'DEFUNCION')
 
@@ -408,6 +457,70 @@ export default function ConsultaDocumentosPanel({
             <p className="text-[11px] text-purple-700/80 mt-2">
               {recetaItems.length} medicamento(s) · media carta horizontal · correlativo al imprimir
             </p>
+          </div>
+
+          {/* REFERENCIA MÉDICA — siempre disponible */}
+          <div className="rounded-xl border border-sky-200 bg-sky-50/40 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <ExternalLink className="w-4 h-4 text-sky-600" />
+              <span className="font-semibold text-sky-900">Referencia médica</span>
+              {docReferencia && (
+                <span className="text-[10px] font-mono bg-sky-100 text-sky-800 px-2 py-0.5 rounded">{docReferencia.numero_doc}</span>
+              )}
+              <span className="text-[10px] bg-sky-200 text-sky-800 px-2 py-0.5 rounded-full font-bold ml-auto">Sin restricción de pago</span>
+            </div>
+            <p className="text-[11px] text-sky-700/80 mb-2">
+              Para pacientes que requieren valoración hospitalaria o especializada.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="text-[11px] font-medium text-sky-800">Destino (hospital / especialidad)</label>
+                <input
+                  value={destinoReferencia}
+                  onChange={e => setDestinoReferencia(e.target.value)}
+                  placeholder="Hospital Escuela Universitario / Cardiología"
+                  className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 focus:ring-sky-300 outline-none bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium text-sky-800">Cargo del médico</label>
+                <input
+                  value={cargoReferencia}
+                  onChange={e => setCargoReferencia(e.target.value)}
+                  placeholder="Médico General"
+                  className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 focus:ring-sky-300 outline-none bg-white"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-[11px] text-sky-700/80">Use <b>**texto**</b> para resaltar en negrita.</span>
+              <button type="button" onClick={() => setTextoReferencia(plantillaReferencia(ctxPlantilla))}
+                className="flex items-center gap-1 text-[11px] text-sky-700 hover:text-sky-900 font-medium">
+                <RotateCcw className="w-3 h-3" /> Restaurar plantilla
+              </button>
+            </div>
+            <textarea
+              value={textoReferencia}
+              onChange={e => setTextoReferencia(e.target.value)}
+              rows={8}
+              placeholder="Antecedentes, hallazgos clínicos, signos vitales y motivo de referencia..."
+              className="w-full border rounded-lg px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-sky-300 outline-none bg-white font-[inherit] leading-relaxed"
+            />
+            <div className="mt-2">
+              <label className="text-[11px] font-medium text-sky-800">Sospecha diagnóstica (una por línea)</label>
+              <textarea
+                value={sospechasReferencia}
+                onChange={e => setSospechasReferencia(e.target.value)}
+                rows={4}
+                placeholder={'Fibrilación auricular\nNeuropatía periférica'}
+                className="w-full border rounded-lg px-3 py-2 text-sm mt-0.5 focus:ring-2 focus:ring-sky-300 outline-none bg-white leading-relaxed"
+              />
+            </div>
+            <button type="button" onClick={guardarEImprimirReferencia} disabled={guardando}
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold rounded-lg disabled:opacity-50">
+              <Save className="w-3.5 h-3.5" />
+              {docReferencia ? 'Actualizar e imprimir' : 'Generar e imprimir'}
+            </button>
           </div>
 
           {/* CONSTANCIA — pagada o super administrador */}

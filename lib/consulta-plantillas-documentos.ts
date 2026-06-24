@@ -19,6 +19,15 @@ export const PLANTILLA_DEFUNCION = `Paciente de {{EDAD}} de edad, residente en {
 
 **POR LO ANTERIOR DESCRITO, SE DECLARA HORA DE MUERTE A LAS [hora] HRS DEL DÍA [día y fecha], EN [lugar], M.D.C., FRANCISCO MORAZÁN, HONDURAS.**`
 
+export const PLANTILLA_REFERENCIA = `Paciente residente en {{DIRECCION}}. Con antecedentes personales patológicos de:
+1. [Antecedente 1]
+2. [Antecedente 2]
+3. [Antecedente 3]
+
+Se realiza visita domiciliaria / valoración en clínica y examen físico completo, encontrándose con signos vitales así: **PA: [valor] mmHg, FC: [valor] lpm, PULSO: [valor] ppm, FR: [valor] rpm, SAT: [valor]%**. Glasgow [valor]/15. [Describa hallazgos relevantes del examen físico y estado general del paciente].
+
+Se orienta a la familia sobre los riesgos del paciente y la necesidad de valoración especializada inmediata.`
+
 export interface ContextoPlantillaDoc {
   paciente?: PacienteConsulta & { direccion?: string; fecha_nac?: string }
   medicoNombre?: string
@@ -82,4 +91,8 @@ export function plantillaConstancia(ctx: ContextoPlantillaDoc): string {
 
 export function plantillaDefuncion(ctx: ContextoPlantillaDoc): string {
   return aplicarPlantilla(PLANTILLA_DEFUNCION, ctx)
+}
+
+export function plantillaReferencia(ctx: ContextoPlantillaDoc): string {
+  return aplicarPlantilla(PLANTILLA_REFERENCIA, ctx)
 }
