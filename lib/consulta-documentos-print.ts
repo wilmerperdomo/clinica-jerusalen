@@ -1,6 +1,6 @@
 import { calcularEdad } from '@/lib/consultas-utils'
 import { htmlRecetaPlantilla } from '@/lib/receta-plantilla-assets'
-import { BRAND, FISCAL } from '@/lib/brand'
+import { BRAND } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
 
 export interface RecetaPrintItem {
@@ -19,28 +19,6 @@ export interface DocumentoPrintBase {
   medico_nombre?: string
   medico_registro?: string
   baseUrl?: string
-}
-
-function logoHtml(baseUrl?: string): string {
-  const origin = baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')
-  return `<div style="text-align:center;margin-bottom:12px">
-    ${logoTicketHtml(origin, 'mobile')}
-    <p style="font-size:12px;font-weight:bold;color:#003366;margin:6px 0 2px">${BRAND.nombre}</p>
-    <p style="font-size:10px;color:#666;margin:0">RTN: ${FISCAL.rtn} · Correo: ${FISCAL.correo} · Tel: ${FISCAL.telefonos}</p>
-  </div>`
-}
-
-function estilosBase(): string {
-  return `
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#1a1a1a;padding:24px 32px;line-height:1.55}
-    .doc-no{text-align:right;font-size:11px;color:#555;font-family:monospace;margin-bottom:8px}
-    h1{font-size:18px;text-align:center;color:${BRAND.navy};margin:12px 0 20px;letter-spacing:0.05em;text-transform:uppercase}
-    .cuerpo{text-align:justify;margin:16px 0}
-    .firma{margin-top:48px;text-align:center}
-    .firma-linea{border-top:1px solid #333;width:280px;margin:0 auto;padding-top:6px;font-size:12px}
-    @media print{@page{margin:15mm} body{padding:0}}
-  `
 }
 
 function abrirVentanaImpresion(html: string, titulo: string) {
@@ -89,7 +67,7 @@ function escapeHtmlDoc(s: string): string {
 }
 
 /** Texto editable → párrafos justificados, con soporte de **negrita**. */
-function cuerpoConstanciaHtml(texto: string): string {
+function cuerpoDocHtml(texto: string): string {
   const bloques = texto.replace(/\r\n/g, '\n').split(/\n{2,}/).map(b => b.trim()).filter(Boolean)
   return bloques.map(bloque => {
     const conSaltos = escapeHtmlDoc(bloque).replace(/\n/g, '<br>')
@@ -188,7 +166,7 @@ export function htmlConstanciaMedica(data: DocumentoPrintBase & {
           ${subtitulo ? `<h2>${escapeHtmlDoc(subtitulo)}</h2>` : ''}
         </div>
 
-        <main class="c-body">${cuerpoConstanciaHtml(data.texto)}</main>
+        <main class="c-body">${cuerpoDocHtml(data.texto)}</main>
 
         <div class="c-sign">
           <div class="dr">${escapeHtmlDoc(medico)}</div>
@@ -213,24 +191,140 @@ export function imprimirConstanciaMedica(data: DocumentoPrintBase & {
   abrirVentanaImpresion(htmlConstanciaMedica(data), `Constancia ${data.numero_doc}`)
 }
 
-export function imprimirActaDefuncion(data: DocumentoPrintBase & { texto: string }) {
-  const html = `
-    <style>${estilosBase()}</style>
-    ${logoHtml(data.baseUrl)}
-    <p class="doc-no">Acta No. ${data.numero_doc}</p>
-    <h1>Constancia de Defunción</h1>
-    <p style="margin-bottom:12px"><b>Nombre:</b> ${data.paciente_nombre}<br>
-    <b>Identidad:</b> ${data.paciente_codigo ?? '—'}<br>
-    <b>Edad:</b> ${data.paciente_edad ?? '—'}<br>
-    <b>Fecha:</b> ${data.fecha}</p>
-    <div class="cuerpo">
-      <p>Mediante el presente documento médico constato lo siguiente:</p>
-      <p style="margin-top:12px">${data.texto}</p>
+export interface ActaDefuncionData extends DocumentoPrintBase {
+  texto: string
+  tipo_muerte?: string
+  causas?: string[]
+  cargo_medico?: string
+  paciente_fecha_nac?: string
+  paciente_direccion?: string
+}
+
+function fmtFechaLargaDoc(fecha?: string): string {
+  if (!fecha) return '—'
+  try {
+    return new Date(fecha + 'T12:00:00').toLocaleDateString('es-HN', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    })
+  } catch {
+    return fecha
+  }
+}
+
+function estilosActa(): string {
+  return `
+    *{margin:0;padding:0;box-sizing:border-box}
+    @page{size:letter portrait;margin:0}
+    html,body{width:216mm;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#1a1a1a;font-size:11pt;line-height:1.5}
+    .doc{position:relative;width:216mm;min-height:279mm;display:flex;flex-direction:column;
+      padding:15mm 20mm 0;overflow:hidden}
+    .wm{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:0}
+    .wm span{font-family:'Brush Script MT','Segoe Script',cursive;font-size:50pt;color:${BRAND.navy};
+      opacity:0.055;white-space:nowrap;transform:rotate(-8deg)}
+    .doc-inner{position:relative;z-index:1;flex:1;display:flex;flex-direction:column}
+
+    .a-hdr{text-align:center;border-bottom:2pt solid ${BRAND.navy};padding-bottom:3.5mm;margin-bottom:6mm}
+    .a-hdr .logo-row{display:flex;align-items:center;justify-content:center;gap:5mm;margin-bottom:1.2mm}
+    .a-hdr .logo-row img{width:17mm!important;max-width:17mm!important;height:auto!important;margin:0!important}
+    .a-name{font-family:Georgia,'Times New Roman',serif;font-size:20pt;font-weight:700;color:${BRAND.navy};line-height:1.05}
+    .a-name .j{font-family:'Brush Script MT','Segoe Script',cursive;font-weight:400}
+    .a-24h{font-size:10.5pt;font-weight:700;color:${BRAND.navy};margin-top:0.4mm}
+    .a-addr{font-size:8pt;color:#444;margin-top:0.4mm}
+    .doc-no{position:absolute;top:0;right:0;font-size:8pt;color:#777;font-family:Consolas,monospace}
+
+    .a-title{text-align:center;font-size:15pt;font-weight:800;letter-spacing:0.1em;color:#111;margin-bottom:6mm}
+
+    .a-sec{font-size:10.5pt;font-weight:800;letter-spacing:0.05em;color:${BRAND.navy};
+      margin:5mm 0 2mm;text-transform:uppercase}
+    .a-datos{font-size:10.5pt;line-height:1.7}
+    .a-datos .row{display:flex;flex-wrap:wrap;gap:8mm}
+    .a-datos b{color:#111}
+
+    .a-body{margin-top:2mm}
+    .a-body p{text-align:justify;margin-bottom:3.5mm}
+
+    .a-tipo{margin-top:3mm;font-size:10.5pt}
+    .a-tipo b{letter-spacing:0.04em;color:${BRAND.navy}}
+
+    .a-causas{margin-top:1.5mm;padding-left:9mm}
+    .a-causas li{margin-bottom:1mm;text-transform:uppercase;font-size:10pt}
+
+    .a-sign{margin-top:14mm;text-align:center}
+    .a-sign .line{width:72mm;border-top:1pt solid #333;margin:0 auto 1.5mm}
+    .a-sign .dr{font-size:11.5pt;font-weight:700;color:#111}
+    .a-sign .cargo{font-size:10.5pt;color:#333}
+    .a-sign .sello{font-size:10pt;font-weight:700;letter-spacing:0.06em;color:#111;margin-top:0.5mm}
+
+    @media print{.doc{min-height:279mm}}
+  `
+}
+
+export function htmlActaDefuncion(data: ActaDefuncionData): string {
+  const origin = data.baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')
+  const tipoMuerte = (data.tipo_muerte ?? 'NATURAL').trim().toUpperCase()
+  const cargo = (data.cargo_medico ?? 'Médico General').trim()
+  const medico = data.medico_nombre?.trim()
+    ? (/^dr/i.test(data.medico_nombre.trim()) ? data.medico_nombre.trim() : `DR. ${data.medico_nombre.trim()}`)
+    : 'DR. _______________________'
+
+  const causas = (data.causas ?? []).map(c => c.trim()).filter(Boolean)
+  const causasHtml = causas.length
+    ? `<div class="a-sec">Causa de fallecimiento:</div>
+       <ol class="a-causas">${causas.map(c => `<li>${escapeHtmlDoc(c)}</li>`).join('')}</ol>`
+    : ''
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <title>Acta de Defunción ${escapeHtmlDoc(data.numero_doc)}</title>
+    <style>${estilosActa()}</style></head><body>
+    <div class="doc">
+      <div class="wm"><span>Clínicas Médicas Jerusalén</span></div>
+      <div class="doc-inner">
+        <span class="doc-no">Acta No. ${escapeHtmlDoc(data.numero_doc)}</span>
+        <header class="a-hdr">
+          <div class="logo-row">
+            ${logoTicketHtml(origin, 60)}
+            <div>
+              <div class="a-name">Clínica Médica <span class="j">Jerusalén</span></div>
+              <div class="a-24h">Atención 365 días del año · 24 Horas</div>
+            </div>
+          </div>
+          <div class="a-addr">Col. Alemán, Calle Principal, Antiguo Local Clínica Sinaí · Tel.: 2246-3051</div>
+        </header>
+
+        <div class="a-title">ACTA DE DEFUNCIÓN</div>
+
+        <div class="a-sec">Datos generales</div>
+        <div class="a-datos">
+          <div class="row">
+            <span><b>Nombre:</b> ${escapeHtmlDoc(data.paciente_nombre || '—')}</span>
+            <span><b>Edad:</b> ${escapeHtmlDoc(data.paciente_edad ?? '—')}</span>
+            <span><b>Fecha:</b> ${escapeHtmlDoc(data.fecha)}</span>
+          </div>
+          <div><b>Fecha de nacimiento:</b> ${escapeHtmlDoc(fmtFechaLargaDoc(data.paciente_fecha_nac))}</div>
+          <div><b>Número de identidad:</b> ${escapeHtmlDoc(data.paciente_codigo ?? '—')}</div>
+          <div><b>Dirección:</b> ${escapeHtmlDoc(data.paciente_direccion?.trim() || '—')}</div>
+        </div>
+
+        <main class="a-body">${cuerpoDocHtml(data.texto)}</main>
+
+        <div class="a-tipo"><b>Tipo de muerte:</b> ${escapeHtmlDoc(tipoMuerte)}</div>
+
+        ${causasHtml}
+
+        <div class="a-sign">
+          <div class="line"></div>
+          <div class="dr">${escapeHtmlDoc(medico)}</div>
+          <div class="cargo">${escapeHtmlDoc(cargo)}</div>
+          <div class="sello">FIRMA Y SELLO</div>
+        </div>
+      </div>
     </div>
-    <div class="firma">
-      <p class="firma-linea">${data.medico_nombre ?? 'Médico tratante'}<br>Firma y sello</p>
-    </div>`
-  abrirVentanaImpresion(html, `Acta defunción ${data.numero_doc}`)
+    </body></html>`
+}
+
+export function imprimirActaDefuncion(data: ActaDefuncionData) {
+  abrirVentanaImpresion(htmlActaDefuncion(data), `Acta defunción ${data.numero_doc}`)
 }
 
 export function edadPacientePrint(fechaNac?: string): string {

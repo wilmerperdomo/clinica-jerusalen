@@ -15,9 +15,9 @@ Se realizó al paciente interrogatorio y exploración física completa, diagnost
 
 Para los fines que el interesado convenga, se extiende la presente constancia el día {{FECHA}} en Tegucigalpa, M.D.C., Francisco Morazán.`
 
-export const PLANTILLA_DEFUNCION = `Mediante el presente documento médico constato que {{PACIENTE}}, con número de identidad {{IDENTIDAD}}, de {{EDAD}} de edad, residente en {{DIRECCION}}, cuya fecha de nacimiento fue el {{FECHA_NAC}}, en fecha {{FECHA}}:
+export const PLANTILLA_DEFUNCION = `Paciente de {{EDAD}} de edad, residente en {{DIRECCION}}. Con antecedentes personales patológicos de [describa antecedentes]. Familiares refieren encontrar al paciente [describa circunstancias, lugar y hora]. Se acude a revisión médica y se le realiza examen físico completo, encontrándose con signos vitales así: **PA: no audible, FC: 0 lpm, PULSO: 0 ppm, FR: 0 rpm, SAT: 0%. Glasgow 3/15**, sin respuesta al dolor, reflejo corneal y pupilar ausente, mucosa oral cianótica, frialdad, cianosis distal y ausencia de esfuerzo respiratorio.
 
-[Describa la narrativa del deceso: causa médica, circunstancias, lugar, hora aproximada y demás datos relevantes.]`
+**POR LO ANTERIOR DESCRITO, SE DECLARA HORA DE MUERTE A LAS [hora] HRS DEL DÍA [día y fecha], EN [lugar], M.D.C., FRANCISCO MORAZÁN, HONDURAS.**`
 
 export interface ContextoPlantillaDoc {
   paciente?: PacienteConsulta & { direccion?: string; fecha_nac?: string }

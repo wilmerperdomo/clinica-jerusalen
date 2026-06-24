@@ -79,6 +79,9 @@ export default function ConsultaDocumentosPanel({
   const [subtituloConstancia, setSubtituloConstancia] = useState('INCAPACIDAD')
   const [cargoMedico, setCargoMedico] = useState('Médico General')
   const [textoDefuncion, setTextoDefuncion] = useState('')
+  const [tipoMuerte, setTipoMuerte] = useState('NATURAL')
+  const [causasDefuncion, setCausasDefuncion] = useState('')
+  const [cargoDefuncion, setCargoDefuncion] = useState('Médico General')
   const [notaArchivo, setNotaArchivo] = useState('')
   const [catArchivo, setCatArchivo] = useState('Laboratorio')
   const [subiendo, setSubiendo] = useState(false)
@@ -108,7 +111,11 @@ export default function ConsultaDocumentosPanel({
       setTextoConstancia('')
     }
     if (cd?.contenido) {
-      setTextoDefuncion(String((cd.contenido as { texto?: string }).texto ?? ''))
+      const c = cd.contenido as { texto?: string; tipo_muerte?: string; causas?: string[]; cargo_medico?: string }
+      setTextoDefuncion(String(c.texto ?? ''))
+      if (c.tipo_muerte) setTipoMuerte(c.tipo_muerte)
+      if (Array.isArray(c.causas)) setCausasDefuncion(c.causas.join('\n'))
+      if (c.cargo_medico) setCargoDefuncion(c.cargo_medico)
     } else {
       setTextoDefuncion('')
     }
@@ -274,8 +281,14 @@ export default function ConsultaDocumentosPanel({
 
   async function guardarEImprimirDefuncion() {
     if (!textoDefuncion.trim()) { alert('Escriba el motivo o narrativa de defunción.'); return }
+    const causasArr = causasDefuncion.split('\n').map(c => c.trim()).filter(Boolean)
     const prev = docs.find(d => d.tipo === 'DEFUNCION')
-    const doc = await registrarDocumento('DEFUNCION', { texto: textoDefuncion }, prev?.id)
+    const doc = await registrarDocumento('DEFUNCION', {
+      texto: textoDefuncion,
+      tipo_muerte: tipoMuerte,
+      causas: causasArr,
+      cargo_medico: cargoDefuncion,
+    }, prev?.id)
     if (!doc) return
     imprimirActaDefuncion({
       numero_doc: doc.numero_doc,
@@ -283,8 +296,14 @@ export default function ConsultaDocumentosPanel({
       paciente_nombre: pacNombre,
       paciente_codigo: pacCodigo,
       paciente_edad: pacEdad,
+      paciente_fecha_nac: paciente?.fecha_nac,
+      paciente_direccion: pacienteCompleto?.direccion,
       medico_nombre: medicoNombre,
       texto: textoDefuncion,
+      tipo_muerte: tipoMuerte,
+      causas: causasArr,
+      cargo_medico: cargoDefuncion,
+      baseUrl: printBase,
     })
   }
 
@@ -466,7 +485,8 @@ export default function ConsultaDocumentosPanel({
               </p>
             ) : (
               <>
-                <div className="flex justify-end mt-1">
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-[11px] text-slate-500">Datos del paciente se completan automáticamente. Use <b>**texto**</b> para negrita.</span>
                   <button type="button" onClick={() => setTextoDefuncion(plantillaDefuncion(ctxPlantilla))}
                     className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 font-medium">
                     <RotateCcw className="w-3 h-3" /> Restaurar plantilla
@@ -476,9 +496,39 @@ export default function ConsultaDocumentosPanel({
                   value={textoDefuncion}
                   onChange={e => setTextoDefuncion(e.target.value)}
                   rows={8}
-                  placeholder="Narrativa médica del deceso, causa, circunstancias..."
+                  placeholder="Narrativa médica del deceso: antecedentes, hallazgos, signos vitales, hora y lugar de muerte..."
                   className="w-full border rounded-lg px-3 py-2 text-sm mt-1 focus:ring-2 focus:ring-slate-300 outline-none bg-white font-[inherit] leading-relaxed"
                 />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  <div>
+                    <label className="text-[11px] font-medium text-slate-700">Tipo de muerte</label>
+                    <input
+                      value={tipoMuerte}
+                      onChange={e => setTipoMuerte(e.target.value)}
+                      placeholder="NATURAL"
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 focus:ring-slate-300 outline-none bg-white uppercase"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-slate-700">Cargo del médico</label>
+                    <input
+                      value={cargoDefuncion}
+                      onChange={e => setCargoDefuncion(e.target.value)}
+                      placeholder="Médico General"
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm mt-0.5 focus:ring-2 focus:ring-slate-300 outline-none bg-white"
+                    />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <label className="text-[11px] font-medium text-slate-700">Causas de fallecimiento (una por línea)</label>
+                  <textarea
+                    value={causasDefuncion}
+                    onChange={e => setCausasDefuncion(e.target.value)}
+                    rows={5}
+                    placeholder={'Paro cardiorespiratorio secundario\nInfarto agudo de miocardio\nInsuficiencia cardiaca congestiva'}
+                    className="w-full border rounded-lg px-3 py-2 text-sm mt-0.5 focus:ring-2 focus:ring-slate-300 outline-none bg-white leading-relaxed"
+                  />
+                </div>
                 <button type="button" onClick={guardarEImprimirDefuncion} disabled={guardando}
                   className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg disabled:opacity-50">
                   <Save className="w-3.5 h-3.5" />
