@@ -11,9 +11,9 @@ export default function PortalLoginPage() {
   const [state, formAction, pending] = useActionState(loginPortal, estadoInicial)
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-dvh flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-        <div className="px-8 py-7 text-center text-white" style={{ background: 'linear-gradient(135deg,#003366,#0a4f8a)' }}>
+        <div className="px-6 sm:px-8 py-7 text-center text-white" style={{ background: 'linear-gradient(135deg,#003366,#0a4f8a)' }}>
           <div className="w-14 h-14 rounded-full bg-white/15 flex items-center justify-center mx-auto mb-3">
             <FlaskConical className="w-7 h-7" />
           </div>
@@ -22,7 +22,7 @@ export default function PortalLoginPage() {
           <p className="text-xs text-white/60 mt-2">Consulte y descargue sus resultados de laboratorio</p>
         </div>
 
-        <form action={formAction} className="p-7 space-y-4">
+        <form action={formAction} className="p-6 sm:p-7 space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Usuario</label>
             <div className="relative">

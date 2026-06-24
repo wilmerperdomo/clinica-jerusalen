@@ -26,18 +26,18 @@ export default async function PortalHome() {
     : 'Paciente'
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <header className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: '#0891b2' }}>
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      <header className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0" style={{ background: '#0891b2' }}>
             <FlaskConical className="w-5 h-5" />
           </div>
-          <div>
-            <p className="font-black text-gray-900 leading-tight">{nombre}</p>
-            <p className="text-xs text-gray-500">{BRAND.nombre} · Portal del paciente</p>
+          <div className="min-w-0">
+            <p className="font-black text-gray-900 leading-tight truncate">{nombre}</p>
+            <p className="text-xs text-gray-500 truncate">{BRAND.nombre} · Portal del paciente</p>
           </div>
         </div>
-        <form action={logoutPortal}>
+        <form action={logoutPortal} className="shrink-0">
           <button className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 border rounded-lg px-3 py-1.5">
             <LogOut className="w-4 h-4" /> Salir
           </button>
