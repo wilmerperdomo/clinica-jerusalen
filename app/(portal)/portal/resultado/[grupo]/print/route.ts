@@ -25,6 +25,8 @@ export async function GET(
   if (!res) return new NextResponse('Resultado no encontrado', { status: 404 })
 
   const { grupo, filas } = res
+  const tieneValores = filas.some(f => f.valor && f.valor !== '—' && f.valor.trim().length > 0)
+  if (!tieneValores) return new NextResponse('Sin resultados de laboratorio para descargar', { status: 404 })
   const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
   const origin = new URL(request.url).origin
 

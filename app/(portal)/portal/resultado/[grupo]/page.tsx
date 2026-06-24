@@ -1,6 +1,6 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ShieldCheck, FileText } from 'lucide-react'
+import { ArrowLeft, Download, ShieldCheck, FileText } from 'lucide-react'
 import { BRAND } from '@/lib/brand'
 import { getSesionPortal } from '@/lib/portal/session'
 import { cargarPortalPaciente, filasDeGrupo, archivosDeGrupo } from '@/lib/portal/data'
@@ -39,6 +39,8 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
   const fechaResultado = grupo.ordenes.map(o => o.fecha_resultado).filter(Boolean).sort().pop()
   const soloMaquila = archivos.length > 0 && filas.every(f => !f.valor?.trim())
 
+  const tieneInformeClinica = filas.some(f => f.valor && f.valor !== '—' && f.valor.trim().length > 0)
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
@@ -46,6 +48,17 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           <ArrowLeft className="w-4 h-4" /> Volver
         </Link>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          {tieneInformeClinica && (
+            <a
+              href={`/portal/resultado/${encodeURIComponent(grupoId)}/print?encabezado=clinica`}
+              target="_blank"
+              rel="noopener"
+              className="flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg px-4 py-2"
+              style={{ backgroundColor: '#0891b2' }}
+            >
+              <Download className="w-4 h-4" /> Descargar informe
+            </a>
+          )}
           {archivos.map(a => (
             <a
               key={a.id}
@@ -74,7 +87,7 @@ export default async function PortalResultado({ params }: { params: Promise<{ gr
           <p><span className="text-gray-500">Fecha resultado:</span> {fmtFecha(fechaResultado ?? undefined)}</p>
         </div>
 
-        {!soloMaquila && (
+        {!soloMaquila && tieneInformeClinica && (
           <>
         {/* Tabla para tablet/escritorio */}
         <div className="hidden md:block overflow-x-auto">
