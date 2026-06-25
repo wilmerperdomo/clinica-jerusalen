@@ -20,7 +20,7 @@ export default async function PromocionesPage() {
 
   let promosQuery = supabase
     .from('promociones')
-    .select('*')
+    .select('*, servicio:servicios(id, nombre, tipo, precio)')
     .order('created_at', { ascending: false })
     .limit(200)
 
@@ -35,10 +35,11 @@ export default async function PromocionesPage() {
     campanasQuery = campanasQuery.or(`sucursal_id.eq.${sucursalId},sucursal_id.is.null`)
   }
 
-  const [{ data: promociones }, { data: campanas }, { data: sucursales }, statsRes] = await Promise.all([
+  const [{ data: promociones }, { data: campanas }, { data: sucursales }, { data: servicios }, statsRes] = await Promise.all([
     promosQuery,
     campanasQuery,
     supabase.from('sucursales').select('id, nombre').order('nombre'),
+    supabase.from('servicios').select('id, nombre, tipo, precio').eq('activo', true).order('nombre'),
     (() => {
       let q = supabase.from('pacientes').select('id, celular, telefono, correo, activo').limit(8000)
       if (!esSuperAdmin && sucursalId) q = q.eq('sucursal_id', sucursalId)
@@ -62,6 +63,7 @@ export default async function PromocionesPage() {
       promocionesIniciales={promociones ?? []}
       campanasIniciales={campanas ?? []}
       sucursales={sucursales ?? []}
+      servicios={servicios ?? []}
       esSuperAdmin={esSuperAdmin}
       sucursalId={sucursalId}
       sucursalNombre={sucursalNombre}

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient, createClient } from '@/lib/supabase/server'
-import { procesarPromocionesAutomaticas } from '@/lib/promociones-sender'
+import { procesarPromocionesCompleto } from '@/lib/promociones-reglas'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,7 +32,7 @@ async function procesar(req: Request, permitirSesion = false) {
     }, { status: 500 })
   }
 
-  const res = await procesarPromocionesAutomaticas(supabase)
+  const res = await procesarPromocionesCompleto(supabase)
   return NextResponse.json(res, { status: res.ok ? 200 : 207 })
 }
 

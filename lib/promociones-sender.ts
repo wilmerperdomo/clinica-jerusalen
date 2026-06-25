@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { limpiarCelular } from '@/lib/mensajes-paciente'
+import { urlTrackingApertura } from '@/lib/promociones-plantillas'
 import {
   asuntoPromocion,
   mensajePromocion,
@@ -8,7 +9,7 @@ import {
   type Promocion,
 } from '@/lib/promociones-utils'
 
-type PacienteEnvio = {
+type DestinatarioEnvio = {
   id: number
   nombre: string
   apellido1?: string | null
@@ -18,7 +19,8 @@ type PacienteEnvio = {
 }
 
 type EnvioPendiente = EnvioRegistro & {
-  paciente?: PacienteEnvio | null
+  paciente?: DestinatarioEnvio | null
+  contacto?: DestinatarioEnvio | null
 }
 
 type CampanaAutomatica = Campana & {
@@ -71,7 +73,7 @@ function sendgridConfig() {
 }
 
 async function enviarWhatsApp(
-  paciente: PacienteEnvio,
+  destinatario: DestinatarioEnvio,
   promo: Promocion,
   mensajePersonalizado?: string | null,
 ): Promise<EnvioResultado> {
@@ -80,11 +82,11 @@ async function enviarWhatsApp(
     return { ok: false, proveedor: 'whatsapp', error: 'Faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID' }
   }
 
-  const to = limpiarCelular(paciente.celular, paciente.telefono)
-  if (!to) return { ok: false, proveedor: 'whatsapp', error: 'Paciente sin WhatsApp válido' }
+  const to = limpiarCelular(destinatario.celular, destinatario.telefono)
+  if (!to) return { ok: false, proveedor: 'whatsapp', error: 'Destinatario sin WhatsApp válido' }
 
   const url = `https://graph.facebook.com/${cfg.apiVersion}/${cfg.phoneNumberId}/messages`
-  const mensaje = mensajePromocion(promo, paciente, mensajePersonalizado)
+  const mensaje = mensajePromocion(promo, destinatario, mensajePersonalizado)
   const body = cfg.templateName
     ? {
         messaging_product: 'whatsapp',
@@ -97,7 +99,7 @@ async function enviarWhatsApp(
             {
               type: 'body',
               parameters: [
-                { type: 'text', text: `${paciente.nombre} ${paciente.apellido1 ?? ''}`.trim() },
+                { type: 'text', text: `${destinatario.nombre} ${destinatario.apellido1 ?? ''}`.trim() },
                 { type: 'text', text: promo.titulo },
               ],
             },
@@ -135,18 +137,23 @@ async function enviarWhatsApp(
 }
 
 async function enviarEmail(
-  paciente: PacienteEnvio,
+  destinatario: DestinatarioEnvio,
   promo: Promocion,
   mensajePersonalizado?: string | null,
+  trackingToken?: string | null,
 ): Promise<EnvioResultado> {
   const cfg = resendConfig()
-  if (!paciente.correo?.trim()) return { ok: false, proveedor: 'resend', error: 'Paciente sin correo válido' }
+  if (!destinatario.correo?.trim()) return { ok: false, proveedor: 'resend', error: 'Destinatario sin correo válido' }
 
-  const mensaje = mensajePromocion(promo, paciente, mensajePersonalizado)
+  const mensaje = mensajePromocion(promo, destinatario, mensajePersonalizado)
+  const pixel = trackingToken
+    ? `<img src="${urlTrackingApertura(trackingToken)}" width="1" height="1" alt="" style="display:none" />`
+    : ''
   const html = `
     <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937">
       <p>${mensaje.replace(/\n/g, '<br>')}</p>
       ${promo.imagen_url ? `<p><img src="${promo.imagen_url}" alt="${promo.titulo}" style="max-width:640px;width:100%;border-radius:12px" /></p>` : ''}
+      ${pixel}
     </div>
   `
   if (!cfg.apiKey) {
@@ -159,7 +166,7 @@ async function enviarEmail(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        personalizations: [{ to: [{ email: paciente.correo }] }],
+        personalizations: [{ to: [{ email: destinatario.correo }] }],
         from: { email: sg.from.includes('<') ? sg.from.match(/<([^>]+)>/)?.[1] ?? sg.from : sg.from },
         subject: asuntoPromocion(promo),
         content: [
@@ -181,7 +188,7 @@ async function enviarEmail(
     },
     body: JSON.stringify({
       from: cfg.from,
-      to: [paciente.correo],
+      to: [destinatario.correo],
       subject: asuntoPromocion(promo),
       text: mensaje,
       html,
@@ -265,7 +272,7 @@ export async function procesarPromocionesAutomaticas(
 
     const { data: pendientes, error: errPend } = await supabase
       .from('promocion_envios')
-      .select('*, paciente:pacientes(id,nombre,apellido1,celular,telefono,correo)')
+      .select('*, paciente:pacientes(id,nombre,apellido1,celular,telefono,correo), contacto:promocion_contactos(id,nombre,celular,correo)')
       .eq('campana_id', campana.id)
       .eq('estado', 'pendiente')
       .order('id')
@@ -277,18 +284,19 @@ export async function procesarPromocionesAutomaticas(
     }
 
     for (const envio of (pendientes ?? []) as EnvioPendiente[]) {
-      if (!envio.paciente) {
+      const destinatario = envio.paciente ?? envio.contacto
+      if (!destinatario) {
         await supabase.from('promocion_envios').update({
           estado: 'fallido',
-          error: 'Paciente no encontrado',
+          error: 'Destinatario no encontrado',
         }).eq('id', envio.id)
         fallidos++
         continue
       }
 
       const resultado = envio.canal === 'whatsapp'
-        ? await enviarWhatsApp(envio.paciente, campana.promocion, campana.mensaje_personalizado)
-        : await enviarEmail(envio.paciente, campana.promocion, campana.mensaje_personalizado)
+        ? await enviarWhatsApp(destinatario, campana.promocion, campana.mensaje_personalizado)
+        : await enviarEmail(destinatario, campana.promocion, campana.mensaje_personalizado, envio.tracking_token)
 
       await supabase.from('promocion_envios').update({
         estado: resultado.ok ? 'enviado' : 'fallido',

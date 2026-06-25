@@ -5,28 +5,43 @@ import { createBrowserClient } from '@supabase/ssr'
 import { Megaphone, Plus, Image as ImageIcon, Calendar, Send, Users,
   MessageCircle, Mail, Sparkles, Trash2, Pencil, Play, Clock,
   CheckCircle2, ChevronRight, ChevronLeft, RefreshCw,
-  AlertCircle, Target, Zap,
+  AlertCircle, Target, Zap, BookUser, Phone, AtSign, Search,
+  FileText, BarChart3, Cake, Reply,
 } from 'lucide-react'
+import PromocionesPlantillasPanel from './promociones-plantillas-panel'
+import PromocionesReportesPanel from './promociones-reportes-panel'
+import PromocionesAutomatizacionesPanel from './promociones-automatizaciones-panel'
+import { type PromocionPlantilla } from '@/lib/promociones-plantillas'
 import ResponsiveModal from '@/components/responsive-modal'
 import BuscarPacienteInput from '@/components/buscar-paciente-input'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost } from '@/components/module-layout'
 import { nombrePaciente } from '@/lib/consultas-utils'
 import { buscarPacientesActivos, type PacienteBusquedaRow } from '@/lib/buscar-pacientes'
-import { subirImagenPromocion, resolverAudiencia, canalesParaPaciente } from '@/lib/promocion-audiencia'
 import {
-  AUDIENCIA_OPCIONES, CANAL_CFG, ESTADO_CAMPANA_CFG,
-  campanaVencidaProgramacion, fmtVigencia, linkEnvioPromocion,
-  type Campana, type CanalCampana, type EnvioRegistro, type FiltroAudiencia,
-  type Promocion, type TipoAudiencia,
+  subirImagenPromocion, resolverDestinatarios, resumenCanales,
+  canalesParaDestinatario, tieneWhatsApp, tieneCorreo,
+} from '@/lib/promocion-audiencia'
+import {
+  AUDIENCIA_OPCIONES, CANAL_CFG, CATEGORIAS_SERVICIO_PROMO, ESTADO_CAMPANA_CFG,
+  campanaVencidaProgramacion, cfgCategoriaServicio, claveDestinatario, destinatarioAContacto,
+  fmtVigencia, linkEnvioPromocion, serviciosParaCategoria,
+  type Campana, type CanalCampana, type CategoriaServicioPromo, type DestinatarioPromo,
+  type EnvioRegistro, type FiltroAudiencia, type Promocion, type PromocionContacto,
+  type ServicioPromo, type TipoAudiencia,
 } from '@/lib/promociones-utils'
 
 interface SucursalOpt { id: number; nombre: string }
-interface Stats { totalActivos: number; conWhatsApp: number; conCorreo: number }
+interface Stats { totalActivos: number; conWhatsApp: number; conCorreo: number; totalContactos?: number }
+
+const CONTACTO_VACIO: Omit<PromocionContacto, 'id' | 'created_at'> = {
+  nombre: '', celular: '', correo: '', notas: '', activo: true, sucursal_id: null,
+}
 
 interface Props {
   promocionesIniciales: Promocion[]
   campanasIniciales: Campana[]
   sucursales: SucursalOpt[]
+  servicios: ServicioPromo[]
   esSuperAdmin?: boolean
   sucursalId?: number | null
   sucursalNombre?: string | null
@@ -42,16 +57,19 @@ function supabase() {
 
 const PROMO_VACIA: Omit<Promocion, 'id' | 'created_at'> = {
   titulo: '', subtitulo: '', descripcion: '', imagen_url: null,
-  tipo_contenido: 'mixto', vigencia_desde: null, vigencia_hasta: null,
+  tipo_contenido: 'mixto', categoria_servicio: 'general', servicio_id: null,
+  descuento_pct: null, precio_promocional: null,
+  vigencia_desde: null, vigencia_hasta: null,
   activa: true, sucursal_id: null,
 }
 
 export default function PromocionesClient({
-  promocionesIniciales, campanasIniciales, sucursales,
+  promocionesIniciales, campanasIniciales, sucursales, servicios,
   esSuperAdmin = false, sucursalId, sucursalNombre, stats,
 }: Props) {
   const sb = supabase()
-  const [tab, setTab] = useState<'promociones' | 'campanas'>('promociones')
+  const [tab, setTab] = useState<'promociones' | 'campanas' | 'contactos' | 'plantillas' | 'reportes' | 'auto'>('promociones')
+  const [filtroCategoria, setFiltroCategoria] = useState<CategoriaServicioPromo | 'todas'>('todas')
   const [promociones, setPromociones] = useState(promocionesIniciales)
   const [campanas, setCampanas] = useState(campanasIniciales)
   const [cargando, setCargando] = useState(false)
@@ -67,18 +85,32 @@ export default function PromocionesClient({
   const [promoCampana, setPromoCampana] = useState<Promocion | null>(null)
   const [pasoCampana, setPasoCampana] = useState(1)
   const [formCampana, setFormCampana] = useState({
-    nombre: '', canal: 'whatsapp' as CanalCampana,
-    audiencia: 'whatsapp' as TipoAudiencia,
+    nombre: '', canal: 'ambos' as CanalCampana,
+    audiencia: 'todos' as TipoAudiencia,
     programado: false,
     automatico: false,
     programado_para: '',
     mensaje_personalizado: '',
+    plantilla_id: null as number | null,
     sucursal_filtro: sucursalId ?? null as number | null,
+    meses_historial: 24,
   })
   const [pacientesManual, setPacientesManual] = useState<PacienteBusquedaRow[]>([])
+  const [contactosManual, setContactosManual] = useState<PromocionContacto[]>([])
   const [buscarPacManual, setBuscarPacManual] = useState('')
-  const [previewAudiencia, setPreviewAudiencia] = useState<number | null>(null)
+  const [destinatariosPreview, setDestinatariosPreview] = useState<DestinatarioPromo[]>([])
+  const [seleccionDestinatarios, setSeleccionDestinatarios] = useState<Set<string>>(new Set())
+  const [resumenPreview, setResumenPreview] = useState<{ whatsapp: number; email: number; sinContacto: number; enviables: number } | null>(null)
+  const [cargandoPreview, setCargandoPreview] = useState(false)
   const [creandoCampana, setCreandoCampana] = useState(false)
+
+  const [contactos, setContactos] = useState<PromocionContacto[]>([])
+  const [plantillas, setPlantillas] = useState<PromocionPlantilla[]>([])
+  const [buscarContacto, setBuscarContacto] = useState('')
+  const [modalContacto, setModalContacto] = useState(false)
+  const [contactoEdit, setContactoEdit] = useState<PromocionContacto | null>(null)
+  const [formContacto, setFormContacto] = useState({ ...CONTACTO_VACIO })
+  const [guardandoContacto, setGuardandoContacto] = useState(false)
 
   const [modalEnvio, setModalEnvio] = useState(false)
   const [campanaEnvio, setCampanaEnvio] = useState<Campana | null>(null)
@@ -95,18 +127,42 @@ export default function PromocionesClient({
     [campanas],
   )
 
+  const promocionesFiltradas = useMemo(() => {
+    if (filtroCategoria === 'todas') return promociones
+    return promociones.filter(p => (p.categoria_servicio ?? 'general') === filtroCategoria)
+  }, [promociones, filtroCategoria])
+
+  const serviciosFormPromo = useMemo(
+    () => serviciosParaCategoria(servicios, formPromo.categoria_servicio ?? 'general'),
+    [servicios, formPromo.categoria_servicio],
+  )
+
+  const audienciaOpcionesCampana = useMemo(() => {
+    const cat = promoCampana?.categoria_servicio ?? 'general'
+    return AUDIENCIA_OPCIONES.filter(a => {
+      if (a.soloServicio && cat === 'general' && !promoCampana?.servicio_id) return false
+      return true
+    })
+  }, [promoCampana])
+
   const recargar = useCallback(async () => {
     setCargando(true)
     try {
-      let pq = sb.from('promociones').select('*').order('created_at', { ascending: false }).limit(200)
+      let pq = sb.from('promociones').select('*, servicio:servicios(id, nombre, tipo, precio)').order('created_at', { ascending: false }).limit(200)
       let cq = sb.from('promocion_campanas').select('*, promocion:promociones(*)').order('created_at', { ascending: false }).limit(100)
+      let ctq = sb.from('promocion_contactos').select('*').order('nombre').limit(5000)
+      let plq = sb.from('promocion_plantillas').select('*').eq('activa', true).order('nombre')
       if (!esSuperAdmin && sucursalId) {
         pq = pq.or(`sucursal_id.eq.${sucursalId},sucursal_id.is.null`)
         cq = cq.or(`sucursal_id.eq.${sucursalId},sucursal_id.is.null`)
+        ctq = ctq.or(`sucursal_id.eq.${sucursalId},sucursal_id.is.null`)
+        plq = plq.or(`sucursal_id.eq.${sucursalId},sucursal_id.is.null`)
       }
-      const [{ data: p }, { data: c }] = await Promise.all([pq, cq])
+      const [{ data: p }, { data: c }, { data: ct }, { data: pl }] = await Promise.all([pq, cq, ctq, plq])
       if (p) setPromociones(p as Promocion[])
       if (c) setCampanas(c as Campana[])
+      if (ct) setContactos(ct as PromocionContacto[])
+      if (pl) setPlantillas(pl as PromocionPlantilla[])
     } finally {
       setCargando(false)
     }
@@ -122,6 +178,137 @@ export default function PromocionesClient({
   }, [campanas, sb, recargar])
 
   useEffect(() => { void activarProgramadas() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    void (async () => {
+      let ctq = sb.from('promocion_contactos').select('*').order('nombre').limit(5000)
+      if (!esSuperAdmin && sucursalId) {
+        ctq = ctq.or(`sucursal_id.eq.${sucursalId},sucursal_id.is.null`)
+      }
+      const { data } = await ctq
+      if (data) setContactos(data as PromocionContacto[])
+    })()
+  }, [sb, esSuperAdmin, sucursalId])
+
+  const contactosFiltrados = useMemo(() => {
+    const q = buscarContacto.trim().toLowerCase()
+    if (!q) return contactos
+    return contactos.filter(c =>
+      c.nombre.toLowerCase().includes(q)
+      || c.celular?.includes(q)
+      || c.correo?.toLowerCase().includes(q),
+    )
+  }, [contactos, buscarContacto])
+
+  function abrirNuevoContacto() {
+    setContactoEdit(null)
+    setFormContacto({ ...CONTACTO_VACIO, sucursal_id: esSuperAdmin ? null : sucursalId ?? null })
+    setModalContacto(true)
+  }
+
+  function abrirEditarContacto(c: PromocionContacto) {
+    setContactoEdit(c)
+    setFormContacto({ ...c })
+    setModalContacto(true)
+  }
+
+  async function guardarContacto() {
+    if (!formContacto.nombre.trim()) { alert('El nombre es obligatorio.'); return }
+    if (!formContacto.celular?.trim() && !formContacto.correo?.trim()) {
+      alert('Agregue al menos un WhatsApp o un correo.')
+      return
+    }
+    setGuardandoContacto(true)
+    try {
+      const { data: { user } } = await sb.auth.getUser()
+      const payload = {
+        nombre: formContacto.nombre.trim(),
+        celular: formContacto.celular?.trim() || null,
+        correo: formContacto.correo?.trim() || null,
+        notas: formContacto.notas?.trim() || null,
+        activo: formContacto.activo,
+        sucursal_id: formContacto.sucursal_id,
+        ...(contactoEdit ? {} : { creado_por: user?.id ?? null }),
+      }
+      if (contactoEdit) {
+        const { error } = await sb.from('promocion_contactos').update(payload).eq('id', contactoEdit.id)
+        if (error) throw error
+      } else {
+        const { error } = await sb.from('promocion_contactos').insert(payload)
+        if (error) throw error
+      }
+      setModalContacto(false)
+      await recargar()
+    } catch (e) {
+      alert('Error al guardar contacto: ' + (e instanceof Error ? e.message : 'desconocido'))
+    } finally {
+      setGuardandoContacto(false)
+    }
+  }
+
+  async function eliminarContacto(id: number) {
+    if (!confirm('¿Eliminar este contacto de la agenda?')) return
+    const { error } = await sb.from('promocion_contactos').delete().eq('id', id)
+    if (error) return alert(error.message)
+    await recargar()
+  }
+
+  function filtroCampanaActual(): FiltroAudiencia {
+    const cat = promoCampana?.categoria_servicio ?? 'general'
+    return {
+      tipo: formCampana.audiencia,
+      sucursal_id: formCampana.sucursal_filtro,
+      paciente_ids: formCampana.audiencia === 'manual' ? pacientesManual.map(p => p.id) : undefined,
+      contacto_ids: formCampana.audiencia === 'manual'
+        ? contactosManual.map(c => c.id)
+        : undefined,
+      categoria_servicio: formCampana.audiencia === 'por_servicio' ? cat : undefined,
+      servicio_id: formCampana.audiencia === 'por_servicio' ? (promoCampana?.servicio_id ?? null) : undefined,
+      meses_historial: formCampana.audiencia === 'por_servicio' ? formCampana.meses_historial : undefined,
+    }
+  }
+
+  async function cargarPreviewAudiencia() {
+    setCargandoPreview(true)
+    try {
+      const filtro = filtroCampanaActual()
+      if (filtro.tipo === 'manual' && !filtro.paciente_ids?.length && !filtro.contacto_ids?.length) {
+        setDestinatariosPreview([])
+        setSeleccionDestinatarios(new Set())
+        setResumenPreview({ whatsapp: 0, email: 0, sinContacto: 0, enviables: 0 })
+        return
+      }
+      const lista = await resolverDestinatarios(sb, filtro, { sucursalId, esSuperAdmin })
+      setDestinatariosPreview(lista)
+      setSeleccionDestinatarios(new Set(lista.map(claveDestinatario)))
+      setResumenPreview(resumenCanales(lista, formCampana.canal))
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error al calcular audiencia')
+    } finally {
+      setCargandoPreview(false)
+    }
+  }
+
+  function toggleDestinatario(clave: string) {
+    setSeleccionDestinatarios(prev => {
+      const next = new Set(prev)
+      if (next.has(clave)) next.delete(clave)
+      else next.add(clave)
+      const seleccionados = destinatariosPreview.filter(d => next.has(claveDestinatario(d)))
+      setResumenPreview(resumenCanales(seleccionados, formCampana.canal))
+      return next
+    })
+  }
+
+  function seleccionarTodosDestinatarios(seleccionar: boolean) {
+    if (seleccionar) {
+      setSeleccionDestinatarios(new Set(destinatariosPreview.map(claveDestinatario)))
+      setResumenPreview(resumenCanales(destinatariosPreview, formCampana.canal))
+    } else {
+      setSeleccionDestinatarios(new Set())
+      setResumenPreview({ whatsapp: 0, email: 0, sinContacto: 0, enviables: 0 })
+    }
+  }
 
   function abrirNuevaPromo() {
     setPromoEdit(null)
@@ -151,6 +338,10 @@ export default function PromocionesClient({
         descripcion: formPromo.descripcion?.trim() || null,
         imagen_url: imagenUrl,
         tipo_contenido: formPromo.tipo_contenido,
+        categoria_servicio: formPromo.categoria_servicio ?? 'general',
+        servicio_id: formPromo.servicio_id || null,
+        descuento_pct: formPromo.descuento_pct ? Number(formPromo.descuento_pct) : null,
+        precio_promocional: formPromo.precio_promocional ? Number(formPromo.precio_promocional) : null,
         vigencia_desde: formPromo.vigencia_desde || null,
         vigencia_hasta: formPromo.vigencia_hasta || null,
         activa: formPromo.activa,
@@ -182,35 +373,28 @@ export default function PromocionesClient({
   }
 
   function abrirCampana(promo: Promocion) {
+    const cat = promo.categoria_servicio ?? 'general'
+    const audienciaDefault: TipoAudiencia = (cat !== 'general' || promo.servicio_id) ? 'por_servicio' : 'todos'
     setPromoCampana(promo)
     setPasoCampana(1)
     setFormCampana({
       nombre: `Campaña — ${promo.titulo}`,
-      canal: 'whatsapp',
-      audiencia: 'whatsapp',
+      canal: 'ambos',
+      audiencia: audienciaDefault,
       programado: false,
       automatico: false,
       programado_para: '',
       mensaje_personalizado: '',
+      plantilla_id: null,
       sucursal_filtro: esSuperAdmin ? null : sucursalId ?? null,
+      meses_historial: 24,
     })
     setPacientesManual([])
-    setPreviewAudiencia(null)
+    setContactosManual([])
+    setDestinatariosPreview([])
+    setSeleccionDestinatarios(new Set())
+    setResumenPreview(null)
     setModalCampana(true)
-  }
-
-  async function calcularAudiencia() {
-    const filtro: FiltroAudiencia = {
-      tipo: formCampana.audiencia,
-      sucursal_id: formCampana.sucursal_filtro,
-      paciente_ids: formCampana.audiencia === 'manual' ? pacientesManual.map(p => p.id) : undefined,
-    }
-    try {
-      const lista = await resolverAudiencia(sb, filtro, { sucursalId, esSuperAdmin })
-      setPreviewAudiencia(lista.length)
-    } catch (e) {
-      alert(e instanceof Error ? e.message : 'Error al calcular audiencia')
-    }
   }
 
   async function crearCampana(iniciarAhora: boolean) {
@@ -220,30 +404,43 @@ export default function PromocionesClient({
       alert('Indique fecha y hora de programación.')
       return
     }
-    if (formCampana.audiencia === 'manual' && pacientesManual.length === 0) {
-      alert('Agregue al menos un paciente.')
+    if (formCampana.audiencia === 'manual' && pacientesManual.length === 0 && contactosManual.length === 0) {
+      alert('Agregue al menos un paciente o contacto.')
       return
     }
 
     setCreandoCampana(true)
     try {
       const { data: { user } } = await sb.auth.getUser()
-      const filtro: FiltroAudiencia = {
-        tipo: formCampana.audiencia,
-        sucursal_id: formCampana.sucursal_filtro,
-        paciente_ids: formCampana.audiencia === 'manual' ? pacientesManual.map(p => p.id) : undefined,
-      }
-      const audiencia = await resolverAudiencia(sb, filtro, { sucursalId, esSuperAdmin })
+      const filtro = filtroCampanaActual()
+      let audiencia = destinatariosPreview.length > 0
+        ? destinatariosPreview
+        : await resolverDestinatarios(sb, filtro, { sucursalId, esSuperAdmin })
 
-      const filasEnvio: { campana_id: number; paciente_id: number; canal: string; estado: string }[] = []
-      for (const p of audiencia) {
-        for (const canal of canalesParaPaciente(p, formCampana.canal)) {
-          filasEnvio.push({ campana_id: 0, paciente_id: p.id, canal, estado: 'pendiente' })
+      if (destinatariosPreview.length > 0) {
+        audiencia = audiencia.filter(d => seleccionDestinatarios.has(claveDestinatario(d)))
+      }
+
+      const filasEnvio: {
+        campana_id: number
+        paciente_id: number | null
+        contacto_id: number | null
+        canal: string
+        estado: string
+      }[] = []
+
+      for (const d of audiencia) {
+        for (const canal of canalesParaDestinatario(d, formCampana.canal)) {
+          if (d.tipo === 'paciente') {
+            filasEnvio.push({ campana_id: 0, paciente_id: d.id, contacto_id: null, canal, estado: 'pendiente' })
+          } else {
+            filasEnvio.push({ campana_id: 0, paciente_id: null, contacto_id: d.id, canal, estado: 'pendiente' })
+          }
         }
       }
 
       if (filasEnvio.length === 0) {
-        alert('No hay destinatarios con el canal seleccionado.')
+        alert('No hay destinatarios con contacto válido para el canal seleccionado.')
         return
       }
 
@@ -264,6 +461,7 @@ export default function PromocionesClient({
         estado,
         filtro_audiencia: filtro,
         mensaje_personalizado: formCampana.mensaje_personalizado.trim() || null,
+        plantilla_id: formCampana.plantilla_id,
         total_destinatarios: filasEnvio.length,
         sucursal_id: esSuperAdmin ? formCampana.sucursal_filtro : sucursalId,
         creado_por: user?.id ?? null,
@@ -298,7 +496,7 @@ export default function PromocionesClient({
   async function abrirEnvio(campana: Campana) {
     const { data, error } = await sb
       .from('promocion_envios')
-      .select('*, paciente:pacientes(id, codigo, nombre, apellido1, celular, telefono, correo)')
+      .select('*, paciente:pacientes(id, codigo, nombre, apellido1, celular, telefono, correo), contacto:promocion_contactos(id, nombre, celular, correo)')
       .eq('campana_id', campana.id)
       .order('id')
     if (error) return alert(error.message)
@@ -329,9 +527,8 @@ export default function PromocionesClient({
       await recargar()
       alert(
         `Automatización ejecutada.\n` +
-        `Campañas: ${data.campanasProcesadas ?? 0}\n` +
-        `Enviados: ${data.enviados ?? 0}\n` +
-        `Fallidos: ${data.fallidos ?? 0}` +
+        `Reglas: ${data.reglasCampanas ?? 0} campaña(s) · ${data.reglasDestinatarios ?? 0} destinatario(s)\n` +
+        `Envíos API: ${data.enviados ?? 0} ok · ${data.fallidos ?? 0} fallidos` +
         (data.errores?.length ? `\n\nErrores:\n${data.errores.slice(0, 5).join('\n')}` : ''),
       )
     } catch (e) {
@@ -377,19 +574,37 @@ export default function PromocionesClient({
     }
   }
 
-  function enviarActual() {
-    if (!envioActual?.paciente || !promoEnvio) return
+  async function enviarActual() {
+    const dest = envioActual?.paciente ?? envioActual?.contacto
+    if (!dest || !promoEnvio || !envioActual) return
     const url = linkEnvioPromocion(
-      envioActual.paciente,
+      destinatarioAContacto(dest),
       promoEnvio,
       envioActual.canal,
       campanaEnvio?.mensaje_personalizado,
     )
     if (!url) {
-      alert('Este paciente no tiene contacto válido para este canal.')
+      alert('Este destinatario no tiene contacto válido para este canal.')
       return
     }
+    if (!envioActual.abierto_at) {
+      const ahora = new Date().toISOString()
+      await sb.from('promocion_envios').update({ abierto_at: ahora }).eq('id', envioActual.id)
+      setEnvios(prev => prev.map((e, i) => i === indiceEnvio ? { ...e, abierto_at: ahora } : e))
+    }
     window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
+  async function marcarRespondio() {
+    if (!envioActual) return
+    const ahora = new Date().toISOString()
+    await sb.from('promocion_envios').update({
+      respondio: true,
+      respondio_at: ahora,
+    }).eq('id', envioActual.id)
+    setEnvios(prev => prev.map((e, i) =>
+      i === indiceEnvio ? { ...e, respondio: true, respondio_at: ahora } : e,
+    ))
   }
 
   async function cancelarCampana(id: number) {
@@ -414,6 +629,7 @@ export default function PromocionesClient({
           { label: 'Pacientes activos', value: stats.totalActivos, icon: Users },
           { label: 'Con WhatsApp', value: stats.conWhatsApp, icon: MessageCircle },
           { label: 'Con correo', value: stats.conCorreo, icon: Mail },
+          { label: 'Contactos', value: contactos.filter(c => c.activo).length, icon: BookUser },
           { label: 'Promociones', value: promociones.filter(p => p.activa).length, icon: Sparkles },
           { label: 'Campañas activas', value: campanasListas.length, icon: Send },
         ]}
@@ -455,22 +671,27 @@ export default function PromocionesClient({
 
       <ModuleContent>
         <div className="flex flex-wrap gap-2 mb-4">
-          {(['promociones', 'campanas'] as const).map(t => (
+          {([
+            { id: 'promociones', label: 'Catálogo', full: 'Catálogo de promociones' },
+            { id: 'campanas', label: 'Campañas', full: 'Campañas de envío' },
+            { id: 'contactos', label: 'Contactos', full: 'Agenda de contactos', icon: BookUser },
+            { id: 'plantillas', label: 'Plantillas', full: 'Plantillas de mensaje', icon: FileText },
+            { id: 'reportes', label: 'Reportes', full: 'Historial y métricas', icon: BarChart3 },
+            { id: 'auto', label: 'Auto', full: 'Automatizaciones', icon: Cake },
+          ] as const).map(t => (
             <button
-              key={t}
+              key={t.id}
               type="button"
-              onClick={() => setTab(t)}
-              className={`px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold transition flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 ${
-                tab === t
+              onClick={() => setTab(t.id)}
+              className={`px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold transition flex-1 sm:flex-none min-w-[calc(33%-0.25rem)] sm:min-w-0 ${
+                tab === t.id
                   ? 'bg-[#003366] text-white shadow-md'
                   : 'bg-white text-gray-600 border hover:border-rose-200'
               }`}
             >
-              {t === 'promociones' ? (
-                <><span className="sm:hidden">Catálogo</span><span className="hidden sm:inline">Catálogo de promociones</span></>
-              ) : (
-                <><span className="sm:hidden">Campañas</span><span className="hidden sm:inline">Campañas de envío</span></>
-              )}
+              {'icon' in t && t.icon && <t.icon className="w-3.5 h-3.5 inline sm:mr-1" />}
+              <span className="sm:hidden">{t.label}</span>
+              <span className="hidden sm:inline">{t.full}</span>
             </button>
           ))}
         </div>
@@ -488,8 +709,36 @@ export default function PromocionesClient({
                 </button>
               </div>
             ) : (
+              <>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <button type="button" onClick={() => setFiltroCategoria('todas')}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                      filtroCategoria === 'todas' ? 'bg-[#003366] text-white border-[#003366]' : 'bg-white text-gray-600'
+                    }`}>
+                    Todas ({promociones.length})
+                  </button>
+                  {CATEGORIAS_SERVICIO_PROMO.map(c => {
+                    const n = promociones.filter(p => (p.categoria_servicio ?? 'general') === c.value).length
+                    if (n === 0 && c.value !== 'general') return null
+                    return (
+                      <button key={c.value} type="button" onClick={() => setFiltroCategoria(c.value)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                          filtroCategoria === c.value ? `${c.badge} ring-2 ring-offset-1 ring-[#003366]/30` : 'bg-white text-gray-600'
+                        }`}>
+                        {c.icon} {c.label} ({n})
+                      </button>
+                    )
+                  })}
+                </div>
+                {promocionesFiltradas.length === 0 ? (
+                  <div className="text-center py-12 bg-white rounded-2xl border text-gray-500 text-sm">
+                    No hay promociones en esta categoría.
+                  </div>
+                ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {promociones.map(p => (
+                {promocionesFiltradas.map(p => {
+                  const catCfg = cfgCategoriaServicio(p.categoria_servicio)
+                  return (
                   <div key={p.id}
                     className={`bg-white rounded-2xl border overflow-hidden shadow-sm hover:shadow-md transition group ${
                       !p.activa ? 'opacity-60' : ''
@@ -506,9 +755,20 @@ export default function PromocionesClient({
                           Inactiva
                         </span>
                       )}
+                      <span className={`absolute top-2 right-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${catCfg.badge}`}>
+                        {catCfg.icon} {catCfg.label}
+                      </span>
                     </div>
                     <div className="p-4">
                       <h3 className="font-bold text-gray-900 line-clamp-1">{p.titulo}</h3>
+                      {p.servicio?.nombre && (
+                        <p className="text-[10px] text-violet-600 font-medium mt-0.5">{p.servicio.nombre}</p>
+                      )}
+                      {(p.descuento_pct || p.precio_promocional) && (
+                        <p className="text-xs text-emerald-700 font-bold mt-1">
+                          {p.descuento_pct ? `${p.descuento_pct}% dto.` : `L ${Number(p.precio_promocional).toFixed(2)}`}
+                        </p>
+                      )}
                       {p.subtitulo && <p className="text-xs text-rose-600 font-medium mt-0.5 line-clamp-1">{p.subtitulo}</p>}
                       {p.descripcion && <p className="text-xs text-gray-500 mt-2 line-clamp-2">{p.descripcion}</p>}
                       <p className="text-[10px] text-gray-400 mt-2 flex items-center gap-1">
@@ -530,8 +790,10 @@ export default function PromocionesClient({
                       </div>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -603,15 +865,103 @@ export default function PromocionesClient({
           </div>
         )}
 
+        {tab === 'plantillas' && (
+          <PromocionesPlantillasPanel esSuperAdmin={esSuperAdmin} sucursalId={sucursalId} />
+        )}
+
+        {tab === 'reportes' && (
+          <PromocionesReportesPanel campanas={campanas} />
+        )}
+
+        {tab === 'auto' && (
+          <PromocionesAutomatizacionesPanel
+            promociones={promociones}
+            esSuperAdmin={esSuperAdmin}
+            sucursalId={sucursalId}
+            onProcesar={procesarAutomaticas}
+            procesando={procesandoAuto}
+          />
+        )}
+
+        {tab === 'contactos' && (
+          <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+            <div className="p-4 border-b flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={buscarContacto}
+                  onChange={e => setBuscarContacto(e.target.value)}
+                  placeholder="Buscar por nombre, WhatsApp o correo…"
+                  className="w-full border rounded-xl pl-9 pr-3 py-2 text-sm"
+                />
+              </div>
+              <button type="button" onClick={abrirNuevoContacto}
+                className="px-4 py-2 rounded-xl text-sm font-bold bg-[#003366] text-white flex items-center justify-center gap-1.5">
+                <Plus className="w-4 h-4" /> Nuevo contacto
+              </button>
+            </div>
+            {contactosFiltrados.length === 0 ? (
+              <div className="text-center py-16 text-gray-400 px-4">
+                <BookUser className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                <p className="font-medium text-gray-600">Agenda vacía</p>
+                <p className="text-sm mt-1">Guarde números de WhatsApp y correos para campañas sin depender del expediente.</p>
+                <button type="button" onClick={abrirNuevoContacto}
+                  className="mt-4 px-4 py-2 bg-rose-50 text-rose-700 rounded-xl text-sm font-semibold border border-rose-200">
+                  Agregar primer contacto
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {contactosFiltrados.map(c => {
+                  const wa = tieneWhatsApp(c)
+                  const em = tieneCorreo(c)
+                  return (
+                    <div key={c.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-rose-50/30">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-900">{c.nombre}</p>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {wa && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                              <Phone className="w-3 h-3" /> {c.celular}
+                            </span>
+                          )}
+                          {em && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 flex items-center gap-1">
+                              <AtSign className="w-3 h-3" /> {c.correo}
+                            </span>
+                          )}
+                          {!wa && !em && (
+                            <span className="text-[10px] text-amber-700">Sin contacto válido</span>
+                          )}
+                        </div>
+                        {c.notas && <p className="text-xs text-gray-400 mt-1 line-clamp-1">{c.notas}</p>}
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => abrirEditarContacto(c)}
+                          className="p-2 rounded-lg border hover:bg-gray-50 text-gray-500">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button type="button" onClick={() => eliminarContacto(c.id)}
+                          className="p-2 rounded-lg border hover:bg-red-50 text-red-400">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-6 rounded-xl border border-amber-100 bg-amber-50/80 p-4 flex gap-3">
           <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-amber-900">
             <p className="font-semibold mb-1">Envío asistido y automático</p>
             <p className="text-amber-800/90 leading-relaxed">
-              Puede trabajar en modo asistido (wa.me / mailto) o automático. El automático usa
-              WhatsApp Business API y Resend/SendGrid desde un cron protegido (en plan Hobby de Vercel
-              corre una vez al día; también puede usar el botón &quot;Procesar automáticas&quot;). Si faltan
-              llaves de entorno, el envío queda marcado como fallido para auditoría sin afectar los módulos clínicos.
+              El canal <strong>Inteligente</strong> envía por WhatsApp si el destinatario tiene celular válido;
+              solo usa correo cuando no hay WhatsApp. Puede agregar contactos externos en la pestaña Agenda
+              o seleccionar destinatarios uno a uno al crear la campaña.
             </p>
           </div>
         </div>
@@ -621,7 +971,7 @@ export default function PromocionesClient({
       {modalPromo && (
         <ResponsiveModal
           title={promoEdit ? 'Editar promoción' : 'Nueva promoción'}
-          subtitle="Imagen, texto y vigencia de la oferta"
+          subtitle="Servicio, imagen, texto y vigencia de la oferta"
           onClose={() => setModalPromo(false)}
           size="lg"
           footer={
@@ -639,6 +989,57 @@ export default function PromocionesClient({
               <label className="text-xs font-medium text-gray-600">Título *</label>
               <input value={formPromo.titulo} onChange={e => setFormPromo(p => ({ ...p, titulo: e.target.value }))}
                 className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. Chequeo preventivo 30% descuento" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 mb-2 block">Categoría de servicio</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {CATEGORIAS_SERVICIO_PROMO.map(c => (
+                  <button key={c.value} type="button"
+                    onClick={() => setFormPromo(p => ({
+                      ...p,
+                      categoria_servicio: c.value,
+                      servicio_id: c.value === p.categoria_servicio ? p.servicio_id : null,
+                    }))}
+                    className={`p-2 rounded-xl border text-left text-xs transition ${
+                      (formPromo.categoria_servicio ?? 'general') === c.value
+                        ? `${c.badge} ring-2 ring-[#003366]/20 border-transparent`
+                        : 'hover:border-gray-300'
+                    }`}>
+                    <span>{c.icon}</span> {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(formPromo.categoria_servicio ?? 'general') !== 'general' && serviciosFormPromo.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-gray-600">Servicio específico (opcional)</label>
+                <select
+                  value={formPromo.servicio_id ?? ''}
+                  onChange={e => setFormPromo(p => ({ ...p, servicio_id: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full border rounded-xl px-3 py-2 mt-1 text-sm"
+                >
+                  <option value="">Toda la categoría {cfgCategoriaServicio(formPromo.categoria_servicio).label}</option>
+                  {serviciosFormPromo.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre} — L {Number(s.precio).toFixed(2)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">Descuento %</label>
+                <input type="number" min={0} max={100} step={1}
+                  value={formPromo.descuento_pct ?? ''}
+                  onChange={e => setFormPromo(p => ({ ...p, descuento_pct: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. 20" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">Precio promocional (L)</label>
+                <input type="number" min={0} step={0.01}
+                  value={formPromo.precio_promocional ?? ''}
+                  onChange={e => setFormPromo(p => ({ ...p, precio_promocional: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. 250.00" />
+              </div>
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600">Subtítulo</label>
@@ -750,13 +1151,20 @@ export default function PromocionesClient({
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-2 block">Canal de envío</label>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {(['whatsapp', 'email', 'ambos'] as CanalCampana[]).map(c => (
-                    <button key={c} type="button" onClick={() => setFormCampana(p => ({ ...p, canal: c }))}
+                  {(['ambos', 'whatsapp', 'email'] as CanalCampana[]).map(c => (
+                    <button key={c} type="button" onClick={() => {
+                      setFormCampana(p => ({ ...p, canal: c }))
+                      if (destinatariosPreview.length > 0) {
+                        const sel = destinatariosPreview.filter(d => seleccionDestinatarios.has(claveDestinatario(d)))
+                        setResumenPreview(resumenCanales(sel.length ? sel : destinatariosPreview, c))
+                      }
+                    }}
                       className={`p-3 rounded-xl border text-left text-sm transition ${
                         formCampana.canal === c ? 'border-[#003366] bg-sky-50 ring-2 ring-[#003366]/20' : 'hover:border-gray-300'
                       }`}>
                       <span className="text-lg">{CANAL_CFG[c].icon}</span>
                       <p className="font-semibold mt-1">{CANAL_CFG[c].label}</p>
+                      {CANAL_CFG[c].desc && <p className="text-[10px] text-gray-500 mt-0.5">{CANAL_CFG[c].desc}</p>}
                     </button>
                   ))}
                 </div>
@@ -766,9 +1174,14 @@ export default function PromocionesClient({
           {pasoCampana === 2 && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {AUDIENCIA_OPCIONES.map(a => (
+                {audienciaOpcionesCampana.map(a => (
                   <button key={a.value} type="button"
-                    onClick={() => { setFormCampana(p => ({ ...p, audiencia: a.value })); setPreviewAudiencia(null) }}
+                    onClick={() => {
+                      setFormCampana(p => ({ ...p, audiencia: a.value }))
+                      setDestinatariosPreview([])
+                      setSeleccionDestinatarios(new Set())
+                      setResumenPreview(null)
+                    }}
                     className={`p-3 rounded-xl border text-left transition ${
                       formCampana.audiencia === a.value ? 'border-[#003366] bg-rose-50' : ''
                     }`}>
@@ -777,6 +1190,28 @@ export default function PromocionesClient({
                   </button>
                 ))}
               </div>
+              {formCampana.audiencia === 'por_servicio' && promoCampana && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-sm space-y-2">
+                  <p className="font-semibold text-violet-900">
+                    {cfgCategoriaServicio(promoCampana.categoria_servicio).icon}{' '}
+                    Pacientes con historial de {cfgCategoriaServicio(promoCampana.categoria_servicio).label.toLowerCase()}
+                    {promoCampana.servicio?.nombre ? `: ${promoCampana.servicio.nombre}` : ''}
+                  </p>
+                  <div>
+                    <label className="text-xs text-violet-700">Últimos meses a considerar</label>
+                    <select
+                      value={formCampana.meses_historial}
+                      onChange={e => setFormCampana(p => ({ ...p, meses_historial: Number(e.target.value) }))}
+                      className="w-full border rounded-xl px-3 py-2 mt-1 text-sm bg-white"
+                    >
+                      <option value={6}>6 meses</option>
+                      <option value={12}>12 meses</option>
+                      <option value={24}>24 meses</option>
+                      <option value={36}>36 meses</option>
+                    </select>
+                  </div>
+                </div>
+              )}
               {esSuperAdmin && (
                 <div>
                   <label className="text-xs text-gray-500">Filtrar por sucursal</label>
@@ -789,35 +1224,119 @@ export default function PromocionesClient({
                 </div>
               )}
               {formCampana.audiencia === 'manual' && (
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Agregar pacientes</label>
-                  <BuscarPacienteInput
-                    pacientes={[]}
-                    value={buscarPacManual}
-                    onChange={setBuscarPacManual}
-                    buscarRemoto={async (term) => buscarPacientesActivos(sb, term)}
-                    onSelectPaciente={p => {
-                      if (!pacientesManual.some(x => x.id === p.id)) {
-                        setPacientesManual(prev => [...prev, p as PacienteBusquedaRow])
-                      }
-                      setBuscarPacManual('')
-                    }}
-                  />
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {pacientesManual.map(p => (
-                      <span key={p.id} className="text-xs bg-sky-100 text-sky-800 px-2 py-1 rounded-full flex items-center gap-1">
-                        {nombrePaciente(p)}
-                        <button type="button" onClick={() => setPacientesManual(prev => prev.filter(x => x.id !== p.id))}>×</button>
-                      </span>
-                    ))}
+                <div className="space-y-3 rounded-xl border p-3 bg-gray-50">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Pacientes del sistema</label>
+                    <BuscarPacienteInput
+                      pacientes={[]}
+                      value={buscarPacManual}
+                      onChange={setBuscarPacManual}
+                      buscarRemoto={async (term) => buscarPacientesActivos(sb, term)}
+                      onSelectPaciente={p => {
+                        if (!pacientesManual.some(x => x.id === p.id)) {
+                          setPacientesManual(prev => [...prev, p as PacienteBusquedaRow])
+                        }
+                        setBuscarPacManual('')
+                      }}
+                    />
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {pacientesManual.map(p => (
+                        <span key={p.id} className="text-xs bg-sky-100 text-sky-800 px-2 py-1 rounded-full flex items-center gap-1">
+                          {nombrePaciente(p)}
+                          <button type="button" onClick={() => setPacientesManual(prev => prev.filter(x => x.id !== p.id))}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Contactos de la agenda</label>
+                    <select
+                      className="w-full border rounded-xl px-3 py-2 text-sm"
+                      value=""
+                      onChange={e => {
+                        const id = Number(e.target.value)
+                        if (!id) return
+                        const c = contactos.find(x => x.id === id)
+                        if (c && !contactosManual.some(x => x.id === c.id)) {
+                          setContactosManual(prev => [...prev, c])
+                        }
+                      }}
+                    >
+                      <option value="">Seleccionar contacto…</option>
+                      {contactos.filter(c => c.activo).map(c => (
+                        <option key={c.id} value={c.id}>{c.nombre} — {c.celular || c.correo}</option>
+                      ))}
+                    </select>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {contactosManual.map(c => (
+                        <span key={c.id} className="text-xs bg-violet-100 text-violet-800 px-2 py-1 rounded-full flex items-center gap-1">
+                          {c.nombre}
+                          <button type="button" onClick={() => setContactosManual(prev => prev.filter(x => x.id !== c.id))}>×</button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
-              <button type="button" onClick={calcularAudiencia}
-                className="text-sm text-[#003366] font-semibold flex items-center gap-1">
-                <Users className="w-4 h-4" />
-                {previewAudiencia != null ? `${previewAudiencia} destinatarios estimados` : 'Calcular audiencia'}
+              <button type="button" onClick={cargarPreviewAudiencia} disabled={cargandoPreview}
+                className="text-sm text-[#003366] font-semibold flex items-center gap-1 disabled:opacity-50">
+                <Users className={`w-4 h-4 ${cargandoPreview ? 'animate-pulse' : ''}`} />
+                {cargandoPreview ? 'Calculando…' : 'Cargar y revisar destinatarios'}
               </button>
+              {resumenPreview && (
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-2">
+                    <p className="text-lg font-bold text-emerald-700">{resumenPreview.whatsapp}</p>
+                    <p className="text-[10px] text-emerald-600">WhatsApp</p>
+                  </div>
+                  <div className="rounded-xl bg-sky-50 border border-sky-200 p-2">
+                    <p className="text-lg font-bold text-sky-700">{resumenPreview.email}</p>
+                    <p className="text-[10px] text-sky-600">Correo</p>
+                  </div>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-2">
+                    <p className="text-lg font-bold text-amber-700">{resumenPreview.sinContacto}</p>
+                    <p className="text-[10px] text-amber-600">Sin contacto</p>
+                  </div>
+                </div>
+              )}
+              {destinatariosPreview.length > 0 && (
+                <div className="rounded-xl border overflow-hidden">
+                  <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between text-xs">
+                    <span className="font-semibold text-gray-700">
+                      {seleccionDestinatarios.size} de {destinatariosPreview.length} seleccionados
+                    </span>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => seleccionarTodosDestinatarios(true)} className="text-[#003366] font-semibold">Todos</button>
+                      <button type="button" onClick={() => seleccionarTodosDestinatarios(false)} className="text-gray-500">Ninguno</button>
+                    </div>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto divide-y">
+                    {destinatariosPreview.map(d => {
+                      const clave = claveDestinatario(d)
+                      const canal = canalesParaDestinatario(d, formCampana.canal)
+                      const seleccionado = seleccionDestinatarios.has(clave)
+                      return (
+                        <label key={clave} className={`flex items-center gap-3 px-3 py-2 text-sm cursor-pointer ${seleccionado ? '' : 'opacity-50'}`}>
+                          <input type="checkbox" checked={seleccionado} onChange={() => toggleDestinatario(clave)} />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">
+                              {d.tipo === 'paciente' ? nombrePaciente(d) : d.nombre}
+                              <span className="text-[10px] text-gray-400 ml-1">{d.tipo === 'contacto' ? '· contacto' : d.codigo}</span>
+                            </p>
+                          </div>
+                          {canal[0] === 'whatsapp' ? (
+                            <MessageCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          ) : canal[0] === 'email' ? (
+                            <Mail className="w-4 h-4 text-sky-600 flex-shrink-0" />
+                          ) : (
+                            <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {pasoCampana === 3 && (
@@ -849,6 +1368,27 @@ export default function PromocionesClient({
                 </div>
               )}
               <div>
+                <label className="text-xs text-gray-500">Plantilla de mensaje (opcional)</label>
+                <select
+                  value={formCampana.plantilla_id ?? ''}
+                  onChange={e => {
+                    const id = e.target.value ? Number(e.target.value) : null
+                    const pl = plantillas.find(x => x.id === id)
+                    setFormCampana(p => ({
+                      ...p,
+                      plantilla_id: id,
+                      mensaje_personalizado: pl?.contenido ?? p.mensaje_personalizado,
+                    }))
+                  }}
+                  className="w-full border rounded-xl px-3 py-2 mt-1 text-sm"
+                >
+                  <option value="">Sin plantilla — mensaje de la promoción</option>
+                  {plantillas.map(pl => (
+                    <option key={pl.id} value={pl.id}>{pl.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="text-xs text-gray-500">Mensaje personalizado (opcional)</label>
                 <textarea value={formCampana.mensaje_personalizado}
                   onChange={e => setFormCampana(p => ({ ...p, mensaje_personalizado: e.target.value }))}
@@ -877,7 +1417,12 @@ export default function PromocionesClient({
             <div className="flex flex-wrap justify-between gap-2 w-full">
               <button type="button" onClick={() => marcarEnvio('omitido')}
                 className="px-3 py-2 text-xs border rounded-xl text-gray-500">Omitir</button>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
+                <button type="button" onClick={() => marcarRespondio()}
+                  disabled={envioActual.respondio}
+                  className="px-3 py-2 text-xs border rounded-xl text-violet-700 border-violet-200 disabled:opacity-40 flex items-center gap-1">
+                  <Reply className="w-3.5 h-3.5" /> Respondió
+                </button>
                 <button type="button" onClick={enviarActual}
                   className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold flex items-center gap-1">
                   {envioActual.canal === 'whatsapp' ? <MessageCircle className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
@@ -898,16 +1443,26 @@ export default function PromocionesClient({
             </div>
             <div className="rounded-xl border p-4 bg-gradient-to-br from-rose-50 to-amber-50">
               <p className="font-bold text-lg text-gray-900">
-                {nombrePaciente(envioActual.paciente ?? undefined)}
+                {envioActual.paciente
+                  ? nombrePaciente(envioActual.paciente)
+                  : envioActual.contacto?.nombre ?? 'Destinatario'}
               </p>
-              <p className="text-xs text-gray-500">{envioActual.paciente?.codigo}</p>
+              <p className="text-xs text-gray-500">
+                {envioActual.paciente?.codigo ?? (envioActual.contacto ? 'Contacto externo' : '')}
+              </p>
               <p className="text-sm mt-2 flex items-center gap-2">
                 {envioActual.canal === 'whatsapp' ? <MessageCircle className="w-4 h-4 text-emerald-600" /> : <Mail className="w-4 h-4 text-sky-600" />}
                 {envioActual.canal === 'whatsapp'
-                  ? (envioActual.paciente?.celular || envioActual.paciente?.telefono || 'Sin teléfono')
-                  : (envioActual.paciente?.correo || 'Sin correo')}
+                  ? (envioActual.paciente?.celular || envioActual.paciente?.telefono || envioActual.contacto?.celular || 'Sin teléfono')
+                  : (envioActual.paciente?.correo || envioActual.contacto?.correo || 'Sin correo')}
               </p>
             </div>
+            {envioActual.abierto_at && (
+              <p className="text-xs text-violet-700">Abierto · {new Date(envioActual.abierto_at).toLocaleString('es-HN')}</p>
+            )}
+            {envioActual.respondio && (
+              <p className="text-xs text-emerald-700">Respondió · {envioActual.respondio_at ? new Date(envioActual.respondio_at).toLocaleString('es-HN') : ''}</p>
+            )}
             {envioActual.estado !== 'pendiente' && (
               <p className="text-xs text-amber-700 flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Ya procesado: {envioActual.estado}
@@ -921,6 +1476,67 @@ export default function PromocionesClient({
                 onClick={() => setIndiceEnvio(i => Math.min(envios.length - 1, i + 1))}
                 className="flex-1 py-2 border rounded-xl text-xs disabled:opacity-40">Siguiente →</button>
             </div>
+          </div>
+        </ResponsiveModal>
+      )}
+
+      {/* Modal contacto */}
+      {modalContacto && (
+        <ResponsiveModal
+          title={contactoEdit ? 'Editar contacto' : 'Nuevo contacto'}
+          subtitle="WhatsApp y/o correo para campañas de publicidad"
+          onClose={() => setModalContacto(false)}
+          size="md"
+          footer={
+            <div className="flex justify-end gap-2 w-full">
+              <button type="button" onClick={() => setModalContacto(false)} className="px-4 py-2.5 border rounded-xl text-sm">Cancelar</button>
+              <button type="button" onClick={guardarContacto} disabled={guardandoContacto}
+                className="px-4 py-2.5 bg-[#003366] text-white rounded-xl text-sm font-bold disabled:opacity-50">
+                {guardandoContacto ? 'Guardando…' : 'Guardar'}
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-4 text-sm">
+            <div>
+              <label className="text-xs font-medium text-gray-600">Nombre *</label>
+              <input value={formContacto.nombre} onChange={e => setFormContacto(p => ({ ...p, nombre: e.target.value }))}
+                className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. María López" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">WhatsApp / celular</label>
+              <input value={formContacto.celular ?? ''} onChange={e => setFormContacto(p => ({ ...p, celular: e.target.value }))}
+                className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. 9999-9999" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Correo electrónico</label>
+              <input type="email" value={formContacto.correo ?? ''} onChange={e => setFormContacto(p => ({ ...p, correo: e.target.value }))}
+                className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="correo@ejemplo.com" />
+            </div>
+            <p className="text-[10px] text-gray-500 bg-sky-50 border border-sky-100 rounded-lg p-2">
+              Con canal Inteligente: si tiene WhatsApp y correo, solo se usará WhatsApp.
+            </p>
+            <div>
+              <label className="text-xs font-medium text-gray-600">Notas (opcional)</label>
+              <textarea value={formContacto.notas ?? ''} onChange={e => setFormContacto(p => ({ ...p, notas: e.target.value }))}
+                rows={2} className="w-full border rounded-xl px-3 py-2 mt-1 resize-y" />
+            </div>
+            {esSuperAdmin && (
+              <div>
+                <label className="text-xs font-medium text-gray-600">Sucursal</label>
+                <select value={formContacto.sucursal_id ?? ''}
+                  onChange={e => setFormContacto(p => ({ ...p, sucursal_id: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full border rounded-xl px-3 py-2 mt-1">
+                  <option value="">Todas</option>
+                  {sucursales.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                </select>
+              </div>
+            )}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={formContacto.activo}
+                onChange={e => setFormContacto(p => ({ ...p, activo: e.target.checked }))} />
+              <span>Contacto activo</span>
+            </label>
           </div>
         </ResponsiveModal>
       )}
