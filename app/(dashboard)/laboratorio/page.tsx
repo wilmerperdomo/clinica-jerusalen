@@ -1,12 +1,14 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { PACIENTE_BUSQUEDA_SELECT } from '@/lib/buscar-pacientes'
+import type { LabInsumo } from '@/lib/lab-insumos'
 import LaboratorioClient from './laboratorio-client'
 
 export const dynamic = 'force-dynamic'
 
 export default async function LaboratorioPage() {
   const supabase = await createClient()
+  if (!supabase) throw new Error('No se pudo inicializar Supabase')
   const { sucursalId, esSuperAdmin } = await getPerfilSucursal()
   const hoy = new Date().toISOString().split('T')[0]
 
@@ -47,6 +49,8 @@ export default async function LaboratorioPage() {
     medicosRes,
     perfilesRes,
     perfilPruebasRes,
+    proveedoresRes,
+    costosOrdenRes,
   ] = await Promise.all([
     pacienteIds.length
       ? supabase.from('pacientes').select(PACIENTE_BUSQUEDA_SELECT).in('id', pacienteIds)
@@ -56,29 +60,32 @@ export default async function LaboratorioPage() {
 
     supabase.from('lab_rangos').select('*'),
     supabase.from('lab_panel_campos').select('*').eq('activo', true).order('orden'),
-    supabase.from('laboratorio_insumo').select('id, prueba_id, producto_id, cantidad, producto:productos(id, nombre, codigo)'),
+    supabase.from('laboratorio_insumo').select('id, prueba_id, producto_id, cantidad, producto:productos(id, nombre, codigo, costo)'),
     supabase.from('laboratorio_valor').select('id_prueba, id_lista, valor'),
     supabase
       .from('productos')
-      .select('id, nombre, codigo')
+      .select('id, nombre, codigo, costo')
       .eq('activo', true)
       .order('nombre')
       .limit(300),
-    // Catálogos nuevos (migración 068). Si aún no existen, no rompe la página.
     supabase.from('medicos').select('*').order('nombre'),
     supabase.from('lab_perfiles').select('*').order('nombre'),
     supabase.from('lab_perfil_pruebas').select('perfil_id, prueba_id'),
+    supabase.from('proveedores').select('id, nombre').eq('activo', true).order('nombre'),
+    supabase.from('lab_costos_orden').select('*').gte('created_at', `${desde}T00:00:00`),
   ])
 
   const pacientesOrdenes = pacientesRes.error ? [] : (pacientesRes.data ?? [])
   const pruebas = pruebasRes.error ? [] : (pruebasRes.data ?? [])
   const rangos = rangosRes.error ? [] : (rangosRes.data ?? [])
   const panelCampos = panelRes.error ? [] : (panelRes.data ?? [])
-  const insumos = insumosRes.error ? [] : (insumosRes.data ?? [])
+  const insumos = insumosRes.error ? [] : ((insumosRes.data ?? []) as unknown as LabInsumo[])
   const labValores = labValoresRes.error ? [] : (labValoresRes.data ?? [])
   const productos = productosRes.error ? [] : (productosRes.data ?? [])
   const medicos = medicosRes.error ? [] : (medicosRes.data ?? [])
   const perfilPruebas = perfilPruebasRes.error ? [] : (perfilPruebasRes.data ?? [])
+  const proveedores = proveedoresRes.error ? [] : (proveedoresRes.data ?? [])
+  const costosOrden = costosOrdenRes.error ? [] : (costosOrdenRes.data ?? [])
 
   // Adjunta a cada perfil la lista de ids de pruebas que contiene.
   const perfilesBase = perfilesRes.error ? [] : (perfilesRes.data ?? [])
@@ -112,6 +119,8 @@ export default async function LaboratorioPage() {
       productos={productos || []}
       medicos={medicos || []}
       perfiles={perfiles || []}
+      proveedores={proveedores || []}
+      costosOrden={costosOrden || []}
       sucursalId={sucursalId ?? undefined}
       esSuperAdmin={esSuperAdmin}
     />

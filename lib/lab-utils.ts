@@ -1,3 +1,5 @@
+import type { LabCostoOrden } from '@/lib/lab-costos'
+import { calcularReporteRentabilidad } from '@/lib/lab-costos'
 import {
   type EstadoLab,
   inferirEstadoLab,
@@ -10,6 +12,7 @@ import { nombrePaciente } from '@/lib/consultas-utils'
 export interface LabRango {
   id: number
   prueba_id: number
+  campo_id?: number | null
   genero?: string | null
   edad_min?: number
   edad_max?: number
@@ -108,6 +111,10 @@ export interface PruebaLab {
   comision: number
   activo?: boolean
   es_panel?: boolean
+  procesamiento?: 'INTERNA' | 'MAQUILADA' | 'MIXTA'
+  proveedor_id?: number | null
+  costo_maquila?: number
+  nota?: string
 }
 
 export interface PacienteLab {
@@ -241,8 +248,13 @@ export function buscarRangoAplicable(
   pruebaId: number,
   edad: number | null,
   genero?: string | null,
+  campoId?: number | null,
 ): LabRango | null {
-  const candidatos = rangos.filter(r => r.prueba_id === pruebaId)
+  const candidatos = rangos.filter(r => {
+    if (r.prueba_id !== pruebaId) return false
+    if (campoId != null) return r.campo_id === campoId
+    return r.campo_id == null
+  })
   if (!candidatos.length) return null
 
   const sexoNorm = genero?.toUpperCase().startsWith('M') ? 'M'
@@ -307,6 +319,23 @@ export function evaluarValorRango(
   return { anormal, indicador, rangoTexto, unidad, rangoMin, rangoMax }
 }
 
+export function textoReferenciaRango(r: LabRango): string {
+  if (r.rango_min != null && r.rango_max != null) return `${r.rango_min} – ${r.rango_max}`
+  return r.rango_texto || '—'
+}
+
+export function textoRangosCampo(rangos: LabRango[]): string {
+  if (!rangos.length) return '—'
+  return rangos
+    .slice()
+    .sort((a, b) => (a.genero ?? '').localeCompare(b.genero ?? ''))
+    .map(r => {
+      const pref = r.genero === 'M' ? 'M: ' : r.genero === 'F' ? 'F: ' : ''
+      return `${pref}${textoReferenciaRango(r)}`
+    })
+    .join(' · ')
+}
+
 export function computeFechaPrometida(fechaOrden: string, diasEntrega: number): string {
   const d = new Date(fechaOrden + 'T12:00:00')
   d.setDate(d.getDate() + Math.max(1, diasEntrega || 1))
@@ -322,12 +351,16 @@ export interface LabReporteStats {
   tiempoPromedioEntrega: number | null
   topPruebas: { nombre: string; count: number }[]
   ingresosPeriodo: number
+  rentabilidad: ReturnType<typeof calcularReporteRentabilidad>
 }
 
 export function calcularReportesLab(
   ordenes: OrdenLab[],
   grupos: GrupoLab[],
   fechaHoy: string,
+  costosOrden: LabCostoOrden[] = [],
+  pruebasMap: Record<number, { nombre: string }> = {},
+  proveedoresMap: Record<number, string> = {},
 ): LabReporteStats {
   const porEstado = {
     PENDIENTE_COBRO: 0,
@@ -375,6 +408,7 @@ export function calcularReportesLab(
       .sort((a, b) => b.count - a.count)
       .slice(0, 8),
     ingresosPeriodo: ordenes.reduce((s, o) => s + Number(o.importe || 0), 0),
+    rentabilidad: calcularReporteRentabilidad(costosOrden, pruebasMap, proveedoresMap),
   }
 }
 

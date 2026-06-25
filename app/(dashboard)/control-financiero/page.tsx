@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function ControlFinancieroPage() {
   const supabase = await createClient()
+  if (!supabase) throw new Error('No se pudo inicializar Supabase')
   const perfil = await getPerfilSucursal()
   const modulos = await getModulosPermitidos(perfil.rolId, perfil.esSuperAdmin, perfil.esAdmin)
 

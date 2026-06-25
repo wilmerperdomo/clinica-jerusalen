@@ -1,5 +1,16 @@
 /** Utilidades — Control financiero mensual por sucursal */
 
+import type { LabCostoOrden } from '@/lib/lab-costos'
+
+export function resumirMargenLab(costos: LabCostoOrden[]) {
+  const ingresos = costos.reduce((s, c) => s + Number(c.ingreso || 0), 0)
+  const costoDirecto = costos.reduce((s, c) =>
+    s + Number(c.costo_insumos || 0) + Number(c.costo_maquila || 0) + Number(c.comision || 0), 0)
+  const utilidad = costos.reduce((s, c) => s + Number(c.utilidad || 0), 0)
+  const margenPct = ingresos > 0 ? Math.round((utilidad / ingresos) * 10000) / 100 : null
+  return { ingresos, costoDirecto, utilidad, margenPct, ordenes: costos.length }
+}
+
 export function fmtL(n: number) {
   return `L. ${Number(n || 0).toLocaleString('es-HN', { minimumFractionDigits: 2 })}`
 }

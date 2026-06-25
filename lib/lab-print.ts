@@ -1,4 +1,5 @@
 import { BRAND } from '@/lib/brand'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   labEncabezadoInformeHtml,
   labPieInformeHtml,
@@ -318,7 +319,7 @@ export function whatsappGrupoLab(grupo: GrupoLab, filas: FilaResultadoPrint[]): 
 }
 
 export function registrarAuditoriaLab(
-  supabase: { from: (t: string) => { insert: (p: object) => Promise<{ error: { message: string } | null }> } },
+  supabase: SupabaseClient,
   ordenId: number,
   accion: string,
   detalle?: string,

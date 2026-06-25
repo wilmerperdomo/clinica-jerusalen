@@ -18,12 +18,17 @@ import {
 import {
   agruparOrdenes, calcularReportesLab, calcularEdad, buscarRangoAplicable,
   evaluarValorRango, computeFechaPrometida, estadoOrdenLab, tuboColorClase,
-  indicadorDesdeRango,
+  indicadorDesdeRango, textoReferenciaRango,
   type OrdenLab, type PruebaLab, type PacienteLab, type GrupoLab,
   type LabRango, type LabPanelCampo, type Medico, type LabPerfil,
 } from '@/lib/lab-utils'
 import { precioLabLista } from '@/lib/membresia-utils'
 import { descontarInsumosLab, type LabInsumo } from '@/lib/lab-insumos'
+import {
+  calcularCostoEstimadoInsumos, calcularMargenEstimado, claseProcesamiento,
+  costoMaquilaAplicable, labelProcesamiento, upsertCostoOrden,
+  type LabCostoOrden, type ProcesamientoLab,
+} from '@/lib/lab-costos'
 import {
   imprimirEtiquetasTubo, imprimirResultadoGrupoLab,
   filasPrintDesdeGrupo, registrarAuditoriaLab,
@@ -56,9 +61,11 @@ interface Props {
   panelCampos: LabPanelCampo[]
   insumos: LabInsumo[]
   preciosLista: Record<number, Record<number, number>>
-  productos: { id: number; nombre: string; codigo?: string }[]
+  productos: { id: number; nombre: string; codigo?: string; costo?: number }[]
   medicos: Medico[]
   perfiles: LabPerfil[]
+  proveedores: { id: number; nombre: string }[]
+  costosOrden: LabCostoOrden[]
   sucursalId?: number
   esSuperAdmin?: boolean
 }
@@ -88,6 +95,7 @@ export default function LaboratorioClient({
   ordenes: init, pruebas, pacientes, fechaHoy,
   rangos, panelCampos: initPanelCampos, insumos: initInsumos,
   preciosLista, productos, medicos: initMedicos, perfiles: initPerfiles,
+  proveedores, costosOrden: initCostosOrden,
   sucursalId, esSuperAdmin = false,
 }: Props) {
   const [tab, setTab] = useState<TabLab>('cola')
@@ -119,9 +127,13 @@ export default function LaboratorioClient({
   const [formPrueba, setFormPrueba] = useState({
     nombre: '', description: '', color: '', dias: '1',
     costo: '0', comision: '0', nota: '', es_panel: false,
+    procesamiento: 'INTERNA' as ProcesamientoLab,
+    proveedor_id: '',
+    costo_maquila: '0',
   })
   const [insumosPrueba, setInsumosPrueba] = useState<{ producto_id: string; cantidad: string }[]>([])
   const [pruebasCatalogo, setPruebasCatalogo] = useState<PruebaLab[]>(pruebas)
+  const [costosOrdenState, setCostosOrdenState] = useState<LabCostoOrden[]>(initCostosOrden)
   const [loadingCatalogo, setLoadingCatalogo] = useState(false)
   const [guardandoOrden, setGuardandoOrden] = useState(false)
   const [pacientesExtra, setPacientesExtra] = useState<PacienteLab[]>([])
@@ -143,7 +155,11 @@ export default function LaboratorioClient({
   // Configuración de prueba (rangos de referencia + campos de panel)
   const [modalConfig, setModalConfig] = useState(false)
   const [configPrueba, setConfigPrueba] = useState<PruebaLab | null>(null)
-  const [formRango, setFormRango] = useState({ genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
+  const [formRango, setFormRango] = useState({
+    campo_id: '' as string,
+    genero: '', edad_min: '0', edad_max: '120',
+    rango_min: '', rango_max: '', rango_texto: '', unidad: '',
+  })
   const [formCampo, setFormCampo] = useState({ nombre: '', codigo: '', unidad: '', orden: '' })
   const [guardandoConfig, setGuardandoConfig] = useState(false)
 
@@ -248,6 +264,42 @@ export default function LaboratorioClient({
     }
     return m
   }, [initInsumos])
+
+  const costosProductoMap = useMemo(() => {
+    const m: Record<number, number> = {}
+    for (const p of productos) m[p.id] = Number(p.costo) || 0
+    return m
+  }, [productos])
+
+  const pruebasMap = useMemo(() => {
+    const m: Record<number, { nombre: string }> = {}
+    for (const p of pruebasCatalogo) m[p.id] = { nombre: p.nombre }
+    return m
+  }, [pruebasCatalogo])
+
+  const proveedoresMap = useMemo(() => {
+    const m: Record<number, string> = {}
+    for (const p of proveedores) m[p.id] = p.nombre
+    return m
+  }, [proveedores])
+
+  const pruebasCostosMap = useMemo(() => {
+    const m: Record<number, PruebaLab> = {}
+    for (const p of pruebasCatalogo) m[p.id] = p
+    return m
+  }, [pruebasCatalogo])
+
+  function costoEstimadoInsumosPrueba(pruebaId: number) {
+    return calcularCostoEstimadoInsumos(insumosMap[pruebaId] ?? [], costosProductoMap)
+  }
+
+  function resetFormPrueba() {
+    setFormPrueba({
+      nombre: '', description: '', color: '', dias: '1',
+      costo: '0', comision: '0', nota: '', es_panel: false,
+      procesamiento: 'INTERNA', proveedor_id: '', costo_maquila: '0',
+    })
+  }
 
   const pacientesBusqueda: PacienteBusqueda[] = useMemo(
     () => pacientesMerged as PacienteBusqueda[],
@@ -540,6 +592,11 @@ export default function LaboratorioClient({
       return
     }
     if (data) setOrdenes(data as OrdenLab[])
+    const { data: costos } = await supabase
+      .from('lab_costos_orden')
+      .select('*')
+      .gte('created_at', `${hace7}T00:00:00`)
+    if (costos) setCostosOrdenState(costos as LabCostoOrden[])
   }, [supabase, hace7, sucursalId, esSuperAdmin])
 
   const recargarRef = useRef(recargar)
@@ -556,7 +613,10 @@ export default function LaboratorioClient({
   }, [supabase])
 
   const grupos = useMemo(() => agruparOrdenes(ordenes, pacientesMerged), [ordenes, pacientesMerged])
-  const reportes = useMemo(() => calcularReportesLab(ordenes, grupos, fechaHoy), [ordenes, grupos, fechaHoy])
+  const reportes = useMemo(
+    () => calcularReportesLab(ordenes, grupos, fechaHoy, costosOrdenState, pruebasMap, proveedoresMap),
+    [ordenes, grupos, fechaHoy, costosOrdenState, pruebasMap, proveedoresMap],
+  )
 
   const stats = useMemo(() => ({
     total: ordenes.length,
@@ -716,6 +776,13 @@ export default function LaboratorioClient({
     return campoId ? `${ordenId}-${campoId}` : `${ordenId}-simple`
   }
 
+  function campoIdDesdeClave(key: string): number | null {
+    const parts = key.split('-')
+    if (parts.length < 2 || parts[1] === 'simple') return null
+    const id = Number(parts[1])
+    return Number.isFinite(id) ? id : null
+  }
+
   function initFormResultados(grupo: GrupoLab) {
     const pac = pacientesMerged.find(p => p.id === grupo.pacienteId)
     const edad = calcularEdad(pac?.fecha_nac)
@@ -729,7 +796,7 @@ export default function LaboratorioClient({
       if (campos?.length) {
         for (const campo of campos) {
           const exist = orden.resultados?.find(r => r.campo_id === campo.id)
-          const rango = buscarRangoAplicable(rangosState, pid, edad, pac?.genero)
+          const rango = buscarRangoAplicable(rangosState, pid, edad, pac?.genero, campo.id)
           pre[claveCampo(orden.id, campo.id)] = {
             valor: exist?.valor_resultado ?? '',
             unidad: exist?.unidad ?? campo.unidad ?? rango?.unidad ?? '',
@@ -770,9 +837,17 @@ export default function LaboratorioClient({
       await supabase.from('consulta_analisis')
         .update({ estado_lab: 'EN_PROCESO' })
         .in('id', idsPendientes)
-      const pruebaIds = grupo.ordenes.map(o => Number(o.id_analisis)).filter(Boolean)
-      const { errores } = await descontarInsumosLab(supabase, pruebaIds, sucursalId)
-      if (errores.length) console.warn('Insumos:', errores.join('; '))
+      const { data: { user } } = await supabase.auth.getUser()
+      const ordenesConsumo = grupo.ordenes
+        .filter(o => idsPendientes.includes(o.id))
+        .map(o => ({
+          ordenId: o.id,
+          pruebaId: Number(o.id_analisis),
+          ingreso: Number(o.importe || o.valor || 0),
+        }))
+        .filter(o => Number.isFinite(o.pruebaId) && o.pruebaId > 0)
+      const { errores } = await descontarInsumosLab(supabase, ordenesConsumo, sucursalId, user?.id, pruebasCostosMap)
+      if (errores.length) alert('Aviso de inventario:\n' + errores.join('\n'))
     }
     setModalResultados(true)
     startTransition(() => { recargar() })
@@ -783,7 +858,8 @@ export default function LaboratorioClient({
       const next = { ...prev, [key]: { ...prev[key], [field]: value } }
       if (field === 'valor' && typeof value === 'string') {
         const pac = grupoActual ? pacientesMerged.find(p => p.id === grupoActual.pacienteId) : undefined
-        const rango = buscarRangoAplicable(rangosState, pruebaId, calcularEdad(pac?.fecha_nac), pac?.genero)
+        const campoId = campoIdDesdeClave(key)
+        const rango = buscarRangoAplicable(rangosState, pruebaId, calcularEdad(pac?.fecha_nac), pac?.genero, campoId)
         const ev = evaluarValorRango(value, rango)
         next[key] = {
           ...next[key],
@@ -861,6 +937,26 @@ export default function LaboratorioClient({
     window.open(`/api/lab/archivo/${archivo.id}?encabezado=${encabezado}`, '_blank')
   }
 
+  async function registrarCostosOrdenesSinConsumir(ordenesLab: OrdenLab[]) {
+    for (const orden of ordenesLab) {
+      const pid = Number(orden.id_analisis)
+      const prueba = pruebasCostosMap[pid]
+      if (!prueba) continue
+      const { data: consumos } = await supabase
+        .from('lab_consumos_orden')
+        .select('costo_total')
+        .eq('orden_id', orden.id)
+      const costoInsumos = (consumos ?? []).reduce((s, r) => s + Number(r.costo_total || 0), 0)
+      await upsertCostoOrden(supabase, {
+        ordenId: orden.id,
+        prueba,
+        ingreso: Number(orden.importe || orden.valor || 0),
+        costoInsumos,
+        costoMaquila: costoMaquilaAplicable(prueba),
+      })
+    }
+  }
+
   async function persistirResultadosMaquila(modo: 'borrador' | 'validar' | 'entregar') {
     if (!grupoActual) return
     const pac = pacientesMerged.find(p => p.id === grupoActual.pacienteId)
@@ -883,6 +979,7 @@ export default function LaboratorioClient({
     for (const orden of grupoActual.ordenes) {
       await registrarAuditoriaLab(supabase, orden.id, modo, 'Resultado externo PDF')
     }
+    await registrarCostosOrdenesSinConsumir(grupoActual.ordenes)
     if (modo === 'entregar') {
       const tel = pac?.celular || pac?.telefono || grupoActual.telefono
       if (tel && confirm('¿Notificar al paciente por WhatsApp con el enlace al portal?')) {
@@ -987,6 +1084,8 @@ export default function LaboratorioClient({
       await registrarAuditoriaLab(supabase, orden.id, modo, resumen)
     }
 
+    await registrarCostosOrdenesSinConsumir(grupoActual.ordenes)
+
     if (modo === 'entregar') {
       const tel = pac?.celular || pac?.telefono || grupoActual.telefono
       if (tel && confirm('¿Notificar al paciente por WhatsApp con el enlace al portal?')) {
@@ -1010,9 +1109,16 @@ export default function LaboratorioClient({
       return
     }
     if (nuevoEstado === 'EN_PROCESO') {
-      const pruebaIds = grupo.ordenes.map(o => Number(o.id_analisis)).filter(Boolean)
-      const { errores } = await descontarInsumosLab(supabase, pruebaIds, sucursalId)
-      if (errores.length) console.warn('Insumos:', errores.join('; '))
+      const { data: { user } } = await supabase.auth.getUser()
+      const ordenesConsumo = grupo.ordenes
+        .map(o => ({
+          ordenId: o.id,
+          pruebaId: Number(o.id_analisis),
+          ingreso: Number(o.importe || o.valor || 0),
+        }))
+        .filter(o => Number.isFinite(o.pruebaId) && o.pruebaId > 0)
+      const { errores } = await descontarInsumosLab(supabase, ordenesConsumo, sucursalId, user?.id, pruebasCostosMap)
+      if (errores.length) alert('Aviso de inventario:\n' + errores.join('\n'))
     }
     startTransition(() => { recargar() })
   }
@@ -1103,6 +1209,9 @@ export default function LaboratorioClient({
       comision: Number(formPrueba.comision),
       nota: formPrueba.nota,
       es_panel: formPrueba.es_panel,
+      procesamiento: formPrueba.procesamiento,
+      proveedor_id: formPrueba.proveedor_id ? Number(formPrueba.proveedor_id) : null,
+      costo_maquila: Number(formPrueba.costo_maquila) || 0,
       activo: true,
     }
     let pruebaId = pruebaActual?.id
@@ -1127,7 +1236,7 @@ export default function LaboratorioClient({
 
     setModalPrueba(false)
     setPruebaActual(null)
-    setFormPrueba({ nombre: '', description: '', color: '', dias: '1', costo: '0', comision: '0', nota: '', es_panel: false })
+    resetFormPrueba()
     setInsumosPrueba([])
     await cargarCatalogoPruebas()
     startTransition(() => { recargar() })
@@ -1136,13 +1245,17 @@ export default function LaboratorioClient({
   /* ── configuración: rangos de referencia y campos de panel ── */
   function abrirConfig(prueba: PruebaLab) {
     setConfigPrueba(prueba)
-    setFormRango({ genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
+    setFormRango({ campo_id: '', genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
     setFormCampo({ nombre: '', codigo: '', unidad: '', orden: '' })
     setModalConfig(true)
   }
 
   async function guardarRango() {
     if (!configPrueba) return
+    if (configPrueba.es_panel && !formRango.campo_id) {
+      alert('Seleccione el parámetro (análisis) al que aplica este rango.')
+      return
+    }
     const min = formRango.rango_min.trim() === '' ? null : Number(formRango.rango_min.replace(',', '.'))
     const max = formRango.rango_max.trim() === '' ? null : Number(formRango.rango_max.replace(',', '.'))
     const texto = formRango.rango_texto.trim() || null
@@ -1153,6 +1266,7 @@ export default function LaboratorioClient({
     setGuardandoConfig(true)
     const payload = {
       prueba_id: configPrueba.id,
+      campo_id: formRango.campo_id ? Number(formRango.campo_id) : null,
       genero: formRango.genero || null,
       edad_min: Number(formRango.edad_min) || 0,
       edad_max: Number(formRango.edad_max) || 120,
@@ -1170,7 +1284,7 @@ export default function LaboratorioClient({
       return
     }
     if (data) setRangosState(prev => [...prev, data as LabRango])
-    setFormRango({ genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
+    setFormRango({ campo_id: '', genero: '', edad_min: '0', edad_max: '120', rango_min: '', rango_max: '', rango_texto: '', unidad: '' })
   }
 
   async function eliminarRango(id: number) {
@@ -1178,6 +1292,27 @@ export default function LaboratorioClient({
     const { error } = await supabase.from('lab_rangos').delete().eq('id', id)
     if (error) return alert('No se pudo eliminar: ' + error.message)
     setRangosState(prev => prev.filter(r => r.id !== id))
+  }
+
+  function camposPanelOrdenados(pruebaId: number) {
+    return panelCamposState
+      .filter(c => c.prueba_id === pruebaId)
+      .slice()
+      .sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0))
+  }
+
+  function seleccionarCampoRango(campo: LabPanelCampo) {
+    const existente = rangosState.find(r => r.prueba_id === configPrueba?.id && r.campo_id === campo.id)
+    setFormRango({
+      campo_id: String(campo.id),
+      genero: existente?.genero ?? '',
+      edad_min: String(existente?.edad_min ?? 0),
+      edad_max: String(existente?.edad_max ?? 120),
+      rango_min: existente?.rango_min != null ? String(existente.rango_min) : '',
+      rango_max: existente?.rango_max != null ? String(existente.rango_max) : '',
+      rango_texto: existente?.rango_texto ?? '',
+      unidad: existente?.unidad ?? campo.unidad ?? '',
+    })
   }
 
   async function guardarCampo() {
@@ -1466,7 +1601,7 @@ export default function LaboratorioClient({
                 <div className="flex justify-end mb-3">
                   <button onClick={() => {
                     setPruebaActual(null)
-                    setFormPrueba({ nombre: '', description: '', color: '', dias: '1', costo: '0', comision: '0', nota: '', es_panel: false })
+                    resetFormPrueba()
                     setInsumosPrueba([])
                     setModalPrueba(true)
                   }} className="flex items-center gap-2 px-3 py-2 bg-cyan-600 text-white rounded-lg text-sm">
@@ -1479,15 +1614,22 @@ export default function LaboratorioClient({
                       <tr className="bg-gray-50 text-gray-600 text-xs uppercase">
                         <th className="px-4 py-3 text-left">Nombre</th>
                         <th className="px-4 py-3 text-left">Tipo</th>
+                        <th className="px-4 py-3 text-left">Proceso</th>
                         <th className="px-4 py-3 text-left">Tubo</th>
                         <th className="px-4 py-3 text-center">SLA</th>
-                        <th className="px-4 py-3 text-right">Costo</th>
+                        <th className="px-4 py-3 text-right">Venta</th>
+                        <th className="px-4 py-3 text-right">Costo est.</th>
+                        <th className="px-4 py-3 text-right">Utilidad est.</th>
                         <th className="px-4 py-3 text-center">Insumos</th>
                         <th className="px-4 py-3 text-center"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {pruebasCatalogo.filter(p => !busqueda || p.nombre.toLowerCase().includes(busqueda.toLowerCase())).map(p => (
+                      {pruebasCatalogo.filter(p => !busqueda || p.nombre.toLowerCase().includes(busqueda.toLowerCase())).map(p => {
+                        const costoInsumos = costoEstimadoInsumosPrueba(p.id)
+                        const costoMaquila = costoMaquilaAplicable(p)
+                        const margen = calcularMargenEstimado(Number(p.costo), costoInsumos, costoMaquila, Number(p.comision))
+                        return (
                         <tr key={p.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <p className="font-medium">{p.nombre}</p>
@@ -1499,12 +1641,21 @@ export default function LaboratorioClient({
                               : <span className="text-xs text-gray-500">Simple</span>}
                           </td>
                           <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${claseProcesamiento(p.procesamiento)}`}>
+                              {labelProcesamiento(p.procesamiento)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
                             {p.color && (
                               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${tuboColorClase(p.color)}`}>{p.color}</span>
                             )}
                           </td>
                           <td className="px-4 py-3 text-center text-gray-500">{p.dias || 1}d</td>
                           <td className="px-4 py-3 text-right font-medium">L. {Number(p.costo).toFixed(2)}</td>
+                          <td className="px-4 py-3 text-right text-amber-700">L. {margen.costoTotal.toFixed(2)}</td>
+                          <td className={`px-4 py-3 text-right font-semibold ${margen.utilidad >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                            L. {margen.utilidad.toFixed(2)}
+                          </td>
                           <td className="px-4 py-3 text-center text-xs text-gray-500">
                             {(insumosMap[p.id]?.length ?? 0) || '—'}
                           </td>
@@ -1521,6 +1672,9 @@ export default function LaboratorioClient({
                                   color: p.color || '', dias: String(p.dias || 1),
                                   costo: String(p.costo), comision: String(p.comision),
                                   nota: '', es_panel: !!p.es_panel,
+                                  procesamiento: (p.procesamiento ?? 'INTERNA') as ProcesamientoLab,
+                                  proveedor_id: p.proveedor_id ? String(p.proveedor_id) : '',
+                                  costo_maquila: String(p.costo_maquila ?? 0),
                                 })
                                 setInsumosPrueba((insumosMap[p.id] ?? []).map(i => ({
                                   producto_id: String(i.producto_id),
@@ -1533,7 +1687,8 @@ export default function LaboratorioClient({
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -2246,6 +2401,55 @@ export default function LaboratorioClient({
               </label>
 
               <div className="border-t pt-3">
+                <p className="text-sm font-semibold text-gray-800 mb-2">Costos y maquila</p>
+                <div className="grid sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Tipo de procesamiento</label>
+                    <select value={formPrueba.procesamiento}
+                      onChange={e => setFormPrueba(p => ({ ...p, procesamiento: e.target.value as ProcesamientoLab }))}
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm">
+                      <option value="INTERNA">Interna</option>
+                      <option value="MAQUILADA">Maquilada</option>
+                      <option value="MIXTA">Mixta</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Proveedor externo</label>
+                    <select value={formPrueba.proveedor_id}
+                      onChange={e => setFormPrueba(p => ({ ...p, proveedor_id: e.target.value }))}
+                      disabled={formPrueba.procesamiento === 'INTERNA'}
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm disabled:bg-gray-100">
+                      <option value="">Sin proveedor</option>
+                      {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Costo maquila (L.)</label>
+                    <input type="number" min="0" step="0.01" value={formPrueba.costo_maquila}
+                      onChange={e => setFormPrueba(p => ({ ...p, costo_maquila: e.target.value }))}
+                      disabled={formPrueba.procesamiento === 'INTERNA'}
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm disabled:bg-gray-100" />
+                  </div>
+                </div>
+                {(() => {
+                  const costoInsumos = insumosPrueba.reduce((sum, ins) => {
+                    const prod = productos.find(p => String(p.id) === ins.producto_id)
+                    return sum + (Number(prod?.costo) || 0) * (Number(ins.cantidad) || 1)
+                  }, 0)
+                  const costoMaquila = formPrueba.procesamiento === 'INTERNA' ? 0 : Number(formPrueba.costo_maquila) || 0
+                  const margen = calcularMargenEstimado(Number(formPrueba.costo), costoInsumos, costoMaquila, Number(formPrueba.comision))
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs">
+                      <div className="bg-gray-50 rounded p-2"><span className="text-gray-500">Costo insumos</span><p className="font-bold">L. {costoInsumos.toFixed(2)}</p></div>
+                      <div className="bg-gray-50 rounded p-2"><span className="text-gray-500">Costo maquila</span><p className="font-bold">L. {costoMaquila.toFixed(2)}</p></div>
+                      <div className="bg-gray-50 rounded p-2"><span className="text-gray-500">Utilidad est.</span><p className={`font-bold ${margen.utilidad >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>L. {margen.utilidad.toFixed(2)}</p></div>
+                      <div className="bg-gray-50 rounded p-2"><span className="text-gray-500">Margen</span><p className="font-bold">{margen.margenPct != null ? `${margen.margenPct}%` : '—'}</p></div>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              <div className="border-t pt-3">
                 <p className="text-sm font-semibold text-gray-800 mb-2">Insumos / reactivos (descuento inventario)</p>
                 {insumosPrueba.map((ins, idx) => (
                   <div key={idx} className="flex gap-2 mb-2">
@@ -2283,28 +2487,108 @@ export default function LaboratorioClient({
               <section>
                 <h4 className="text-sm font-bold text-gray-800 mb-1">Rangos de referencia</h4>
                 <p className="text-xs text-gray-500 mb-2">
-                  Defina el valor normal por sexo y edad. Use mín/máx para numéricos o texto para cualitativos (ej. &quot;Negativo&quot;).
+                  {configPrueba.es_panel
+                    ? 'Cada parámetro del panel tiene su propio valor de referencia (como en el reporte de hemograma).'
+                    : 'Defina el valor normal por sexo y edad. Use mín/máx para numéricos o texto para cualitativos (ej. "Negativo").'}
                 </p>
-                <div className="space-y-1.5 mb-3">
-                  {rangosState.filter(r => r.prueba_id === configPrueba.id).length === 0 ? (
-                    <p className="text-xs text-gray-400 italic">Sin rangos definidos. Agregue uno abajo.</p>
-                  ) : rangosState.filter(r => r.prueba_id === configPrueba.id).map(r => (
-                    <div key={r.id} className="flex items-center gap-2 text-xs bg-gray-50 border rounded-lg px-3 py-2">
-                      <span className="px-1.5 py-0.5 rounded bg-white border text-gray-600">
-                        {r.genero === 'M' ? 'Masculino' : r.genero === 'F' ? 'Femenino' : 'Ambos'}
-                      </span>
-                      <span className="text-gray-500">{r.edad_min ?? 0}–{r.edad_max ?? 120} años</span>
-                      <span className="font-medium text-gray-800">
-                        {r.rango_min != null && r.rango_max != null ? `${r.rango_min} – ${r.rango_max}` : (r.rango_texto || '—')}
-                        {r.unidad ? ` ${r.unidad}` : ''}
-                      </span>
-                      <button onClick={() => eliminarRango(r.id)} className="ml-auto text-red-500 hover:text-red-700">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+
+                {configPrueba.es_panel ? (
+                  <>
+                    <div className="overflow-x-auto border rounded-lg mb-3">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-semibold">Análisis</th>
+                            <th className="text-left px-3 py-2 font-semibold w-24">Unidad</th>
+                            <th className="text-left px-3 py-2 font-semibold">Valor de referencia</th>
+                            <th className="w-16" />
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {camposPanelOrdenados(configPrueba.id).length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="px-3 py-4 text-center text-gray-400 italic">
+                                Sin parámetros. Agregue los campos del hemograma en la sección inferior.
+                              </td>
+                            </tr>
+                          ) : camposPanelOrdenados(configPrueba.id).map(campo => {
+                            const rangosCampo = rangosState.filter(r => r.prueba_id === configPrueba.id && r.campo_id === campo.id)
+                            return (
+                              <tr key={campo.id} className="hover:bg-cyan-50/30">
+                                <td className="px-3 py-2 font-medium text-gray-800">{campo.nombre}</td>
+                                <td className="px-3 py-2 text-gray-600">{campo.unidad || '—'}</td>
+                                <td className="px-3 py-2 text-gray-700">
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    {rangosCampo.length === 0 ? '—' : rangosCampo.map(r => (
+                                      <span key={r.id} className="inline-flex items-center gap-1 bg-gray-100 rounded px-1.5 py-0.5">
+                                        {r.genero === 'M' ? 'M: ' : r.genero === 'F' ? 'F: ' : ''}
+                                        {textoReferenciaRango(r)}
+                                        <button type="button" onClick={() => eliminarRango(r.id)}
+                                          className="text-red-500 hover:text-red-700 ml-0.5" title="Eliminar rango">
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="px-2 py-2 text-right">
+                                  <button type="button" onClick={() => seleccionarCampoRango(campo)}
+                                    className="text-cyan-700 hover:text-cyan-900 font-medium">
+                                    {rangosCampo.length ? 'Editar' : 'Agregar'}
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
-                </div>
+                    {formRango.campo_id && (
+                      <p className="text-xs text-cyan-800 mb-2 font-medium">
+                        Editando: {panelCamposState.find(c => String(c.id) === formRango.campo_id)?.nombre}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="space-y-1.5 mb-3">
+                    {rangosState.filter(r => r.prueba_id === configPrueba.id && r.campo_id == null).length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">Sin rangos definidos. Agregue uno abajo.</p>
+                    ) : rangosState.filter(r => r.prueba_id === configPrueba.id && r.campo_id == null).map(r => (
+                      <div key={r.id} className="flex items-center gap-2 text-xs bg-gray-50 border rounded-lg px-3 py-2">
+                        <span className="px-1.5 py-0.5 rounded bg-white border text-gray-600">
+                          {r.genero === 'M' ? 'Masculino' : r.genero === 'F' ? 'Femenino' : 'Ambos'}
+                        </span>
+                        <span className="text-gray-500">{r.edad_min ?? 0}–{r.edad_max ?? 120} años</span>
+                        <span className="font-medium text-gray-800">
+                          {textoReferenciaRango(r)}
+                          {r.unidad ? ` ${r.unidad}` : ''}
+                        </span>
+                        <button onClick={() => eliminarRango(r.id)} className="ml-auto text-red-500 hover:text-red-700">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end bg-cyan-50/40 border border-cyan-100 rounded-lg p-3">
+                  {configPrueba.es_panel && (
+                    <div className="col-span-2 sm:col-span-4">
+                      <label className="block text-[11px] text-gray-500 mb-0.5">Parámetro *</label>
+                      <select value={formRango.campo_id} onChange={e => {
+                        const id = e.target.value
+                        const campo = panelCamposState.find(c => String(c.id) === id)
+                        if (campo) seleccionarCampoRango(campo)
+                        else setFormRango(p => ({ ...p, campo_id: '' }))
+                      }}
+                        className="w-full border rounded px-2 py-1.5 text-sm">
+                        <option value="">Seleccione análisis…</option>
+                        {camposPanelOrdenados(configPrueba.id).map(c => (
+                          <option key={c.id} value={c.id}>{c.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-[11px] text-gray-500 mb-0.5">Sexo</label>
                     <select value={formRango.genero} onChange={e => setFormRango(p => ({ ...p, genero: e.target.value }))}

@@ -10,16 +10,18 @@ import {
 import { imprimirReporte } from '@/lib/reporte-utils'
 import {
   calcularResumen, fmtL, mesLabel, rangoMes,
-  labelProduccion, resumenPorSucursal,
+  labelProduccion, resumenPorSucursal, resumirMargenLab,
   exportarControlFinanciero, exportarMovimientosCaja,
   type DatosExportFinanciero,
 } from '@/lib/control-financiero-utils'
+import type { LabCostoOrden } from '@/lib/lab-costos'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost, ModuleBtnPrimary } from '@/components/module-layout'
 
 interface Sucursal { id: number; nombre: string }
 interface Movimiento { id: number; tipo: string; concepto: string; monto: number; fecha: string; sucursal_id?: number }
 interface Compra { id: number; total: number; fecha: string; sucursal_id?: number; estado?: string }
 interface Produccion { categoria_comision: string; monto_neto: number; comision_monto: number; sucursal_id: number; fecha: string }
+type LabCostoFinanciero = LabCostoOrden & { orden?: { sucursal_id?: number | null; fecha?: string | null } | null }
 
 interface Props {
   sucursales: Sucursal[]
@@ -43,6 +45,7 @@ export default function ControlFinancieroClient({
   const [movimientos, setMovs] = useState<Movimiento[]>([])
   const [compras, setCompras]   = useState<Compra[]>([])
   const [produccion, setProd]     = useState<Produccion[]>([])
+  const [labCostos, setLabCostos] = useState<LabCostoFinanciero[]>([])
   const [cxcPendiente, setCxc]    = useState(0)
   const [cxpPendiente, setCxp]    = useState(0)
 
@@ -98,12 +101,24 @@ export default function ControlFinancieroClient({
         return (data ?? []).reduce((s, r) => s + Number(r.saldo || 0), 0)
       }
 
-      const [{ data: movs }, { data: comps }, prodData, cxcTotal, cxpTotal] = await Promise.all([
+      async function fetchLabCostos() {
+        const { data, error } = await supabase
+          .from('lab_costos_orden')
+          .select('*, orden:consulta_analisis(sucursal_id, fecha)')
+          .gte('created_at', `${mesInicio}T00:00:00`)
+          .lte('created_at', `${mesFin}T23:59:59`)
+        if (error) return [] as LabCostoFinanciero[]
+        const rows = (data as unknown as LabCostoFinanciero[]) ?? []
+        return sid ? rows.filter(r => r.orden?.sucursal_id === sid) : rows
+      }
+
+      const [{ data: movs }, { data: comps }, prodData, cxcTotal, cxpTotal, labCostosData] = await Promise.all([
         movQ,
         compQ,
         fetchProd(),
         fetchCxc(),
         fetchCxp(),
+        fetchLabCostos(),
       ])
 
       const movsFlat = (movs ?? []).map((m: Record<string, unknown>) => ({
@@ -122,6 +137,7 @@ export default function ControlFinancieroClient({
       setMovs(movsFiltrados)
       setCompras((comps as Compra[]) ?? [])
       setProd(prodData)
+      setLabCostos(labCostosData)
       setCxc(cxcTotal)
       setCxp(cxpTotal)
     })
@@ -226,6 +242,7 @@ export default function ControlFinancieroClient({
 
   const comprasTotal = compras.reduce((s, c) => s + Number(c.total || 0), 0)
   const resumen = calcularResumen(movimientos, comprasTotal)
+  const margenLab = useMemo(() => resumirMargenLab(labCostos), [labCostos])
 
   const prodPorCat = useMemo(() => {
     const m: Record<string, number> = {}
@@ -326,6 +343,34 @@ export default function ControlFinancieroClient({
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border shadow-sm p-5">
+        <h2 className="font-bold text-slate-800 mb-1 flex items-center gap-2">
+          <FlaskConical className="w-5 h-5 text-cyan-600" /> Margen real de laboratorio
+        </h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Calculado desde órdenes procesadas: ingreso cobrado menos insumos, maquila y comisión configurada.
+        </p>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          {[
+            { label: 'Órdenes con costo', value: String(margenLab.ordenes), color: 'text-slate-800' },
+            { label: 'Ingresos lab', value: fmtL(margenLab.ingresos), color: 'text-cyan-700' },
+            { label: 'Costo directo', value: fmtL(margenLab.costoDirecto), color: 'text-orange-700' },
+            { label: 'Utilidad lab', value: fmtL(margenLab.utilidad), color: margenLab.utilidad >= 0 ? 'text-emerald-700' : 'text-red-600' },
+            { label: 'Margen', value: margenLab.margenPct != null ? `${margenLab.margenPct}%` : '—', color: 'text-indigo-700' },
+          ].map(k => (
+            <div key={k.label} className="rounded-lg bg-slate-50 border p-3">
+              <p className="text-xs text-slate-500">{k.label}</p>
+              <p className={`text-lg font-bold ${k.color}`}>{k.value}</p>
+            </div>
+          ))}
+        </div>
+        {margenLab.ordenes === 0 && (
+          <p className="text-xs text-amber-700 mt-3">
+            Aún no hay costos históricos de laboratorio en este período. Se crearán al pasar órdenes a proceso o validar resultados.
+          </p>
+        )}
       </div>
 
       {/* Comparativo sucursales */}
