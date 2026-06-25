@@ -55,6 +55,17 @@ function supabase() {
   )
 }
 
+function mensajeError(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (e && typeof e === 'object') {
+    const o = e as { message?: string; details?: string; hint?: string; code?: string }
+    return [o.message, o.details, o.hint, o.code ? `(código ${o.code})` : '']
+      .filter(Boolean)
+      .join(' · ') || 'desconocido'
+  }
+  return typeof e === 'string' ? e : 'desconocido'
+}
+
 const PROMO_VACIA: Omit<Promocion, 'id' | 'created_at'> = {
   titulo: '', subtitulo: '', descripcion: '', imagen_url: null,
   tipo_contenido: 'mixto', categoria_servicio: 'general', servicio_id: null,
@@ -286,7 +297,7 @@ export default function PromocionesClient({
       setModalContacto(false)
       await recargar()
     } catch (e) {
-      alert('Error al guardar contacto: ' + (e instanceof Error ? e.message : 'desconocido'))
+      alert('Error al guardar contacto: ' + mensajeError(e))
     } finally {
       setGuardandoContacto(false)
     }
@@ -407,7 +418,7 @@ export default function PromocionesClient({
       setModalPromo(false)
       await recargar()
     } catch (e) {
-      alert('Error al guardar: ' + (e instanceof Error ? e.message : 'desconocido'))
+      alert('Error al guardar: ' + mensajeError(e))
     } finally {
       setGuardandoPromo(false)
     }
@@ -541,7 +552,7 @@ export default function PromocionesClient({
         alert(`Campaña creada con ${filasEnvio.length} envíos pendientes.`)
       }
     } catch (e) {
-      alert('Error al crear campaña: ' + (e instanceof Error ? e.message : 'desconocido'))
+      alert('Error al crear campaña: ' + mensajeError(e))
     } finally {
       setCreandoCampana(false)
     }
@@ -586,7 +597,7 @@ export default function PromocionesClient({
         (data.errores?.length ? `\n\nErrores:\n${data.errores.slice(0, 5).join('\n')}` : ''),
       )
     } catch (e) {
-      alert('Error al procesar automatización: ' + (e instanceof Error ? e.message : 'desconocido'))
+      alert('Error al procesar automatización: ' + mensajeError(e))
     } finally {
       setProcesandoAuto(false)
     }
