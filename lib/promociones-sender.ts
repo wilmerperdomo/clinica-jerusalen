@@ -40,11 +40,28 @@ export interface ProcesarPromocionesResultado {
   enviados: number
   fallidos: number
   errores: string[]
-  config: {
-    whatsapp: boolean
-    resend: boolean
-    sendgrid: boolean
+  config: PromocionesEnvioConfig
+}
+
+export interface PromocionesEnvioConfig {
+  whatsapp: boolean
+  resend: boolean
+  sendgrid: boolean
+}
+
+export function getPromocionesEnvioConfig(): PromocionesEnvioConfig {
+  return {
+    whatsapp: Boolean(whatsappConfig().token && whatsappConfig().phoneNumberId),
+    resend: Boolean(resendConfig().apiKey),
+    sendgrid: Boolean(sendgridConfig().apiKey),
   }
+}
+
+function mensajeConfigFaltante(canal: 'whatsapp' | 'email'): string {
+  if (canal === 'whatsapp') {
+    return 'WhatsApp no está configurado. Agregue WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID en Vercel (Settings → Environment Variables).'
+  }
+  return 'Correo no está configurado. Agregue RESEND_API_KEY o SENDGRID_API_KEY en Vercel.'
 }
 
 function whatsappConfig() {
@@ -79,7 +96,7 @@ async function enviarWhatsApp(
 ): Promise<EnvioResultado> {
   const cfg = whatsappConfig()
   if (!cfg.token || !cfg.phoneNumberId) {
-    return { ok: false, proveedor: 'whatsapp', error: 'Faltan WHATSAPP_ACCESS_TOKEN o WHATSAPP_PHONE_NUMBER_ID' }
+    return { ok: false, proveedor: 'whatsapp', error: mensajeConfigFaltante('whatsapp') }
   }
 
   const to = limpiarCelular(destinatario.celular, destinatario.telefono)
@@ -158,7 +175,7 @@ async function enviarEmail(
   `
   if (!cfg.apiKey) {
     const sg = sendgridConfig()
-    if (!sg.apiKey) return { ok: false, proveedor: 'resend', error: 'Falta RESEND_API_KEY o SENDGRID_API_KEY' }
+    if (!sg.apiKey) return { ok: false, proveedor: 'resend', error: mensajeConfigFaltante('email') }
     const sgRes = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
       headers: {
@@ -249,6 +266,8 @@ export async function procesarPromocionesAutomaticas(
     .order('programado_para', { ascending: true, nullsFirst: false })
     .limit(limiteCampanas)
 
+  const config = getPromocionesEnvioConfig()
+
   if (errCampanas) {
     return {
       ok: false,
@@ -256,15 +275,44 @@ export async function procesarPromocionesAutomaticas(
       enviados: 0,
       fallidos: 0,
       errores: [errCampanas.message],
-      config: {
-        whatsapp: Boolean(whatsappConfig().token && whatsappConfig().phoneNumberId),
-        resend: Boolean(resendConfig().apiKey),
-        sendgrid: Boolean(sendgridConfig().apiKey),
-      },
+      config,
     }
   }
 
-  for (const campana of (campanas ?? []) as CampanaAutomatica[]) {
+  const listaCampanas = (campanas ?? []) as CampanaAutomatica[]
+  if (listaCampanas.length > 0) {
+    const { data: pendientesCanal } = await supabase
+      .from('promocion_envios')
+      .select('canal')
+      .in('campana_id', listaCampanas.map(c => c.id))
+      .eq('estado', 'pendiente')
+      .limit(limiteEnvios * limiteCampanas)
+
+    const necesitaWhatsApp = (pendientesCanal ?? []).some(e => e.canal === 'whatsapp')
+    const necesitaEmail = (pendientesCanal ?? []).some(e => e.canal === 'email')
+    if (necesitaWhatsApp && !config.whatsapp) {
+      return {
+        ok: false,
+        campanasProcesadas: 0,
+        enviados: 0,
+        fallidos: 0,
+        errores: [mensajeConfigFaltante('whatsapp')],
+        config,
+      }
+    }
+    if (necesitaEmail && !config.resend && !config.sendgrid) {
+      return {
+        ok: false,
+        campanasProcesadas: 0,
+        enviados: 0,
+        fallidos: 0,
+        errores: [mensajeConfigFaltante('email')],
+        config,
+      }
+    }
+  }
+
+  for (const campana of listaCampanas) {
     if (!campana.promocion) {
       errores.push(`Campaña ${campana.id} sin promoción asociada`)
       continue
@@ -318,14 +366,10 @@ export async function procesarPromocionesAutomaticas(
 
   return {
     ok: errores.length === 0,
-    campanasProcesadas: (campanas ?? []).length,
+    campanasProcesadas: listaCampanas.length,
     enviados,
     fallidos,
     errores,
-    config: {
-      whatsapp: Boolean(whatsappConfig().token && whatsappConfig().phoneNumberId),
-      resend: Boolean(resendConfig().apiKey),
-      sendgrid: Boolean(sendgridConfig().apiKey),
-    },
+    config,
   }
 }

@@ -85,6 +85,7 @@ export default function PromocionesClient({
   const [campanas, setCampanas] = useState(campanasIniciales)
   const [cargando, setCargando] = useState(false)
   const [procesandoAuto, setProcesandoAuto] = useState(false)
+  const [envioConfig, setEnvioConfig] = useState<{ whatsapp: boolean; resend: boolean; sendgrid: boolean } | null>(null)
 
   const [modalPromo, setModalPromo] = useState(false)
   const [promoEdit, setPromoEdit] = useState<Promocion | null>(null)
@@ -235,6 +236,13 @@ export default function PromocionesClient({
   }, [campanas, sb, recargar])
 
   useEffect(() => { void activarProgramadas() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    void fetch('/api/promociones/config')
+      .then(r => r.json())
+      .then(data => { if (data?.config) setEnvioConfig(data.config) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     void (async () => {
@@ -472,6 +480,21 @@ export default function PromocionesClient({
     if (formCampana.audiencia === 'contactos' && contactosElegidos.size === 0) {
       alert('Seleccione al menos un contacto de la lista.')
       return
+    }
+    if (formCampana.automatico) {
+      const canal = formCampana.canal
+      const necesitaWhatsApp = canal === 'whatsapp' || canal === 'ambos'
+      const necesitaEmail = canal === 'email' || canal === 'ambos'
+      if (envioConfig) {
+        if (necesitaWhatsApp && !envioConfig.whatsapp) {
+          alert('El envío automático por WhatsApp requiere WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID en Vercel.\n\nUse envío asistido (sin marcar "Envío automático") para abrir WhatsApp manualmente desde su teléfono.')
+          return
+        }
+        if (necesitaEmail && !envioConfig.resend && !envioConfig.sendgrid) {
+          alert('El envío automático por correo requiere RESEND_API_KEY o SENDGRID_API_KEY en Vercel.')
+          return
+        }
+      }
     }
 
     setCreandoCampana(true)
@@ -1508,10 +1531,22 @@ export default function PromocionesClient({
                 <div>
                   <p className="font-semibold text-sm text-emerald-900">Envío automático</p>
                   <p className="text-xs text-emerald-700">
-                    Usa WhatsApp Business API / Resend / SendGrid desde el cron. Requiere variables de entorno configuradas.
+                    Envía por API (WhatsApp Business / Resend / SendGrid). Requiere variables en Vercel.
                   </p>
                 </div>
               </label>
+              {formCampana.automatico && envioConfig && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+                  <p className="font-semibold">Estado de proveedores en el servidor:</p>
+                  <p>{envioConfig.whatsapp ? '✓ WhatsApp configurado' : '✗ WhatsApp sin configurar (faltan credenciales Meta)'}</p>
+                  <p>{(envioConfig.resend || envioConfig.sendgrid) ? '✓ Correo configurado' : '✗ Correo sin configurar'}</p>
+                  {!envioConfig.whatsapp && (formCampana.canal === 'whatsapp' || formCampana.canal === 'ambos') && (
+                    <p className="pt-1 text-amber-800">
+                      Sin WhatsApp API, desmarque &quot;Envío automático&quot; y use <strong>Enviar ahora</strong> para abrir WhatsApp manualmente.
+                    </p>
+                  )}
+                </div>
+              )}
               {formCampana.programado && (
                 <div>
                   <label className="text-xs text-gray-500">Fecha y hora</label>
