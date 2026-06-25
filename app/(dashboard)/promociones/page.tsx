@@ -1,5 +1,6 @@
+import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { getPerfilSucursal, getModulosPermitidos } from '@/lib/get-sucursal'
 import PromocionesClient from './promociones-client'
 
 export const dynamic = 'force-dynamic'
@@ -7,7 +8,15 @@ export const metadata = { title: 'Promociones y Publicidad' }
 
 export default async function PromocionesPage() {
   const supabase = await createClient()
-  const { sucursalId, esSuperAdmin, sucursalNombre } = await getPerfilSucursal()
+  if (!supabase) redirect('/login')
+
+  const perfil = await getPerfilSucursal()
+  const modulos = await getModulosPermitidos(perfil.rolId, perfil.esSuperAdmin, perfil.esAdmin)
+  if (!perfil.esSuperAdmin && !perfil.esAdmin && !modulos.includes('promociones')) {
+    redirect('/')
+  }
+
+  const { sucursalId, esSuperAdmin, sucursalNombre } = perfil
 
   let promosQuery = supabase
     .from('promociones')

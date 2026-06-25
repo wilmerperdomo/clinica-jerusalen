@@ -422,9 +422,10 @@ export default function PromocionesClient({
             <ModuleBtnGhost onClick={recargar} disabled={cargando}>
               <RefreshCw className={`w-4 h-4 ${cargando ? 'animate-spin' : ''}`} />
             </ModuleBtnGhost>
-            <ModuleBtnGhost onClick={procesarAutomaticas} disabled={procesandoAuto}>
+            <ModuleBtnGhost onClick={procesarAutomaticas} disabled={procesandoAuto} className="gap-1.5">
               <Zap className={`w-4 h-4 ${procesandoAuto ? 'animate-pulse' : ''}`} />
-              {procesandoAuto ? 'Procesando…' : 'Procesar automáticas'}
+              <span className="hidden sm:inline">{procesandoAuto ? 'Procesando…' : 'Procesar automáticas'}</span>
+              <span className="sm:hidden">{procesandoAuto ? '…' : 'Auto'}</span>
             </ModuleBtnGhost>
             <button
               type="button"
@@ -453,19 +454,23 @@ export default function PromocionesClient({
       />
 
       <ModuleContent>
-        <div className="flex gap-2 mb-4">
+        <div className="flex flex-wrap gap-2 mb-4">
           {(['promociones', 'campanas'] as const).map(t => (
             <button
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+              className={`px-3 sm:px-4 py-2 rounded-xl text-sm font-semibold transition flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 ${
                 tab === t
                   ? 'bg-[#003366] text-white shadow-md'
                   : 'bg-white text-gray-600 border hover:border-rose-200'
               }`}
             >
-              {t === 'promociones' ? 'Catálogo de promociones' : 'Campañas de envío'}
+              {t === 'promociones' ? (
+                <><span className="sm:hidden">Catálogo</span><span className="hidden sm:inline">Catálogo de promociones</span></>
+              ) : (
+                <><span className="sm:hidden">Campañas</span><span className="hidden sm:inline">Campañas de envío</span></>
+              )}
             </button>
           ))}
         </div>
@@ -601,11 +606,12 @@ export default function PromocionesClient({
         <div className="mt-6 rounded-xl border border-amber-100 bg-amber-50/80 p-4 flex gap-3">
           <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-amber-900">
-            <p className="font-semibold mb-1">Envío asistido (fase actual)</p>
+            <p className="font-semibold mb-1">Envío asistido y automático</p>
             <p className="text-amber-800/90 leading-relaxed">
               Puede trabajar en modo asistido (wa.me / mailto) o automático. El automático usa
-              WhatsApp Business API y Resend/SendGrid desde un cron protegido; si faltan llaves de entorno,
-              el envío queda marcado como fallido para auditoría sin afectar los módulos clínicos.
+              WhatsApp Business API y Resend/SendGrid desde un cron protegido (en plan Hobby de Vercel
+              corre una vez al día; también puede usar el botón &quot;Procesar automáticas&quot;). Si faltan
+              llaves de entorno, el envío queda marcado como fallido para auditoría sin afectar los módulos clínicos.
             </p>
           </div>
         </div>
@@ -654,7 +660,7 @@ export default function PromocionesClient({
                 <img src={formPromo.imagen_url} alt="" className="mt-2 h-24 rounded-lg object-cover border" />
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-gray-600">Vigencia desde</label>
                 <input type="date" value={formPromo.vigencia_desde ?? ''}
@@ -696,12 +702,12 @@ export default function PromocionesClient({
           onClose={() => setModalCampana(false)}
           size="lg"
           footer={
-            <div className="flex justify-between w-full gap-2">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-between w-full gap-2">
               <button type="button" onClick={() => pasoCampana > 1 ? setPasoCampana(p => p - 1) : setModalCampana(false)}
-                className="px-4 py-2.5 border rounded-xl text-sm flex items-center gap-1">
+                className="px-4 py-2.5 border rounded-xl text-sm flex items-center justify-center gap-1 w-full sm:w-auto">
                 <ChevronLeft className="w-4 h-4" /> {pasoCampana > 1 ? 'Atrás' : 'Cancelar'}
               </button>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 {pasoCampana < 3 ? (
                   <button type="button" onClick={() => setPasoCampana(p => p + 1)}
                     className="px-4 py-2.5 bg-[#003366] text-white rounded-xl text-sm font-bold flex items-center gap-1">
