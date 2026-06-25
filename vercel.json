@@ -4,7 +4,7 @@
   "installCommand": "npm install",
   "crons": [
     { "path": "/api/respaldos/cron", "schedule": "0 8 * * *" },
-    { "path": "/api/promociones/cron", "schedule": "*/10 * * * *" },
-    { "path": "/api/agenda/recordatorios/cron", "schedule": "*/15 * * * *" }
+    { "path": "/api/promociones/cron", "schedule": "0 9 * * *" },
+    { "path": "/api/agenda/recordatorios/cron", "schedule": "0 7 * * *" }
   ]
 }
