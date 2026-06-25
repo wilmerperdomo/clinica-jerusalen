@@ -97,6 +97,8 @@ export default function PromocionesClient({
   })
   const [pacientesManual, setPacientesManual] = useState<PacienteBusquedaRow[]>([])
   const [contactosManual, setContactosManual] = useState<PromocionContacto[]>([])
+  const [contactosElegidos, setContactosElegidos] = useState<Set<number>>(new Set())
+  const [buscarContactoCampana, setBuscarContactoCampana] = useState('')
   const [buscarPacManual, setBuscarPacManual] = useState('')
   const [destinatariosPreview, setDestinatariosPreview] = useState<DestinatarioPromo[]>([])
   const [seleccionDestinatarios, setSeleccionDestinatarios] = useState<Set<string>>(new Set())
@@ -137,6 +139,37 @@ export default function PromocionesClient({
     [servicios, formPromo.categoria_servicio],
   )
 
+  const contactosCampanaFiltrados = useMemo(() => {
+    const activos = contactos.filter(c => c.activo)
+    const q = buscarContactoCampana.trim().toLowerCase()
+    if (!q) return activos
+    return activos.filter(c =>
+      c.nombre.toLowerCase().includes(q)
+      || c.celular?.includes(q)
+      || c.correo?.toLowerCase().includes(q),
+    )
+  }, [contactos, buscarContactoCampana])
+
+  const contactosADestinatarios = useCallback((ids: Set<number>): DestinatarioPromo[] =>
+    contactos
+      .filter(c => c.activo && ids.has(c.id))
+      .map(c => ({
+        tipo: 'contacto' as const,
+        id: c.id,
+        nombre: c.nombre,
+        celular: c.celular,
+        correo: c.correo,
+      })),
+  [contactos])
+
+  useEffect(() => {
+    if (!modalCampana || formCampana.audiencia !== 'contactos') return
+    const lista = contactosADestinatarios(contactosElegidos)
+    setDestinatariosPreview(lista)
+    setSeleccionDestinatarios(new Set(lista.map(claveDestinatario)))
+    setResumenPreview(lista.length > 0 ? resumenCanales(lista, formCampana.canal) : null)
+  }, [modalCampana, formCampana.audiencia, formCampana.canal, contactosElegidos, contactosADestinatarios])
+
   const audienciaOpcionesCampana = useMemo(() => {
     const cat = promoCampana?.categoria_servicio ?? 'general'
     return AUDIENCIA_OPCIONES.filter(a => {
@@ -144,6 +177,19 @@ export default function PromocionesClient({
       return true
     })
   }, [promoCampana])
+
+  function seleccionarContactosCampana(ids: Set<number>) {
+    setContactosElegidos(ids)
+  }
+
+  function toggleContactoElegido(id: number) {
+    setContactosElegidos(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const recargar = useCallback(async () => {
     setCargando(true)
@@ -259,9 +305,11 @@ export default function PromocionesClient({
       tipo: formCampana.audiencia,
       sucursal_id: formCampana.sucursal_filtro,
       paciente_ids: formCampana.audiencia === 'manual' ? pacientesManual.map(p => p.id) : undefined,
-      contacto_ids: formCampana.audiencia === 'manual'
-        ? contactosManual.map(c => c.id)
-        : undefined,
+      contacto_ids: formCampana.audiencia === 'contactos'
+        ? [...contactosElegidos]
+        : formCampana.audiencia === 'manual'
+          ? contactosManual.map(c => c.id)
+          : undefined,
       categoria_servicio: formCampana.audiencia === 'por_servicio' ? cat : undefined,
       servicio_id: formCampana.audiencia === 'por_servicio' ? (promoCampana?.servicio_id ?? null) : undefined,
       meses_historial: formCampana.audiencia === 'por_servicio' ? formCampana.meses_historial : undefined,
@@ -391,6 +439,8 @@ export default function PromocionesClient({
     })
     setPacientesManual([])
     setContactosManual([])
+    setContactosElegidos(new Set())
+    setBuscarContactoCampana('')
     setDestinatariosPreview([])
     setSeleccionDestinatarios(new Set())
     setResumenPreview(null)
@@ -406,6 +456,10 @@ export default function PromocionesClient({
     }
     if (formCampana.audiencia === 'manual' && pacientesManual.length === 0 && contactosManual.length === 0) {
       alert('Agregue al menos un paciente o contacto.')
+      return
+    }
+    if (formCampana.audiencia === 'contactos' && contactosElegidos.size === 0) {
+      alert('Seleccione al menos un contacto de la lista.')
       return
     }
 
@@ -1181,6 +1235,12 @@ export default function PromocionesClient({
                       setDestinatariosPreview([])
                       setSeleccionDestinatarios(new Set())
                       setResumenPreview(null)
+                      if (a.value === 'contactos') {
+                        const ids = new Set(contactos.filter(c => c.activo).map(c => c.id))
+                        setContactosElegidos(ids)
+                      } else {
+                        setContactosElegidos(new Set())
+                      }
                     }}
                     className={`p-3 rounded-xl border text-left transition ${
                       formCampana.audiencia === a.value ? 'border-[#003366] bg-rose-50' : ''
@@ -1212,7 +1272,86 @@ export default function PromocionesClient({
                   </div>
                 </div>
               )}
-              {esSuperAdmin && (
+              {formCampana.audiencia === 'contactos' && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50/40 overflow-hidden">
+                  <div className="px-3 py-2 border-b border-violet-100 flex flex-col sm:flex-row sm:items-center gap-2">
+                    <p className="text-sm font-semibold text-violet-900 flex-1">
+                      Elija quién recibirá la promoción ({contactosElegidos.size} seleccionados)
+                    </p>
+                    <div className="flex gap-2 text-xs">
+                      <button type="button"
+                        onClick={() => seleccionarContactosCampana(new Set(contactos.filter(c => c.activo).map(c => c.id)))}
+                        className="font-semibold text-[#003366]">Todos</button>
+                      <button type="button"
+                        onClick={() => seleccionarContactosCampana(new Set())}
+                        className="text-gray-500">Ninguno</button>
+                    </div>
+                  </div>
+                  <div className="p-3 border-b border-violet-100">
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        value={buscarContactoCampana}
+                        onChange={e => setBuscarContactoCampana(e.target.value)}
+                        placeholder="Buscar contacto…"
+                        className="w-full border rounded-xl pl-9 pr-3 py-2 text-sm bg-white"
+                      />
+                    </div>
+                  </div>
+                  {contactos.filter(c => c.activo).length === 0 ? (
+                    <div className="p-6 text-center text-sm text-gray-500">
+                      <p>No hay contactos en la agenda.</p>
+                      <button type="button" onClick={() => { setModalCampana(false); setTab('contactos') }}
+                        className="mt-2 text-[#003366] font-semibold text-xs underline">
+                        Ir a Contactos y agregar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto divide-y bg-white">
+                      {contactosCampanaFiltrados.map(c => {
+                        const elegido = contactosElegidos.has(c.id)
+                        const canal = canalesParaDestinatario(c, formCampana.canal)
+                        return (
+                          <label key={c.id}
+                            className={`flex items-center gap-3 px-3 py-2.5 text-sm cursor-pointer hover:bg-violet-50/50 ${elegido ? '' : 'opacity-55'}`}>
+                            <input type="checkbox" checked={elegido} onChange={() => toggleContactoElegido(c.id)} />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{c.nombre}</p>
+                              <p className="text-[10px] text-gray-400 truncate">
+                                {c.celular || '—'} {c.correo ? `· ${c.correo}` : ''}
+                              </p>
+                            </div>
+                            {canal[0] === 'whatsapp' ? (
+                              <MessageCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" title="WhatsApp" />
+                            ) : canal[0] === 'email' ? (
+                              <Mail className="w-4 h-4 text-sky-600 flex-shrink-0" title="Correo" />
+                            ) : (
+                              <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" title="Sin contacto válido" />
+                            )}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+              {formCampana.audiencia === 'contactos' && resumenPreview && (
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-2">
+                    <p className="text-lg font-bold text-emerald-700">{resumenPreview.whatsapp}</p>
+                    <p className="text-[10px] text-emerald-600">WhatsApp</p>
+                  </div>
+                  <div className="rounded-xl bg-sky-50 border border-sky-200 p-2">
+                    <p className="text-lg font-bold text-sky-700">{resumenPreview.email}</p>
+                    <p className="text-[10px] text-sky-600">Correo</p>
+                  </div>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-2">
+                    <p className="text-lg font-bold text-amber-700">{resumenPreview.sinContacto}</p>
+                    <p className="text-[10px] text-amber-600">Sin contacto</p>
+                  </div>
+                </div>
+              )}
+              {esSuperAdmin && formCampana.audiencia !== 'contactos' && (
                 <div>
                   <label className="text-xs text-gray-500">Filtrar por sucursal</label>
                   <select value={formCampana.sucursal_filtro ?? ''}
@@ -1249,41 +1388,44 @@ export default function PromocionesClient({
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Contactos de la agenda</label>
-                    <select
-                      className="w-full border rounded-xl px-3 py-2 text-sm"
-                      value=""
-                      onChange={e => {
-                        const id = Number(e.target.value)
-                        if (!id) return
-                        const c = contactos.find(x => x.id === id)
-                        if (c && !contactosManual.some(x => x.id === c.id)) {
-                          setContactosManual(prev => [...prev, c])
-                        }
-                      }}
-                    >
-                      <option value="">Seleccionar contacto…</option>
-                      {contactos.filter(c => c.activo).map(c => (
-                        <option key={c.id} value={c.id}>{c.nombre} — {c.celular || c.correo}</option>
-                      ))}
-                    </select>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {contactosManual.map(c => (
-                        <span key={c.id} className="text-xs bg-violet-100 text-violet-800 px-2 py-1 rounded-full flex items-center gap-1">
-                          {c.nombre}
-                          <button type="button" onClick={() => setContactosManual(prev => prev.filter(x => x.id !== c.id))}>×</button>
-                        </span>
-                      ))}
-                    </div>
+                    <label className="text-xs text-gray-500 mb-2 block">Contactos de la agenda — marque quién recibe</label>
+                    {contactos.filter(c => c.activo).length === 0 ? (
+                      <p className="text-xs text-gray-400">Sin contactos. Agréguelos en la pestaña Contactos.</p>
+                    ) : (
+                      <div className="max-h-40 overflow-y-auto border rounded-xl divide-y bg-white">
+                        {contactos.filter(c => c.activo).map(c => {
+                          const enLista = contactosManual.some(x => x.id === c.id)
+                          return (
+                            <label key={c.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-violet-50/50">
+                              <input
+                                type="checkbox"
+                                checked={enLista}
+                                onChange={() => {
+                                  if (enLista) {
+                                    setContactosManual(prev => prev.filter(x => x.id !== c.id))
+                                  } else {
+                                    setContactosManual(prev => [...prev, c])
+                                  }
+                                }}
+                              />
+                              <span className="flex-1 truncate">{c.nombre}</span>
+                              <span className="text-[10px] text-gray-400">{c.celular || c.correo}</span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
+              {formCampana.audiencia !== 'contactos' && (
               <button type="button" onClick={cargarPreviewAudiencia} disabled={cargandoPreview}
                 className="text-sm text-[#003366] font-semibold flex items-center gap-1 disabled:opacity-50">
                 <Users className={`w-4 h-4 ${cargandoPreview ? 'animate-pulse' : ''}`} />
                 {cargandoPreview ? 'Calculando…' : 'Cargar y revisar destinatarios'}
               </button>
-              {resumenPreview && (
+              )}
+              {formCampana.audiencia !== 'contactos' && resumenPreview && (
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-2">
                     <p className="text-lg font-bold text-emerald-700">{resumenPreview.whatsapp}</p>
@@ -1299,7 +1441,7 @@ export default function PromocionesClient({
                   </div>
                 </div>
               )}
-              {destinatariosPreview.length > 0 && (
+              {formCampana.audiencia !== 'contactos' && destinatariosPreview.length > 0 && (
                 <div className="rounded-xl border overflow-hidden">
                   <div className="px-3 py-2 bg-gray-50 border-b flex items-center justify-between text-xs">
                     <span className="font-semibold text-gray-700">

@@ -186,7 +186,7 @@ export const AUDIENCIA_OPCIONES: { value: TipoAudiencia; label: string; desc: st
   { value: 'por_servicio', label: 'Historial del servicio', desc: 'Pacientes que ya usaron este servicio o categoría', soloServicio: true },
   { value: 'whatsapp', label: 'Con WhatsApp', desc: 'Pacientes con celular válido' },
   { value: 'correo', label: 'Solo correo (sin WA)', desc: 'Pacientes con email y sin WhatsApp' },
-  { value: 'contactos', label: 'Agenda de contactos', desc: 'Números y correos agregados manualmente' },
+  { value: 'contactos', label: 'Elegir contactos', desc: 'Marque en su agenda quién recibirá la promoción' },
   { value: 'manual', label: 'Selección personalizada', desc: 'Elija pacientes y contactos uno a uno' },
 ]
 
