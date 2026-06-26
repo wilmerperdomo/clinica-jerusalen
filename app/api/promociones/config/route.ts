@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getPromocionesEnvioConfig } from '@/lib/promociones-sender'
+import { getPromocionesEnvioConfigAsync } from '@/lib/promociones-sender'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,5 +14,6 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: 'No autorizado' }, { status: 401 })
   }
 
-  return NextResponse.json({ ok: true, config: getPromocionesEnvioConfig() })
+  const config = await getPromocionesEnvioConfigAsync()
+  return NextResponse.json({ ok: true, config })
 }

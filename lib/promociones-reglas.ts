@@ -5,7 +5,7 @@ import {
 } from '@/lib/promocion-audiencia'
 import { aplicarPlantilla, type PromocionPlantilla } from '@/lib/promociones-plantillas'
 import type { CanalCampana, Promocion } from '@/lib/promociones-utils'
-import { procesarPromocionesAutomaticas } from '@/lib/promociones-sender'
+import { procesarPromocionesAutomaticas, proveedorAutomaticoPorDefecto } from '@/lib/promociones-sender'
 
 export type TipoDisparadorRegla = 'cumpleanos' | 'inactivo'
 
@@ -175,6 +175,10 @@ export async function procesarReglasPromociones(
       }
 
       const etiqueta = regla.tipo_disparador === 'cumpleanos' ? 'Cumpleaños' : 'Inactivos'
+      const proveedorAuto = regla.modo_envio === 'automatico'
+        ? proveedorAutomaticoPorDefecto()
+        : 'asistido'
+
       const { data: campana, error: errC } = await supabase
         .from('promocion_campanas')
         .insert({
@@ -182,6 +186,7 @@ export async function procesarReglasPromociones(
           nombre: `Auto — ${etiqueta} — ${regla.nombre}`,
           canal: regla.canal,
           modo_envio: regla.modo_envio,
+          proveedor_envio: proveedorAuto,
           estado: regla.modo_envio === 'automatico' ? 'en_proceso' : 'lista_envio',
           filtro_audiencia: {
             tipo: 'manual',

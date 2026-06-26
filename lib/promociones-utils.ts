@@ -4,6 +4,7 @@ import { linkEmailMensaje, linkWhatsAppMensaje, nombrePaciente, type ContactoPac
 export type TipoContenidoPromo = 'texto' | 'imagen' | 'mixto'
 export type CanalCampana = 'whatsapp' | 'email' | 'ambos'
 export type ModoEnvioCampana = 'inmediato' | 'programado' | 'asistido' | 'automatico'
+export type ProveedorEnvio = 'asistido' | 'meta' | 'evolution'
 export type EstadoCampana = 'borrador' | 'programada' | 'lista_envio' | 'en_proceso' | 'completada' | 'cancelada'
 export type EstadoEnvio = 'pendiente' | 'enviado' | 'sin_contacto' | 'omitido' | 'fallido'
 export type TipoAudiencia = 'todos' | 'whatsapp' | 'correo' | 'manual' | 'contactos' | 'por_servicio'
@@ -129,6 +130,7 @@ export interface Campana {
   nombre: string
   canal: CanalCampana
   modo_envio: ModoEnvioCampana
+  proveedor_envio?: ProveedorEnvio
   programado_para?: string | null
   estado: EstadoCampana
   filtro_audiencia: FiltroAudiencia
@@ -179,6 +181,45 @@ export const CANAL_CFG: Record<CanalCampana, { label: string; icon: string; desc
   whatsapp: { label: 'Solo WhatsApp', icon: '💬', desc: 'Únicamente quienes tengan celular válido' },
   email:    { label: 'Solo correo', icon: '✉️', desc: 'Únicamente quienes tengan email' },
   ambos:    { label: 'Inteligente', icon: '🎯', desc: 'WhatsApp primero; correo solo si no tiene WhatsApp' },
+}
+
+export const PROVEEDOR_ENVIO_OPCIONES: {
+  value: ProveedorEnvio
+  label: string
+  desc: string
+  icon: string
+  badge: string
+  requiereAutomatico: boolean
+}[] = [
+  {
+    value: 'asistido',
+    label: 'Asistido gratis',
+    desc: 'Abre WhatsApp Web con el mensaje listo. Usted envía manualmente. Sin costo ni API.',
+    icon: '👤',
+    badge: 'bg-slate-100 text-slate-800',
+    requiereAutomatico: false,
+  },
+  {
+    value: 'evolution',
+    label: 'Evolution API',
+    desc: 'WhatsApp Web en su servidor (~$5/mes). Envío automático por lotes con pausas anti-bloqueo.',
+    icon: '🖥️',
+    badge: 'bg-violet-100 text-violet-800',
+    requiereAutomatico: true,
+  },
+  {
+    value: 'meta',
+    label: 'WhatsApp oficial Meta',
+    desc: 'API oficial de Meta. Requiere cuenta Business y cobra por conversación.',
+    icon: '✅',
+    badge: 'bg-emerald-100 text-emerald-800',
+    requiereAutomatico: true,
+  },
+]
+
+export function cfgProveedorEnvio(p?: ProveedorEnvio | null) {
+  return PROVEEDOR_ENVIO_OPCIONES.find(o => o.value === (p ?? 'asistido'))
+    ?? PROVEEDOR_ENVIO_OPCIONES[0]
 }
 
 export const AUDIENCIA_OPCIONES: { value: TipoAudiencia; label: string; desc: string; soloServicio?: boolean }[] = [

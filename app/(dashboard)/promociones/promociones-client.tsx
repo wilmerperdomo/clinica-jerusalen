@@ -23,11 +23,12 @@ import {
 } from '@/lib/promocion-audiencia'
 import {
   AUDIENCIA_OPCIONES, CANAL_CFG, CATEGORIAS_SERVICIO_PROMO, ESTADO_CAMPANA_CFG,
-  campanaVencidaProgramacion, cfgCategoriaServicio, claveDestinatario, destinatarioAContacto,
-  fmtVigencia, linkEnvioPromocion, mensajePromocion, serviciosParaCategoria,
+  campanaVencidaProgramacion, cfgCategoriaServicio, cfgProveedorEnvio, claveDestinatario,
+  destinatarioAContacto, fmtVigencia, linkEnvioPromocion, mensajePromocion,
+  PROVEEDOR_ENVIO_OPCIONES, serviciosParaCategoria,
   type Campana, type CanalCampana, type CategoriaServicioPromo, type DestinatarioPromo,
   type EnvioRegistro, type FiltroAudiencia, type Promocion, type PromocionContacto,
-  type ServicioPromo, type TipoAudiencia,
+  type ProveedorEnvio, type ServicioPromo, type TipoAudiencia,
 } from '@/lib/promociones-utils'
 
 interface SucursalOpt { id: number; nombre: string }
@@ -114,7 +115,17 @@ export default function PromocionesClient({
   const [campanas, setCampanas] = useState(campanasIniciales)
   const [cargando, setCargando] = useState(false)
   const [procesandoAuto, setProcesandoAuto] = useState(false)
-  const [envioConfig, setEnvioConfig] = useState<{ whatsapp: boolean; resend: boolean; sendgrid: boolean } | null>(null)
+  const [envioConfig, setEnvioConfig] = useState<{
+    whatsapp: boolean
+    evolution: boolean
+    evolutionConnected: boolean
+    evolutionState?: string
+    evolutionInstance?: string
+    resend: boolean
+    sendgrid: boolean
+    evolutionBatchSize: number
+    evolutionDelayMs: number
+  } | null>(null)
 
   const [modalPromo, setModalPromo] = useState(false)
   const [promoEdit, setPromoEdit] = useState<Promocion | null>(null)
@@ -129,7 +140,7 @@ export default function PromocionesClient({
     nombre: '', canal: 'ambos' as CanalCampana,
     audiencia: 'todos' as TipoAudiencia,
     programado: false,
-    automatico: false,
+    proveedor_envio: 'asistido' as ProveedorEnvio,
     programado_para: '',
     mensaje_personalizado: '',
     plantilla_id: null as number | null,
@@ -272,6 +283,14 @@ export default function PromocionesClient({
       .then(r => r.json())
       .then(data => { if (data?.config) setEnvioConfig(data.config) })
       .catch(() => {})
+  }, [])
+
+  const recargarConfigEnvio = useCallback(async () => {
+    try {
+      const res = await fetch('/api/promociones/config')
+      const data = await res.json()
+      if (data?.config) setEnvioConfig(data.config)
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
@@ -479,7 +498,7 @@ export default function PromocionesClient({
       canal: 'ambos',
       audiencia: audienciaDefault,
       programado: false,
-      automatico: false,
+      proveedor_envio: 'asistido' as ProveedorEnvio,
       programado_para: '',
       mensaje_personalizado: '',
       plantilla_id: null,
@@ -511,14 +530,26 @@ export default function PromocionesClient({
       alert('Seleccione al menos un contacto de la lista.')
       return
     }
-    if (formCampana.automatico) {
+    const proveedor = formCampana.proveedor_envio
+    const automatico = proveedor !== 'asistido'
+    if (automatico) {
       const canal = formCampana.canal
       const necesitaWhatsApp = canal === 'whatsapp' || canal === 'ambos'
       const necesitaEmail = canal === 'email' || canal === 'ambos'
       if (envioConfig) {
-        if (necesitaWhatsApp && !envioConfig.whatsapp) {
-          alert('El envío automático por WhatsApp requiere WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID en Vercel.\n\nUse envío asistido (sin marcar "Envío automático") para abrir WhatsApp manualmente desde su teléfono.')
+        if (necesitaWhatsApp && proveedor === 'meta' && !envioConfig.whatsapp) {
+          alert('WhatsApp oficial (Meta) requiere WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID en Vercel.\n\nUse "Asistido gratis" o configure Evolution API en su servidor.')
           return
+        }
+        if (necesitaWhatsApp && proveedor === 'evolution') {
+          if (!envioConfig.evolution) {
+            alert('Evolution API no está configurada. Agregue EVOLUTION_API_URL, EVOLUTION_API_KEY y EVOLUTION_INSTANCE_NAME en Vercel.')
+            return
+          }
+          if (!envioConfig.evolutionConnected) {
+            alert('WhatsApp Web no está conectado en Evolution. Escanee el código QR en su servidor antes de enviar.')
+            return
+          }
         }
         if (necesitaEmail && !envioConfig.resend && !envioConfig.sendgrid) {
           alert('El envío automático por correo requiere RESEND_API_KEY o SENDGRID_API_KEY en Vercel.')
@@ -562,19 +593,19 @@ export default function PromocionesClient({
         return
       }
 
-      const automatico = formCampana.automatico
-      const estado = formCampana.programado
-        ? 'programada'
-        : (iniciarAhora ? 'en_proceso' : 'lista_envio')
       const modoEnvio = automatico
         ? 'automatico'
         : (formCampana.programado ? 'programado' : 'asistido')
+      const estado = formCampana.programado
+        ? 'programada'
+        : (iniciarAhora ? 'en_proceso' : 'lista_envio')
 
       const { data: campana, error: errC } = await sb.from('promocion_campanas').insert({
         promocion_id: promoCampana.id,
         nombre: formCampana.nombre.trim(),
         canal: formCampana.canal,
         modo_envio: modoEnvio,
+        proveedor_envio: proveedor,
         programado_para: formCampana.programado ? new Date(formCampana.programado_para).toISOString() : null,
         estado,
         filtro_audiencia: filtro,
@@ -967,6 +998,25 @@ export default function PromocionesClient({
         )}
 
         {tab === 'campanas' && (
+          <>
+          {envioConfig && (
+            <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1 text-xs text-violet-900 space-y-1">
+                <p className="font-semibold text-sm">Proveedores de envío</p>
+                <p>{envioConfig.evolution
+                  ? (envioConfig.evolutionConnected
+                    ? `✓ Evolution API conectada (${envioConfig.evolutionInstance ?? 'instancia'}) · lote ${envioConfig.evolutionBatchSize} msg · pausa ${Math.round(envioConfig.evolutionDelayMs / 1000)}s`
+                    : `✗ Evolution configurada pero WhatsApp desconectado (${envioConfig.evolutionState ?? 'sin sesión'})`)
+                  : '○ Evolution API sin configurar'}</p>
+                <p>{envioConfig.whatsapp ? '✓ WhatsApp oficial Meta' : '○ WhatsApp Meta sin configurar'}</p>
+                <p>{(envioConfig.resend || envioConfig.sendgrid) ? '✓ Correo automático' : '○ Correo sin configurar'}</p>
+              </div>
+              <button type="button" onClick={() => void recargarConfigEnvio()}
+                className="px-3 py-2 text-xs font-bold rounded-lg border border-violet-300 text-violet-800 bg-white flex items-center gap-1 self-start">
+                <RefreshCw className="w-3.5 h-3.5" /> Verificar conexión
+              </button>
+            </div>
+          )}
           <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
             {campanas.length === 0 ? (
               <div className="text-center py-16 text-gray-400">
@@ -985,8 +1035,13 @@ export default function PromocionesClient({
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${est.badge}`}>{est.label}</span>
                           <span className="text-xs text-gray-400">{CANAL_CFG[c.canal].icon} {CANAL_CFG[c.canal].label}</span>
                           {c.modo_envio === 'automatico' && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                              Automático
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${cfgProveedorEnvio(c.proveedor_envio).badge}`}>
+                              {cfgProveedorEnvio(c.proveedor_envio).label}
+                            </span>
+                          )}
+                          {c.modo_envio === 'asistido' && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                              Asistido
                             </span>
                           )}
                         </div>
@@ -1031,6 +1086,7 @@ export default function PromocionesClient({
               </div>
             )}
           </div>
+          </>
         )}
 
         {tab === 'plantillas' && (
@@ -1125,11 +1181,11 @@ export default function PromocionesClient({
         <div className="mt-6 rounded-xl border border-amber-100 bg-amber-50/80 p-4 flex gap-3">
           <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-xs text-amber-900">
-            <p className="font-semibold mb-1">Envío asistido y automático</p>
+            <p className="font-semibold mb-1">Proveedores de envío</p>
             <p className="text-amber-800/90 leading-relaxed">
-              El canal <strong>Inteligente</strong> envía por WhatsApp si el destinatario tiene celular válido;
-              solo usa correo cuando no hay WhatsApp. Puede agregar contactos externos en la pestaña Agenda
-              o seleccionar destinatarios uno a uno al crear la campaña.
+              <strong>Asistido gratis</strong> abre WhatsApp Web con el mensaje listo (recomendado).
+              <strong> Evolution API</strong> envía automático desde su servidor (~$5/mes) por lotes con pausas.
+              <strong> Meta oficial</strong> usa la API de pago. El canal <strong>Inteligente</strong> prioriza WhatsApp sobre correo.
             </p>
           </div>
         </div>
@@ -1293,14 +1349,14 @@ export default function PromocionesClient({
                       <button type="button" disabled={creandoCampana}
                         onClick={() => crearCampana(true)}
                         className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold disabled:opacity-50 flex items-center gap-1">
-                        <Play className="w-4 h-4" /> {formCampana.automatico ? 'Enviar automático' : 'Enviar ahora'}
+                        <Play className="w-4 h-4" /> {formCampana.proveedor_envio !== 'asistido' ? 'Enviar automático' : 'Enviar ahora'}
                       </button>
                     )}
                     {formCampana.programado && (
                       <button type="button" disabled={creandoCampana}
                         onClick={() => crearCampana(false)}
                         className="px-4 py-2.5 bg-violet-600 text-white rounded-xl text-sm font-bold disabled:opacity-50 flex items-center gap-1">
-                        <Clock className="w-4 h-4" /> {formCampana.automatico ? 'Programar automático' : 'Programar'}
+                        <Clock className="w-4 h-4" /> {formCampana.proveedor_envio !== 'asistido' ? 'Programar automático' : 'Programar'}
                       </button>
                     )}
                   </>
@@ -1597,34 +1653,67 @@ export default function PromocionesClient({
           )}
           {pasoCampana === 3 && (
             <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-2 block">Proveedor de envío</label>
+                <div className="space-y-2">
+                  {PROVEEDOR_ENVIO_OPCIONES.map(opt => {
+                    const sel = formCampana.proveedor_envio === opt.value
+                    const deshabilitado =
+                      (opt.value === 'meta' && envioConfig && !envioConfig.whatsapp
+                        && (formCampana.canal === 'whatsapp' || formCampana.canal === 'ambos'))
+                      || (opt.value === 'evolution' && envioConfig && !envioConfig.evolution
+                        && (formCampana.canal === 'whatsapp' || formCampana.canal === 'ambos'))
+                    return (
+                      <button key={opt.value} type="button"
+                        onClick={() => setFormCampana(p => ({ ...p, proveedor_envio: opt.value }))}
+                        className={`w-full text-left p-3 rounded-xl border transition ${
+                          sel ? 'border-[#003366] bg-sky-50 ring-1 ring-[#003366]/20' : 'hover:bg-gray-50'
+                        } ${deshabilitado ? 'opacity-60' : ''}`}>
+                        <div className="flex items-start gap-3">
+                          <span className="text-xl">{opt.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-sm">{opt.label}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+                            {opt.value === 'evolution' && envioConfig?.evolution && (
+                              <p className={`text-[10px] mt-1 font-medium ${
+                                envioConfig.evolutionConnected ? 'text-emerald-700' : 'text-amber-700'
+                              }`}>
+                                {envioConfig.evolutionConnected
+                                  ? `Conectado · lote ${envioConfig.evolutionBatchSize} · pausa ${Math.round(envioConfig.evolutionDelayMs / 1000)}s`
+                                  : `Sin conexión WhatsApp (${envioConfig.evolutionState ?? 'escanee QR'})`}
+                              </p>
+                            )}
+                            {deshabilitado && (
+                              <p className="text-[10px] text-amber-700 mt-1">No configurado en el servidor</p>
+                            )}
+                          </div>
+                          {sel && <CheckCircle2 className="w-5 h-5 text-[#003366] flex-shrink-0" />}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
               <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border">
                 <input type="checkbox" checked={formCampana.programado}
                   onChange={e => setFormCampana(p => ({ ...p, programado: e.target.checked }))} />
                 <div>
                   <p className="font-semibold text-sm">Programar envío</p>
-                  <p className="text-xs text-gray-500">Si no marca, puede enviar inmediatamente de forma asistida</p>
-                </div>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-emerald-200 bg-emerald-50/70">
-                <input type="checkbox" checked={formCampana.automatico}
-                  onChange={e => setFormCampana(p => ({ ...p, automatico: e.target.checked }))} />
-                <div>
-                  <p className="font-semibold text-sm text-emerald-900">Envío automático</p>
-                  <p className="text-xs text-emerald-700">
-                    Envía por API (WhatsApp Business / Resend / SendGrid). Requiere variables en Vercel.
+                  <p className="text-xs text-gray-500">
+                    {formCampana.proveedor_envio === 'asistido'
+                      ? 'Si no marca, puede enviar inmediatamente de forma asistida'
+                      : 'Programa el inicio automático de la campaña'}
                   </p>
                 </div>
               </label>
-              {formCampana.automatico && envioConfig && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
-                  <p className="font-semibold">Estado de proveedores en el servidor:</p>
-                  <p>{envioConfig.whatsapp ? '✓ WhatsApp configurado' : '✗ WhatsApp sin configurar (faltan credenciales Meta)'}</p>
-                  <p>{(envioConfig.resend || envioConfig.sendgrid) ? '✓ Correo configurado' : '✗ Correo sin configurar'}</p>
-                  {!envioConfig.whatsapp && (formCampana.canal === 'whatsapp' || formCampana.canal === 'ambos') && (
-                    <p className="pt-1 text-amber-800">
-                      Sin WhatsApp API, desmarque &quot;Envío automático&quot; y use <strong>Enviar ahora</strong> para abrir WhatsApp manualmente.
-                    </p>
-                  )}
+              {formCampana.proveedor_envio === 'evolution' && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs text-violet-900">
+                  <p className="font-semibold mb-1">Envío seguro por lotes</p>
+                  <p className="leading-relaxed">
+                    Evolution envía máximo {envioConfig?.evolutionBatchSize ?? 25} mensajes por ejecución
+                    con pausa de {Math.round((envioConfig?.evolutionDelayMs ?? 4000) / 1000)} segundos entre cada uno.
+                    Use &quot;Procesar automáticas&quot; varias veces para campañas grandes.
+                  </p>
                 </div>
               )}
               {formCampana.programado && (

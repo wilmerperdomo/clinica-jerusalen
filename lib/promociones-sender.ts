@@ -1,5 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { limpiarCelular } from '@/lib/mensajes-paciente'
+import {
+  evolutionConnectionState,
+  evolutionLimits,
+  evolutionSendMedia,
+  evolutionSendText,
+  getEvolutionConfig,
+  isEvolutionConfigured,
+  MENSAJE_EVOLUTION_DESCONECTADO,
+  MENSAJE_EVOLUTION_NO_CONFIG,
+  sleep,
+} from '@/lib/evolution-api'
 import { urlTrackingApertura } from '@/lib/promociones-plantillas'
 import {
   asuntoPromocion,
@@ -7,8 +18,8 @@ import {
   type Campana,
   type EnvioRegistro,
   type Promocion,
+  type ProveedorEnvio,
 } from '@/lib/promociones-utils'
-
 type DestinatarioEnvio = {
   id: number
   nombre: string
@@ -29,11 +40,10 @@ type CampanaAutomatica = Campana & {
 
 interface EnvioResultado {
   ok: boolean
-  proveedor: 'whatsapp' | 'resend' | 'sendgrid'
+  proveedor: 'whatsapp' | 'evolution' | 'resend' | 'sendgrid'
   proveedor_id?: string | null
   error?: string | null
 }
-
 export interface ProcesarPromocionesResultado {
   ok: boolean
   campanasProcesadas: number
@@ -45,18 +55,45 @@ export interface ProcesarPromocionesResultado {
 
 export interface PromocionesEnvioConfig {
   whatsapp: boolean
+  evolution: boolean
+  evolutionConnected: boolean
+  evolutionState?: string
+  evolutionInstance?: string
   resend: boolean
   sendgrid: boolean
+  evolutionBatchSize: number
+  evolutionDelayMs: number
 }
 
-export function getPromocionesEnvioConfig(): PromocionesEnvioConfig {
+export function getPromocionesEnvioConfig(): Omit<PromocionesEnvioConfig, 'evolutionConnected' | 'evolutionState' | 'evolutionInstance'> {
+  const evo = getEvolutionConfig()
   return {
     whatsapp: Boolean(whatsappConfig().token && whatsappConfig().phoneNumberId),
+    evolution: isEvolutionConfigured(),
     resend: Boolean(resendConfig().apiKey),
     sendgrid: Boolean(sendgridConfig().apiKey),
+    evolutionBatchSize: evo?.batchSize ?? 25,
+    evolutionDelayMs: evo?.delayMs ?? 4000,
   }
 }
 
+export async function getPromocionesEnvioConfigAsync(): Promise<PromocionesEnvioConfig> {
+  const base = getPromocionesEnvioConfig()
+  const evo = base.evolution ? await evolutionConnectionState() : { configured: false, connected: false }
+  return {
+    ...base,
+    evolutionConnected: evo.connected,
+    evolutionState: evo.state,
+    evolutionInstance: evo.instance,
+  }
+}
+
+export function proveedorAutomaticoPorDefecto(): ProveedorEnvio {
+  const cfg = getPromocionesEnvioConfig()
+  if (cfg.evolution) return 'evolution'
+  if (cfg.whatsapp) return 'meta'
+  return 'asistido'
+}
 function mensajeConfigFaltante(canal: 'whatsapp' | 'email'): string {
   if (canal === 'whatsapp') {
     return 'WhatsApp no está configurado. Agregue WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID en Vercel (Settings → Environment Variables).'
@@ -153,6 +190,61 @@ async function enviarWhatsApp(
   }
 }
 
+async function enviarWhatsAppEvolution(
+  destinatario: DestinatarioEnvio,
+  promo: Promocion,
+  mensajePersonalizado?: string | null,
+): Promise<EnvioResultado> {
+  if (!isEvolutionConfigured()) {
+    return { ok: false, proveedor: 'evolution', error: MENSAJE_EVOLUTION_NO_CONFIG }
+  }
+
+  const conn = await evolutionConnectionState()
+  if (!conn.connected) {
+    return { ok: false, proveedor: 'evolution', error: MENSAJE_EVOLUTION_DESCONECTADO }
+  }
+
+  const mensaje = mensajePromocion(promo, destinatario, mensajePersonalizado)
+
+  if (promo.imagen_url) {
+    const media = await evolutionSendMedia(
+      destinatario.celular,
+      destinatario.telefono,
+      promo.imagen_url,
+      mensaje,
+    )
+    if (media.ok) {
+      return { ok: true, proveedor: 'evolution', proveedor_id: media.id ?? null }
+    }
+    const texto = await evolutionSendText(destinatario.celular, destinatario.telefono, mensaje)
+    return {
+      ok: texto.ok,
+      proveedor: 'evolution',
+      proveedor_id: texto.id ?? null,
+      error: texto.ok ? null : (texto.error || media.error),
+    }
+  }
+
+  const texto = await evolutionSendText(destinatario.celular, destinatario.telefono, mensaje)
+  return {
+    ok: texto.ok,
+    proveedor: 'evolution',
+    proveedor_id: texto.id ?? null,
+    error: texto.error ?? null,
+  }
+}
+
+async function enviarWhatsAppPorProveedor(
+  proveedor: ProveedorEnvio | undefined,
+  destinatario: DestinatarioEnvio,
+  promo: Promocion,
+  mensajePersonalizado?: string | null,
+): Promise<EnvioResultado> {
+  if (proveedor === 'evolution') {
+    return enviarWhatsAppEvolution(destinatario, promo, mensajePersonalizado)
+  }
+  return enviarWhatsApp(destinatario, promo, mensajePersonalizado)
+}
 async function enviarEmail(
   destinatario: DestinatarioEnvio,
   promo: Promocion,
@@ -244,7 +336,8 @@ export async function procesarPromocionesAutomaticas(
   opts: { limiteCampanas?: number; limiteEnvios?: number } = {},
 ): Promise<ProcesarPromocionesResultado> {
   const limiteCampanas = opts.limiteCampanas ?? 5
-  const limiteEnvios = opts.limiteEnvios ?? 60
+  const evoLimits = evolutionLimits()
+  let limiteEnvios = opts.limiteEnvios ?? 60
   const errores: string[] = []
   let enviados = 0
   let fallidos = 0
@@ -266,7 +359,7 @@ export async function procesarPromocionesAutomaticas(
     .order('programado_para', { ascending: true, nullsFirst: false })
     .limit(limiteCampanas)
 
-  const config = getPromocionesEnvioConfig()
+  const config = await getPromocionesEnvioConfigAsync()
 
   if (errCampanas) {
     return {
@@ -280,42 +373,38 @@ export async function procesarPromocionesAutomaticas(
   }
 
   const listaCampanas = (campanas ?? []) as CampanaAutomatica[]
-  if (listaCampanas.length > 0) {
-    const { data: pendientesCanal } = await supabase
-      .from('promocion_envios')
-      .select('canal')
-      .in('campana_id', listaCampanas.map(c => c.id))
-      .eq('estado', 'pendiente')
-      .limit(limiteEnvios * limiteCampanas)
-
-    const necesitaWhatsApp = (pendientesCanal ?? []).some(e => e.canal === 'whatsapp')
-    const necesitaEmail = (pendientesCanal ?? []).some(e => e.canal === 'email')
-    if (necesitaWhatsApp && !config.whatsapp) {
-      return {
-        ok: false,
-        campanasProcesadas: 0,
-        enviados: 0,
-        fallidos: 0,
-        errores: [mensajeConfigFaltante('whatsapp')],
-        config,
-      }
-    }
-    if (necesitaEmail && !config.resend && !config.sendgrid) {
-      return {
-        ok: false,
-        campanasProcesadas: 0,
-        enviados: 0,
-        fallidos: 0,
-        errores: [mensajeConfigFaltante('email')],
-        config,
-      }
-    }
-  }
 
   for (const campana of listaCampanas) {
     if (!campana.promocion) {
       errores.push(`Campaña ${campana.id} sin promoción asociada`)
       continue
+    }
+
+    const proveedor = campana.proveedor_envio ?? 'meta'
+    const limiteEstaCampana = proveedor === 'evolution'
+      ? Math.min(limiteEnvios, evoLimits.batchSize)
+      : limiteEnvios
+
+    if (proveedor === 'evolution' && !config.evolution) {
+      errores.push(`Campaña ${campana.id}: ${MENSAJE_EVOLUTION_NO_CONFIG}`)
+      continue
+    }
+    if (proveedor === 'evolution' && !config.evolutionConnected) {
+      errores.push(`Campaña ${campana.id}: ${MENSAJE_EVOLUTION_DESCONECTADO}`)
+      continue
+    }
+    if (proveedor === 'meta' && campana.canal !== 'email') {
+      const { data: pendWa } = await supabase
+        .from('promocion_envios')
+        .select('id')
+        .eq('campana_id', campana.id)
+        .eq('estado', 'pendiente')
+        .eq('canal', 'whatsapp')
+        .limit(1)
+      if ((pendWa ?? []).length > 0 && !config.whatsapp) {
+        errores.push(`Campaña ${campana.id}: ${mensajeConfigFaltante('whatsapp')}`)
+        continue
+      }
     }
 
     const { data: pendientes, error: errPend } = await supabase
@@ -324,13 +413,14 @@ export async function procesarPromocionesAutomaticas(
       .eq('campana_id', campana.id)
       .eq('estado', 'pendiente')
       .order('id')
-      .limit(limiteEnvios)
+      .limit(limiteEstaCampana)
 
     if (errPend) {
       errores.push(errPend.message)
       continue
     }
 
+    let idx = 0
     for (const envio of (pendientes ?? []) as EnvioPendiente[]) {
       const destinatario = envio.paciente ?? envio.contacto
       if (!destinatario) {
@@ -343,7 +433,7 @@ export async function procesarPromocionesAutomaticas(
       }
 
       const resultado = envio.canal === 'whatsapp'
-        ? await enviarWhatsApp(destinatario, campana.promocion, campana.mensaje_personalizado)
+        ? await enviarWhatsAppPorProveedor(proveedor, destinatario, campana.promocion, campana.mensaje_personalizado)
         : await enviarEmail(destinatario, campana.promocion, campana.mensaje_personalizado, envio.tracking_token)
 
       await supabase.from('promocion_envios').update({
@@ -359,6 +449,11 @@ export async function procesarPromocionesAutomaticas(
         fallidos++
         if (resultado.error) errores.push(`Campaña ${campana.id} / envío ${envio.id}: ${resultado.error}`)
       }
+
+      if (proveedor === 'evolution' && envio.canal === 'whatsapp' && idx < (pendientes?.length ?? 0) - 1) {
+        await sleep(evoLimits.delayMs)
+      }
+      idx++
     }
 
     await recalcularCampana(supabase, campana.id)
