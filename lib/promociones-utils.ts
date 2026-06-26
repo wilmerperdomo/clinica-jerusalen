@@ -1,7 +1,7 @@
 import { BRAND } from '@/lib/brand'
 import { linkEmailMensaje, linkWhatsAppMensaje, nombrePaciente, type ContactoPaciente } from '@/lib/mensajes-paciente'
 
-export type TipoContenidoPromo = 'texto' | 'imagen' | 'mixto'
+export type TipoContenidoPromo = 'texto' | 'imagen' | 'mixto' | 'encuesta'
 export type CanalCampana = 'whatsapp' | 'email' | 'ambos'
 export type ModoEnvioCampana = 'inmediato' | 'programado' | 'asistido' | 'automatico'
 export type ProveedorEnvio = 'asistido' | 'meta' | 'evolution'
@@ -110,6 +110,7 @@ export interface Promocion {
   subtitulo?: string | null
   descripcion?: string | null
   imagen_url?: string | null
+  encuesta_url?: string | null
   tipo_contenido: TipoContenidoPromo
   categoria_servicio?: CategoriaServicioPromo
   servicio_id?: number | null
@@ -222,6 +223,17 @@ export function cfgProveedorEnvio(p?: ProveedorEnvio | null) {
     ?? PROVEEDOR_ENVIO_OPCIONES[0]
 }
 
+export const TIPO_CONTENIDO_CFG: Record<TipoContenidoPromo, { label: string; icon: string; badge: string }> = {
+  texto:   { label: 'Texto',     icon: '📝', badge: 'bg-slate-100 text-slate-700' },
+  imagen:  { label: 'Imagen',    icon: '🖼️', badge: 'bg-pink-100 text-pink-800' },
+  mixto:   { label: 'Mixto',     icon: '✨', badge: 'bg-rose-100 text-rose-800' },
+  encuesta:{ label: 'Encuesta',  icon: '📋', badge: 'bg-indigo-100 text-indigo-800' },
+}
+
+export function esEncuesta(p: Pick<Promocion, 'tipo_contenido'>): boolean {
+  return p.tipo_contenido === 'encuesta'
+}
+
 export const AUDIENCIA_OPCIONES: { value: TipoAudiencia; label: string; desc: string; soloServicio?: boolean }[] = [
   { value: 'todos', label: 'Pacientes activos', desc: 'Toda la base de pacientes de la clínica' },
   { value: 'por_servicio', label: 'Historial del servicio', desc: 'Pacientes que ya usaron este servicio o categoría', soloServicio: true },
@@ -245,16 +257,37 @@ export function lineaOfertaPromocion(
 }
 
 export function mensajePromocion(
-  promo: Pick<Promocion, 'titulo' | 'subtitulo' | 'descripcion' | 'imagen_url' | 'descuento_pct' | 'precio_promocional' | 'servicio'>,
+  promo: Pick<Promocion, 'titulo' | 'subtitulo' | 'descripcion' | 'imagen_url' | 'encuesta_url' | 'tipo_contenido' | 'descuento_pct' | 'precio_promocional' | 'servicio'>,
   paciente: ContactoPaciente,
   personalizado?: string | null,
 ): string {
+  const urlEncuesta = promo.encuesta_url?.trim() ?? ''
   if (personalizado?.trim()) {
     return personalizado
       .replace(/\{\{NOMBRE\}\}/gi, nombrePaciente(paciente))
       .replace(/\{\{CLINICA\}\}/gi, BRAND.nombre)
+      .replace(/\{\{ENCUESTA_URL\}\}/gi, urlEncuesta)
+      .replace(/\{\{TITULO\}\}/gi, promo.titulo)
   }
+
   const nombre = nombrePaciente(paciente)
+
+  if (promo.tipo_contenido === 'encuesta') {
+    const lineas = [
+      `Hola ${nombre},`,
+      '',
+      `*${promo.titulo || 'Encuesta de satisfacción'}*`,
+      promo.subtitulo ? `_${promo.subtitulo}_` : '',
+      promo.descripcion ?? 'Nos gustaría conocer su opinión sobre la atención recibida en nuestra clínica.',
+      '',
+      urlEncuesta ? `📋 Responda la encuesta aquí:\n${urlEncuesta}` : '',
+      '',
+      'Solo toma 1 minuto. ¡Gracias por ayudarnos a mejorar!',
+      `— ${BRAND.nombre}`,
+    ]
+    return lineas.filter(l => l !== '').join('\n')
+  }
+
   const oferta = lineaOfertaPromocion(promo)
   const lineas = [
     `Hola ${nombre},`,
@@ -271,7 +304,10 @@ export function mensajePromocion(
   return lineas.filter(l => l !== '').join('\n')
 }
 
-export function asuntoPromocion(promo: Pick<Promocion, 'titulo'>) {
+export function asuntoPromocion(promo: Pick<Promocion, 'titulo' | 'tipo_contenido'>) {
+  if (promo.tipo_contenido === 'encuesta') {
+    return `${promo.titulo || 'Encuesta de satisfacción'} — ${BRAND.nombre}`
+  }
   return `${promo.titulo} — ${BRAND.nombre}`
 }
 

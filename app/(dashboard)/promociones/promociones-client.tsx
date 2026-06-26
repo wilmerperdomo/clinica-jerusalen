@@ -6,7 +6,7 @@ import { Megaphone, Plus, Image as ImageIcon, Calendar, Send, Users,
   MessageCircle, Mail, Sparkles, Trash2, Pencil, Play, Clock,
   CheckCircle2, ChevronRight, ChevronLeft, RefreshCw,
   AlertCircle, Target, Zap, BookUser, Phone, AtSign, Search,
-  FileText, BarChart3, Cake, Reply, Copy, Download, SkipForward,
+  FileText, BarChart3, Cake, Reply, Copy, Download, SkipForward, ClipboardList,
 } from 'lucide-react'
 import PromocionesPlantillasPanel from './promociones-plantillas-panel'
 import PromocionesReportesPanel from './promociones-reportes-panel'
@@ -24,8 +24,8 @@ import {
 import {
   AUDIENCIA_OPCIONES, CANAL_CFG, CATEGORIAS_SERVICIO_PROMO, ESTADO_CAMPANA_CFG,
   campanaVencidaProgramacion, cfgCategoriaServicio, cfgProveedorEnvio, claveDestinatario,
-  destinatarioAContacto, fmtVigencia, linkEnvioPromocion, mensajePromocion,
-  PROVEEDOR_ENVIO_OPCIONES, serviciosParaCategoria,
+  destinatarioAContacto, esEncuesta, fmtVigencia, linkEnvioPromocion, mensajePromocion,
+  PROVEEDOR_ENVIO_OPCIONES, serviciosParaCategoria, TIPO_CONTENIDO_CFG,
   type Campana, type CanalCampana, type CategoriaServicioPromo, type DestinatarioPromo,
   type EnvioRegistro, type FiltroAudiencia, type Promocion, type PromocionContacto,
   type ProveedorEnvio, type ServicioPromo, type TipoAudiencia,
@@ -96,8 +96,10 @@ async function descargarImagen(url: string, nombre: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(objUrl), 5000)
 }
 
+const ENCUESTA_URL_DEFAULT = process.env.NEXT_PUBLIC_ENCUESTA_URL ?? ''
+
 const PROMO_VACIA: Omit<Promocion, 'id' | 'created_at'> = {
-  titulo: '', subtitulo: '', descripcion: '', imagen_url: null,
+  titulo: '', subtitulo: '', descripcion: '', imagen_url: null, encuesta_url: null,
   tipo_contenido: 'mixto', categoria_servicio: 'general', servicio_id: null,
   descuento_pct: null, precio_promocional: null,
   vigencia_desde: null, vigencia_hasta: null,
@@ -111,6 +113,7 @@ export default function PromocionesClient({
   const sb = supabase()
   const [tab, setTab] = useState<'promociones' | 'campanas' | 'contactos' | 'plantillas' | 'reportes' | 'auto'>('promociones')
   const [filtroCategoria, setFiltroCategoria] = useState<CategoriaServicioPromo | 'todas'>('todas')
+  const [filtroTipo, setFiltroTipo] = useState<'todas' | 'promocion' | 'encuesta'>('todas')
   const [promociones, setPromociones] = useState(promocionesIniciales)
   const [campanas, setCampanas] = useState(campanasIniciales)
   const [cargando, setCargando] = useState(false)
@@ -183,9 +186,15 @@ export default function PromocionesClient({
   )
 
   const promocionesFiltradas = useMemo(() => {
-    if (filtroCategoria === 'todas') return promociones
-    return promociones.filter(p => (p.categoria_servicio ?? 'general') === filtroCategoria)
-  }, [promociones, filtroCategoria])
+    let lista = promociones
+    if (filtroTipo === 'encuesta') lista = lista.filter(p => esEncuesta(p))
+    else if (filtroTipo === 'promocion') lista = lista.filter(p => !esEncuesta(p))
+    if (filtroCategoria === 'todas') return lista
+    return lista.filter(p => (p.categoria_servicio ?? 'general') === filtroCategoria)
+  }, [promociones, filtroCategoria, filtroTipo])
+
+  const totalEncuestas = useMemo(() => promociones.filter(p => esEncuesta(p)).length, [promociones])
+  const totalPromos = promociones.length - totalEncuestas
 
   const serviciosFormPromo = useMemo(
     () => serviciosParaCategoria(servicios, formPromo.categoria_servicio ?? 'general'),
@@ -428,7 +437,22 @@ export default function PromocionesClient({
 
   function abrirNuevaPromo() {
     setPromoEdit(null)
-    setFormPromo({ ...PROMO_VACIA, sucursal_id: esSuperAdmin ? null : sucursalId ?? null })
+    setFormPromo({ ...PROMO_VACIA, tipo_contenido: 'mixto', sucursal_id: esSuperAdmin ? null : sucursalId ?? null })
+    setArchivoImg(null)
+    setModalPromo(true)
+  }
+
+  function abrirNuevaEncuesta() {
+    setPromoEdit(null)
+    setFormPromo({
+      ...PROMO_VACIA,
+      tipo_contenido: 'encuesta',
+      titulo: 'Encuesta de satisfacción',
+      subtitulo: 'Su opinión nos ayuda a mejorar',
+      descripcion: 'Nos gustaría conocer su experiencia con la atención recibida. Solo toma 1 minuto.',
+      encuesta_url: ENCUESTA_URL_DEFAULT || null,
+      sucursal_id: esSuperAdmin ? null : sucursalId ?? null,
+    })
     setArchivoImg(null)
     setModalPromo(true)
   }
@@ -442,6 +466,10 @@ export default function PromocionesClient({
 
   async function guardarPromo() {
     if (!formPromo.titulo.trim()) { alert('El título es obligatorio.'); return }
+    if (formPromo.tipo_contenido === 'encuesta' && !formPromo.encuesta_url?.trim()) {
+      alert('Indique el enlace de la encuesta (Google Forms, Microsoft Forms, etc.).')
+      return
+    }
     setGuardandoPromo(true)
     try {
       const { data: { user } } = await sb.auth.getUser()
@@ -452,7 +480,8 @@ export default function PromocionesClient({
         titulo: formPromo.titulo.trim(),
         subtitulo: formPromo.subtitulo?.trim() || null,
         descripcion: formPromo.descripcion?.trim() || null,
-        imagen_url: imagenUrl,
+        imagen_url: formPromo.tipo_contenido === 'encuesta' ? null : imagenUrl,
+        encuesta_url: formPromo.tipo_contenido === 'encuesta' ? formPromo.encuesta_url?.trim() || null : null,
         tipo_contenido: formPromo.tipo_contenido,
         categoria_servicio: formPromo.categoria_servicio ?? 'general',
         servicio_id: formPromo.servicio_id || null,
@@ -494,7 +523,7 @@ export default function PromocionesClient({
     setPromoCampana(promo)
     setPasoCampana(1)
     setFormCampana({
-      nombre: `Campaña — ${promo.titulo}`,
+      nombre: esEncuesta(promo) ? `Encuesta — ${promo.titulo}` : `Campaña — ${promo.titulo}`,
       canal: 'ambos',
       audiencia: audienciaDefault,
       programado: false,
@@ -844,6 +873,13 @@ export default function PromocionesClient({
             </ModuleBtnGhost>
             <button
               type="button"
+              onClick={abrirNuevaEncuesta}
+              className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 flex items-center gap-1.5 shadow"
+            >
+              <ClipboardList className="w-4 h-4" /> Nueva encuesta
+            </button>
+            <button
+              type="button"
               onClick={abrirNuevaPromo}
               className="px-4 py-2 rounded-xl text-sm font-bold text-[#003366] bg-white hover:bg-rose-50 flex items-center gap-1.5 shadow"
             >
@@ -901,23 +937,44 @@ export default function PromocionesClient({
               <div className="text-center py-20 bg-white rounded-2xl border">
                 <Megaphone className="w-14 h-14 text-rose-200 mx-auto mb-3" />
                 <p className="text-gray-600 font-medium">Cree su primera promoción</p>
-                <p className="text-sm text-gray-400 mt-1">Suba imágenes, textos y luego envíelas a sus pacientes.</p>
+                <p className="text-sm text-gray-400 mt-1">Suba promociones o encuestas y envíelas a sus pacientes.</p>
+                <div className="flex flex-wrap justify-center gap-2 mt-4">
+                <button type="button" onClick={abrirNuevaEncuesta}
+                  className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold flex items-center gap-1.5">
+                  <ClipboardList className="w-4 h-4" /> Crear encuesta
+                </button>
                 <button type="button" onClick={abrirNuevaPromo}
-                  className="mt-4 px-5 py-2.5 bg-[#003366] text-white rounded-xl text-sm font-bold">
+                  className="px-5 py-2.5 bg-[#003366] text-white rounded-xl text-sm font-bold">
                   Crear promoción
                 </button>
+                </div>
               </div>
             ) : (
               <>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {([
+                    { id: 'todas', label: `Todas (${promociones.length})` },
+                    { id: 'promocion', label: `Promociones (${totalPromos})` },
+                    { id: 'encuesta', label: `Encuestas (${totalEncuestas})` },
+                  ] as const).map(f => (
+                    <button key={f.id} type="button" onClick={() => setFiltroTipo(f.id)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
+                        filtroTipo === f.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600'
+                      }`}>
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                {filtroTipo !== 'encuesta' && (
                 <div className="flex flex-wrap gap-2 mb-4">
                   <button type="button" onClick={() => setFiltroCategoria('todas')}
                     className={`px-3 py-1.5 rounded-full text-xs font-bold border transition ${
                       filtroCategoria === 'todas' ? 'bg-[#003366] text-white border-[#003366]' : 'bg-white text-gray-600'
                     }`}>
-                    Todas ({promociones.length})
+                    Todas las categorías
                   </button>
                   {CATEGORIAS_SERVICIO_PROMO.map(c => {
-                    const n = promociones.filter(p => (p.categoria_servicio ?? 'general') === c.value).length
+                    const n = promociones.filter(p => !esEncuesta(p) && (p.categoria_servicio ?? 'general') === c.value).length
                     if (n === 0 && c.value !== 'general') return null
                     return (
                       <button key={c.value} type="button" onClick={() => setFiltroCategoria(c.value)}
@@ -929,6 +986,7 @@ export default function PromocionesClient({
                     )
                   })}
                 </div>
+                )}
                 {promocionesFiltradas.length === 0 ? (
                   <div className="text-center py-12 bg-white rounded-2xl border text-gray-500 text-sm">
                     No hay promociones en esta categoría.
@@ -937,15 +995,21 @@ export default function PromocionesClient({
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {promocionesFiltradas.map(p => {
                   const catCfg = cfgCategoriaServicio(p.categoria_servicio)
+                  const tipoCfg = TIPO_CONTENIDO_CFG[p.tipo_contenido]
+                  const encuesta = esEncuesta(p)
                   return (
                   <div key={p.id}
                     className={`bg-white rounded-2xl border overflow-hidden shadow-sm hover:shadow-md transition group ${
                       !p.activa ? 'opacity-60' : ''
                     }`}>
-                    <div className="relative h-40 bg-gradient-to-br from-rose-100 to-amber-50 flex items-center justify-center overflow-hidden">
+                    <div className={`relative h-40 flex items-center justify-center overflow-hidden ${
+                      encuesta ? 'bg-gradient-to-br from-indigo-100 to-violet-50' : 'bg-gradient-to-br from-rose-100 to-amber-50'
+                    }`}>
                       {p.imagen_url ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={p.imagen_url} alt={p.titulo} className="w-full h-full object-cover" />
+                      ) : encuesta ? (
+                        <ClipboardList className="w-12 h-12 text-indigo-300" />
                       ) : (
                         <ImageIcon className="w-12 h-12 text-rose-200" />
                       )}
@@ -954,12 +1018,20 @@ export default function PromocionesClient({
                           Inactiva
                         </span>
                       )}
-                      <span className={`absolute top-2 right-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${catCfg.badge}`}>
-                        {catCfg.icon} {catCfg.label}
+                      <span className={`absolute top-2 right-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${tipoCfg.badge}`}>
+                        {tipoCfg.icon} {tipoCfg.label}
                       </span>
+                      {!encuesta && (
+                        <span className={`absolute bottom-2 right-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${catCfg.badge}`}>
+                          {catCfg.icon} {catCfg.label}
+                        </span>
+                      )}
                     </div>
                     <div className="p-4">
                       <h3 className="font-bold text-gray-900 line-clamp-1">{p.titulo}</h3>
+                      {encuesta && p.encuesta_url && (
+                        <p className="text-[10px] text-indigo-600 font-medium mt-0.5 truncate">{p.encuesta_url}</p>
+                      )}
                       {p.servicio?.nombre && (
                         <p className="text-[10px] text-violet-600 font-medium mt-0.5">{p.servicio.nombre}</p>
                       )}
@@ -975,8 +1047,10 @@ export default function PromocionesClient({
                       </p>
                       <div className="flex gap-2 mt-3">
                         <button type="button" onClick={() => abrirCampana(p)}
-                          className="flex-1 py-2 text-xs font-bold rounded-lg bg-[#003366] text-white flex items-center justify-center gap-1">
-                          <Send className="w-3.5 h-3.5" /> Enviar
+                          className={`flex-1 py-2 text-xs font-bold rounded-lg text-white flex items-center justify-center gap-1 ${
+                            encuesta ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-[#003366]'
+                          }`}>
+                          <Send className="w-3.5 h-3.5" /> {encuesta ? 'Enviar encuesta' : 'Enviar'}
                         </button>
                         <button type="button" onClick={() => abrirEditarPromo(p)}
                           className="p-2 rounded-lg border hover:bg-gray-50 text-gray-500">
@@ -1183,9 +1257,10 @@ export default function PromocionesClient({
           <div className="text-xs text-amber-900">
             <p className="font-semibold mb-1">Proveedores de envío</p>
             <p className="text-amber-800/90 leading-relaxed">
-              <strong>Asistido gratis</strong> abre WhatsApp Web con el mensaje listo (recomendado).
-              <strong> Evolution API</strong> envía automático desde su servidor (~$5/mes) por lotes con pausas.
-              <strong> Meta oficial</strong> usa la API de pago. El canal <strong>Inteligente</strong> prioriza WhatsApp sobre correo.
+              <strong>Asistido gratis</strong> abre WhatsApp Web con el mensaje listo.
+              <strong> Evolution API</strong> envía automático desde su servidor.
+              <strong> Encuestas</strong> se envían con enlace a Google Forms u otro formulario.
+              El canal <strong>Inteligente</strong> prioriza WhatsApp sobre correo.
             </p>
           </div>
         </div>
@@ -1194,8 +1269,12 @@ export default function PromocionesClient({
       {/* Modal promoción */}
       {modalPromo && (
         <ResponsiveModal
-          title={promoEdit ? 'Editar promoción' : 'Nueva promoción'}
-          subtitle="Servicio, imagen, texto y vigencia de la oferta"
+          title={promoEdit
+            ? (esEncuesta(formPromo) ? 'Editar encuesta' : 'Editar promoción')
+            : (formPromo.tipo_contenido === 'encuesta' ? 'Nueva encuesta' : 'Nueva promoción')}
+          subtitle={esEncuesta(formPromo)
+            ? 'Enlace a Google Forms u otra encuesta para enviar a pacientes'
+            : 'Servicio, imagen, texto y vigencia de la oferta'}
           onClose={() => setModalPromo(false)}
           size="lg"
           footer={
@@ -1212,8 +1291,36 @@ export default function PromocionesClient({
             <div>
               <label className="text-xs font-medium text-gray-600">Título *</label>
               <input value={formPromo.titulo} onChange={e => setFormPromo(p => ({ ...p, titulo: e.target.value }))}
-                className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. Chequeo preventivo 30% descuento" />
+                className="w-full border rounded-xl px-3 py-2 mt-1"
+                placeholder={esEncuesta(formPromo) ? 'Ej. Encuesta de satisfacción post-consulta' : 'Ej. Chequeo preventivo 30% descuento'} />
             </div>
+            {esEncuesta(formPromo) ? (
+              <>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Enlace de la encuesta *</label>
+                  <input type="url" value={formPromo.encuesta_url ?? ''}
+                    onChange={e => setFormPromo(p => ({ ...p, encuesta_url: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2 mt-1"
+                    placeholder="https://forms.gle/tu-encuesta" />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Cree la encuesta en Google Forms, Microsoft Forms o similar y pegue el enlace aquí.
+                    {ENCUESTA_URL_DEFAULT && ' Por defecto usa la URL configurada en el sistema.'}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Subtítulo</label>
+                  <input value={formPromo.subtitulo ?? ''} onChange={e => setFormPromo(p => ({ ...p, subtitulo: e.target.value }))}
+                    className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. Su opinión nos ayuda a mejorar" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Mensaje para el paciente</label>
+                  <textarea value={formPromo.descripcion ?? ''} onChange={e => setFormPromo(p => ({ ...p, descripcion: e.target.value }))}
+                    rows={4} className="w-full border rounded-xl px-3 py-2 mt-1 resize-y"
+                    placeholder="Explique brevemente por qué es importante su respuesta…" />
+                </div>
+              </>
+            ) : (
+              <>
             <div>
               <label className="text-xs font-medium text-gray-600 mb-2 block">Categoría de servicio</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -1285,6 +1392,8 @@ export default function PromocionesClient({
                 <img src={formPromo.imagen_url} alt="" className="mt-2 h-24 rounded-lg object-cover border" />
               )}
             </div>
+              </>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-gray-600">Vigencia desde</label>
@@ -1322,7 +1431,7 @@ export default function PromocionesClient({
       {/* Modal campaña wizard */}
       {modalCampana && promoCampana && (
         <ResponsiveModal
-          title="Nueva campaña"
+          title={esEncuesta(promoCampana) ? 'Enviar encuesta' : 'Nueva campaña'}
           subtitle={`${promoCampana.titulo} · Paso ${pasoCampana} de 3`}
           onClose={() => setModalCampana(false)}
           size="lg"

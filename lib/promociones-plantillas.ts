@@ -17,6 +17,7 @@ export const VARIABLES_PLANTILLA = [
   { key: '{{CLINICA}}', desc: 'Nombre de la clínica' },
   { key: '{{EDAD}}', desc: 'Edad del paciente' },
   { key: '{{SERVICIO}}', desc: 'Servicio o categoría de la promoción' },
+  { key: '{{ENCUESTA_URL}}', desc: 'Enlace de la encuesta' },
   { key: '{{TITULO}}', desc: 'Título de la promoción' },
   { key: '{{DESCUENTO}}', desc: '% de descuento si aplica' },
 ]
@@ -36,7 +37,7 @@ export function aplicarPlantilla(
   contenido: string,
   vars: {
     paciente?: ContactoPaciente & { fecha_nac?: string | null }
-    promo?: Pick<Promocion, 'titulo' | 'descuento_pct' | 'categoria_servicio' | 'servicio'>
+    promo?: Pick<Promocion, 'titulo' | 'descuento_pct' | 'categoria_servicio' | 'servicio' | 'encuesta_url'>
     servicioNombre?: string | null
   },
 ): string {
@@ -55,6 +56,7 @@ export function aplicarPlantilla(
     .replace(/\{\{SERVICIO\}\}/gi, servicio)
     .replace(/\{\{TITULO\}\}/gi, vars.promo?.titulo ?? '')
     .replace(/\{\{DESCUENTO\}\}/gi, descuento)
+    .replace(/\{\{ENCUESTA_URL\}\}/gi, vars.promo?.encuesta_url ?? '')
 }
 
 export interface ResumenCampanaReporte {
