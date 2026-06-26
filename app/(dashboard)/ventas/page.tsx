@@ -215,6 +215,7 @@ export default async function VentasPage() {
       perfil={perfil}
       userId={user?.id || ''}
       esAdmin={esAdmin || esSuperAdmin}
+      esSuperAdmin={esSuperAdmin}
       fechaHoy={hoy}
       cxcPendientes={cxcPendientes || []}
       servicios={servicios || []}

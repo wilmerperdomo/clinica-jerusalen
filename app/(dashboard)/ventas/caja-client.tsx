@@ -46,6 +46,7 @@ import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movi
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 import { Modal } from './components/caja-modal'
 import VentaRapidaModal from './components/venta-rapida-modal'
+import NombreFacturarProtegido from './components/nombre-facturar-protegido'
 import { useVentaRapida } from './hooks/use-venta-rapida'
 import { columnaConsultaDetalle, valorConsultaDetalle } from '@/lib/consulta-detalle-utils'
 import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
@@ -183,6 +184,7 @@ interface Props {
   perfil:             Perfil | null
   userId:             string
   esAdmin:            boolean
+  esSuperAdmin?:      boolean
   fechaHoy:           string
   cxcPendientes:      CXC[]
   servicios:          Servicio[]
@@ -206,7 +208,7 @@ function sb() {
 /* ═══════════════════════════════════════════════════════ */
 export default function CajaClient({
   sesionActual: initSesion, conceptos, pacientes, sucursales,
-  perfil, userId, esAdmin, fechaHoy, cxcPendientes: initCxc, servicios, productos, pruebasLab,
+  perfil, userId, esAdmin, esSuperAdmin = false, fechaHoy, cxcPendientes: initCxc, servicios, productos, pruebasLab,
   consultasPorCobrar: initConsultasPorCobrar,
   labGruposPorCobrar: initLabGruposPorCobrar,
   membresiaPagosPorCobrar: initMembresiaPagosPorCobrar,
@@ -263,6 +265,7 @@ export default function CajaClient({
   const [correlativos,   setCorrelativos]   = useState(initCorrelativos)
   const [modalFactura,   setModalFactura]   = useState(false)
   const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: true })
+  const [titularFacturaRegistrado, setTitularFacturaRegistrado] = useState({ nombre: '', rtn: '' })
   const [guardandoFact,  setGuardandoFact]  = useState(false)
   const [factImpresa,    setFactImpresa]    = useState<Record<string, unknown> | null>(null)
   const [formCobro, setFormCobro] = useState({
@@ -315,6 +318,7 @@ export default function CajaClient({
   const [formFacturaVentaRapida, setFormFacturaVentaRapida] = useState({
     nombre_cliente: '', rtn_cliente: '', exento: true,
   })
+  const [titularFacturaVentaRapida, setTitularFacturaVentaRapida] = useState({ nombre: '', rtn: '' })
   const [guardandoFactVentaRapida, setGuardandoFactVentaRapida] = useState(false)
   const [factImpresaVentaRapida, setFactImpresaVentaRapida] = useState<Record<string, unknown> | null>(null)
 
@@ -354,6 +358,7 @@ export default function CajaClient({
     membresiasMap,
     onIngresoExitoso: (data) => {
       const factInit = datosFacturaDesdePaciente(data.paciente as ConsultaPorCobrar['paciente'])
+      setTitularFacturaVentaRapida({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
       setFormFacturaVentaRapida({
         nombre_cliente: factInit.nombre_cliente,
         rtn_cliente: factInit.rtn_cliente,
@@ -942,6 +947,7 @@ export default function CajaClient({
 
       const det = calcularTotalConsulta(full)
       const factInit = datosFacturaDesdePaciente(pac ?? undefined)
+      setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
       setConsultaCobro(full)
       setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
       setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true })
@@ -1218,6 +1224,7 @@ export default function CajaClient({
 
   async function abrirModalCobroLab(grupo: LabGrupoCobro) {
     const factInit = datosFacturaDesdePaciente(grupo.paciente as ConsultaPorCobrar['paciente'])
+    setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
     setLabGrupoCobro(grupo)
     setFormCobroLab({
       forma_pago: 'EFECTIVO',
@@ -2877,25 +2884,17 @@ export default function CajaClient({
               </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre a facturar</label>
-              <input
-                value={formFacturaVentaRapida.nombre_cliente}
-                onChange={e => setFormFacturaVentaRapida(p => ({ ...p, nombre_cliente: e.target.value }))}
-                placeholder="Razón social o nombre del cliente"
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">RTN del Cliente (opcional)</label>
-              <input
-                value={formFacturaVentaRapida.rtn_cliente}
-                onChange={e => setFormFacturaVentaRapida(p => ({ ...p, rtn_cliente: e.target.value }))}
-                placeholder="0000-0000-000000"
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-mono"
-              />
-            </div>
+            <NombreFacturarProtegido
+              compact
+              formFactura={formFacturaVentaRapida}
+              setFormFactura={setFormFacturaVentaRapida}
+              nombreRegistrado={titularFacturaVentaRapida.nombre}
+              rtnRegistrado={titularFacturaVentaRapida.rtn}
+              esSuperAdmin={esSuperAdmin}
+              sucursalId={sucursalActivaId}
+              supabase={supabase}
+              resetKey={`vr-${ventaRapidaCobro?.pacienteId ?? 'fact'}`}
+            />
 
             <div className="flex items-center gap-3 p-3 border rounded-xl">
               <input
@@ -3544,7 +3543,16 @@ export default function CajaClient({
                   <p className="text-xs text-cyan-700 mt-1 font-medium">Orden directa (sin consulta médica)</p>
                 </div>
 
-                <CobroFacturaFields formFactura={formFactura} setFormFactura={setFormFactura} />
+                <CobroFacturaFields
+                  formFactura={formFactura}
+                  setFormFactura={setFormFactura}
+                  nombreRegistrado={titularFacturaRegistrado.nombre}
+                  rtnRegistrado={titularFacturaRegistrado.rtn}
+                  esSuperAdmin={esSuperAdmin}
+                  sucursalId={sucursalActivaId}
+                  supabase={supabase}
+                  resetKey={labGrupoCobro?.grupoId}
+                />
 
                 <CobroLineaGrupo
                   icon={FlaskConical}
@@ -3818,25 +3826,17 @@ export default function CajaClient({
               }
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre a facturar</label>
-              <input
-                value={formFactura.nombre_cliente}
-                onChange={e => setFormFactura(p => ({ ...p, nombre_cliente: e.target.value }))}
-                placeholder="Razón social o nombre del cliente"
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">RTN del Cliente (opcional)</label>
-              <input
-                value={formFactura.rtn_cliente}
-                onChange={e => setFormFactura(p => ({ ...p, rtn_cliente: e.target.value }))}
-                placeholder="0000-0000-000000"
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-mono"
-              />
-            </div>
+            <NombreFacturarProtegido
+              compact
+              formFactura={formFactura}
+              setFormFactura={setFormFactura}
+              nombreRegistrado={titularFacturaRegistrado.nombre}
+              rtnRegistrado={titularFacturaRegistrado.rtn}
+              esSuperAdmin={esSuperAdmin}
+              sucursalId={sucursalActivaId}
+              supabase={supabase}
+              resetKey={`lab-fact-${labGrupoCobro?.grupoId}`}
+            />
 
             <div className="flex items-center gap-3 p-3 border rounded-xl">
               <input
@@ -3970,7 +3970,16 @@ export default function CajaClient({
                   </p>
                 </div>
 
-                <CobroFacturaFields formFactura={formFactura} setFormFactura={setFormFactura} />
+                <CobroFacturaFields
+                  formFactura={formFactura}
+                  setFormFactura={setFormFactura}
+                  nombreRegistrado={titularFacturaRegistrado.nombre}
+                  rtnRegistrado={titularFacturaRegistrado.rtn}
+                  esSuperAdmin={esSuperAdmin}
+                  sucursalId={sucursalActivaId}
+                  supabase={supabase}
+                  resetKey={consultaCobro?.id}
+                />
 
                 {subtotalEsCero && (
                   <div className="bg-red-50 border border-red-200 rounded-xl p-4">
@@ -4244,25 +4253,17 @@ export default function CajaClient({
               }
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre a facturar</label>
-              <input
-                value={formFactura.nombre_cliente}
-                onChange={e => setFormFactura(p => ({ ...p, nombre_cliente: e.target.value }))}
-                placeholder="Razón social o nombre del cliente"
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">RTN del Cliente (opcional)</label>
-              <input
-                value={formFactura.rtn_cliente}
-                onChange={e => setFormFactura(p => ({ ...p, rtn_cliente: e.target.value }))}
-                placeholder="0000-0000-000000"
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-400 outline-none font-mono"
-              />
-            </div>
+            <NombreFacturarProtegido
+              compact
+              formFactura={formFactura}
+              setFormFactura={setFormFactura}
+              nombreRegistrado={titularFacturaRegistrado.nombre}
+              rtnRegistrado={titularFacturaRegistrado.rtn}
+              esSuperAdmin={esSuperAdmin}
+              sucursalId={sucursalActivaId}
+              supabase={supabase}
+              resetKey={`cons-fact-${consultaCobro?.id}`}
+            />
 
             <div className="flex items-center gap-3 p-3 border rounded-xl">
               <input
@@ -4363,10 +4364,17 @@ function CobroLineaItem({ nombre, detalle, monto }: { nombre: string; detalle?: 
 }
 
 function CobroFacturaFields({
-  formFactura, setFormFactura,
+  formFactura, setFormFactura, nombreRegistrado, rtnRegistrado = '',
+  esSuperAdmin, sucursalId, supabase, resetKey,
 }: {
   formFactura: { nombre_cliente: string; rtn_cliente: string; exento: boolean }
   setFormFactura: React.Dispatch<React.SetStateAction<{ nombre_cliente: string; rtn_cliente: string; exento: boolean }>>
+  nombreRegistrado: string
+  rtnRegistrado?: string
+  esSuperAdmin: boolean
+  sucursalId?: number | null
+  supabase: ReturnType<typeof sb>
+  resetKey?: string | number
 }) {
   return (
     <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50/80 to-white p-4 space-y-3">
@@ -4374,29 +4382,16 @@ function CobroFacturaFields({
         <FileText className="w-4 h-4 text-indigo-600 flex-shrink-0" />
         <p className="text-xs font-bold text-indigo-900 uppercase tracking-wide">Datos para factura fiscal</p>
       </div>
-      <p className="text-[11px] text-indigo-700/90 -mt-1">
-        Si el paciente pide factura a nombre de empresa u otro titular, cámbielo aquí antes de cobrar.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Nombre a facturar</label>
-          <input
-            value={formFactura.nombre_cliente}
-            onChange={e => setFormFactura(p => ({ ...p, nombre_cliente: e.target.value }))}
-            placeholder="Ej: Distribuidora La Fe S. de R.L. o nombre del paciente"
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none bg-white"
-          />
-        </div>
-        <div className="sm:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">RTN del cliente (opcional)</label>
-          <input
-            value={formFactura.rtn_cliente}
-            onChange={e => setFormFactura(p => ({ ...p, rtn_cliente: e.target.value }))}
-            placeholder="0000-0000-000000 — vacío = consumidor final"
-            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-400 outline-none bg-white font-mono"
-          />
-        </div>
-      </div>
+      <NombreFacturarProtegido
+        formFactura={formFactura}
+        setFormFactura={setFormFactura}
+        nombreRegistrado={nombreRegistrado}
+        rtnRegistrado={rtnRegistrado}
+        esSuperAdmin={esSuperAdmin}
+        sucursalId={sucursalId}
+        supabase={supabase}
+        resetKey={resetKey}
+      />
     </div>
   )
 }
