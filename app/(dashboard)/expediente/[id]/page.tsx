@@ -32,7 +32,7 @@ export default async function ExpedientePage({
     supabase
       .from('consultas')
       .select(`
-        id, fecha, hora, estado, tipo_nombre, doctor,
+        id, fecha, hora, estado, tipo_nombre, doctor, enfoque_clinico,
         presion, temperatura, peso, talla, frecuencia, perim_cefalico, pulso,
         cabeza, cuello, ojos, orl, pulmonar, abdomen,
         genito, extremidades, sistema, oste, piel,

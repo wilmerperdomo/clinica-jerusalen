@@ -5,7 +5,7 @@ import {
   Activity, FlaskConical, Printer,
   ChevronDown, ChevronUp, Pill,
   Heart, Stethoscope, FileText, Search, AlertTriangle, Megaphone, MessageCircle,
-  ClipboardList, UserRound, ExternalLink, KeyRound, Copy, X,
+  ClipboardList, UserRound, ExternalLink, KeyRound, Copy, X, Baby,
 } from 'lucide-react'
 import { generarAccesoPortal } from '@/app/(dashboard)/laboratorio/portal-actions'
 import { etiquetaEstadoLab, claseBadgeEstadoLab, inferirEstadoLab } from '@/lib/lab-estado-utils'
@@ -16,6 +16,9 @@ import ContactoPacienteButtons from '@/components/contacto-paciente-buttons'
 import { BRAND } from '@/lib/brand'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost } from '@/components/module-layout'
 import { linkWhatsAppMensaje, linkEmailMensaje, mensajePublicidad, nombrePaciente } from '@/lib/mensajes-paciente'
+import { etiquetaEnfoque, claseBadgeEnfoque, type EnfoqueClinico } from '@/lib/consulta-especialidad-utils'
+import ExpedientePediatriaPanel from '@/components/expediente-pediatria-panel'
+import ExpedientePrenatalPanel from '@/components/expediente-prenatal-panel'
 
 /* ── Tipos ─────────────────────────────────────────────────────── */
 interface Paciente {
@@ -32,7 +35,7 @@ interface DetalleMed {
 }
 interface Consulta {
   id: number; fecha: string; hora: string; estado: string
-  tipo_nombre?: string; doctor?: string
+  tipo_nombre?: string; doctor?: string; enfoque_clinico?: EnfoqueClinico | string
   presion?: string; temperatura?: string; peso?: string
   talla?: string; frecuencia?: string; perim_cefalico?: string; pulso?: string
   cabeza?: string; cuello?: string; ojos?: string; orl?: string
@@ -193,6 +196,11 @@ function ConsultaCard({ consulta, paciente }: { consulta: Consulta; paciente: Pa
             <div className="flex flex-wrap items-center gap-2 mt-0.5">
               {consulta.tipo_nombre && (
                 <span className="text-xs text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{consulta.tipo_nombre}</span>
+              )}
+              {consulta.enfoque_clinico && consulta.enfoque_clinico !== 'general' && (
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${claseBadgeEnfoque(consulta.enfoque_clinico as EnfoqueClinico)}`}>
+                  {etiquetaEnfoque(consulta.enfoque_clinico as EnfoqueClinico)}
+                </span>
               )}
               {consulta.doctor && (
                 <span className="text-xs text-slate-500">Dr(a). {consulta.doctor}</span>
@@ -373,7 +381,7 @@ function BloqueAntecedente({ titulo, texto }: { titulo: string; texto?: string |
 }
 
 export default function ExpedienteClient({ paciente, antecedentes, consultas, analisis }: Props) {
-  const [tab, setTab]         = useState<'resumen'|'historial'|'laboratorio'>('resumen')
+  const [tab, setTab]         = useState<'resumen'|'historial'|'laboratorio'|'pediatria'|'prenatal'>('resumen')
   const [buscar, setBuscar]   = useState('')
   const [fechaI, setFechaI]   = useState('')
   const [fechaF, setFechaF]   = useState('')
@@ -530,6 +538,8 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
           {([
             { id: 'resumen',      label: 'Resumen clínico',                                icon: ClipboardList },
             { id: 'historial',    label: `Consultas (${consultas.length})`,                icon: Stethoscope },
+            { id: 'pediatria',    label: 'Pediatría',                                      icon: Baby },
+            { id: 'prenatal',     label: 'Prenatal',                                       icon: Heart },
             { id: 'laboratorio',  label: `Laboratorio (${analisis.length})`,               icon: FlaskConical },
           ] as const).map(t => (
             <button
@@ -543,7 +553,7 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
             >
               <t.icon className="w-4 h-4" />
               <span className="hidden sm:inline">{t.label}</span>
-              <span className="sm:hidden">{t.id === 'resumen' ? 'Resumen' : t.id === 'historial' ? 'Consultas' : 'Lab'}</span>
+              <span className="sm:hidden">{t.id === 'resumen' ? 'Resumen' : t.id === 'historial' ? 'Consultas' : t.id === 'pediatria' ? 'Ped.' : t.id === 'prenatal' ? 'Pren.' : 'Lab'}</span>
             </button>
           ))}
         </div>
@@ -653,6 +663,29 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
                 </div>
             }
           </div>
+        )}
+
+        {tab === 'pediatria' && (
+          <ExpedientePediatriaPanel
+            pacienteId={paciente.id}
+            fechaNac={paciente.fecha_nac}
+            genero={paciente.genero}
+            codigo={paciente.codigo}
+            nombre={paciente.nombre}
+            apellido1={paciente.apellido1}
+            apellido2={paciente.apellido2}
+          />
+        )}
+
+        {tab === 'prenatal' && (
+          <ExpedientePrenatalPanel
+            pacienteId={paciente.id}
+            codigo={paciente.codigo}
+            nombre={paciente.nombre}
+            apellido1={paciente.apellido1}
+            apellido2={paciente.apellido2}
+            fechaNac={paciente.fecha_nac}
+          />
         )}
 
         {/* ── LABORATORIO ───────────────────────────────────────── */}

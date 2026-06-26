@@ -15,7 +15,14 @@ import ResponsiveModal from '@/components/responsive-modal'
 import BuscarPacienteInput from '@/components/buscar-paciente-input'
 import ConsultaDocumentosPanel from '@/components/consulta-documentos-panel'
 import ConsultaSeguimientoPanel from '@/components/consulta-seguimiento-panel'
-import ConsultaHistorialPanel from '@/components/consulta-historial-panel'
+import ConsultaContextoClinicoPanel from '@/components/consulta-contexto-clinico-panel'
+import ConsultaAlertasPanel from '@/components/consulta-alertas-panel'
+import ConsultaProblemasPanel from '@/components/consulta-problemas-panel'
+import ConsultaAuditoriaPanel from '@/components/consulta-auditoria-panel'
+import ConsultaSugerenciasOrdenesPanel from '@/components/consulta-sugerencias-ordenes-panel'
+import ConsultaEnfoqueClinico from '@/components/consulta-enfoque-clinico'
+import ConsultaAlergiasBanner from '@/components/consulta-alergias-banner'
+import ConsultaDiagnosticosPanel from '@/components/consulta-diagnosticos-panel'
 import { PacientePlanBadge, PacientePlanBanner } from '@/components/paciente-plan-badge'
 import { BRAND } from '@/lib/brand'
 import { precioLabLista, type MembresiasMap } from '@/lib/membresia-utils'
@@ -41,6 +48,54 @@ import {
   type FormSeguimiento,
 } from '@/lib/consulta-seguimiento-utils'
 import { fmtFecha, linkWhatsApp } from '@/lib/agenda-utils'
+import {
+  type EnfoqueClinico,
+  type FormPediatria,
+  type FormGinecologia,
+  formPediatriaVacio,
+  formGinecologiaVacio,
+  sugerirEnfoque,
+  mapPediatriaFromDb,
+  mapGinecologiaFromDb,
+  payloadPediatria,
+  payloadGinecologia,
+} from '@/lib/consulta-especialidad-utils'
+import {
+  formControlPrenatalVacio,
+  mapControlPrenatalFromDb,
+  payloadControlPrenatal,
+  payloadEmbarazo,
+  siguienteNumControl,
+  sugerirSeguimientoPrenatal,
+} from '@/lib/control-prenatal-utils'
+import { pruebasProtocoloEmbarazo, patronesNoEncontrados } from '@/lib/protocolo-lab-embarazo'
+import {
+  formConsultaGeneralVacio,
+  mapGeneralFromDb,
+  payloadConsultaGeneral,
+  calcularIMC,
+} from '@/lib/consulta-general-utils'
+import { buscarPlantilla } from '@/lib/consulta-plantillas'
+import { imprimirResumenConsultaPaciente } from '@/lib/consulta-resumen-print'
+import {
+  type DiagnosticoItem,
+  diagnosticosVacios,
+  mapDiagnosticosFromDb,
+  payloadDiagnosticos,
+  textoImpresionDiagnosticos,
+  denormalizarDiagnosticosGeneral,
+  agregarDiagnostico,
+} from '@/lib/consulta-diagnosticos-utils'
+import { estudiosPlanAMatchear, medicamentosPlanAReceta } from '@/lib/ordenes-conectadas-utils'
+import { alertasConsultaEnVivo } from '@/lib/alertas-clinicas'
+import { edadEnMeses, type VacunaCatalogo, type PacienteVacuna } from '@/lib/vacunas-utils'
+import {
+  PLANTILLAS_EXAMEN_FISICO, aplicarPlantillaExamen, type FormExamenFisico,
+} from '@/lib/examen-fisico-plantillas'
+import {
+  advertenciasMedicamento, construirIndicacionReceta, FRECUENCIAS_RECETA,
+} from '@/lib/receta-seguridad'
+import { labsDesdeSugerencias, type SugerenciaOrden } from '@/lib/diagnostico-ordenes-sugeridas'
 
 /* ─── tipos locales ─────────────────────────────────────── */
 type Paciente = PacienteConsulta & { id: number; codigo: string }
@@ -58,7 +113,7 @@ interface Consulta {
   id: number; paciente_id: number; tipo_nombre?: string
   sucursal_id?: number | null
   fecha: string; hora: string; estado: string
-  presion?: string; temperatura?: string; peso?: string
+  presion?: string; temperatura?: string; peso?: string; talla?: string
   sintoma?: string; impresion?: string; tratamiento?: string; dias_reposo?: number
   paciente?: Paciente & { codigo?: string }; tipo?: { nombre: string }
   consulta_valor?: number
@@ -84,6 +139,9 @@ interface RecetaItem {
   indicacion: string
   cant: number
   via: string
+  dosis?: string
+  frecuencia?: string
+  duracion?: string
 }
 
 function esServicioConsulta(s: { tipo?: string }) {
@@ -227,7 +285,7 @@ export default function ConsultasClient({
   const [recetaItems,  setRecetaItems]  = useState<RecetaItem[]>([])
   const [buscarMed,    setBuscarMed]    = useState('')
   const [medForm,      setMedForm]      = useState<RecetaItem>({
-    no_producto: '', indicacion: '', cant: 1, via: 'Oral',
+    no_producto: '', indicacion: '', cant: 1, via: 'Oral', dosis: '', frecuencia: '', duracion: '',
   })
 
   /* ── Estado servicios durante consulta ── */
@@ -246,6 +304,19 @@ export default function ConsultasClient({
   const [cambiandoConsulta,  setCambiandoConsulta]  = useState(false)
   const [medicoNombre, setMedicoNombre] = useState('')
   const [formSeguimiento, setFormSeguimiento] = useState<FormSeguimiento>(() => formSeguimientoInicial(fechaHoy))
+  const [enfoqueClinico, setEnfoqueClinico] = useState<EnfoqueClinico>('general')
+  const [formPediatria, setFormPediatria] = useState<FormPediatria>(() => formPediatriaVacio())
+  const [formGinecologia, setFormGinecologia] = useState<FormGinecologia>(() => formGinecologiaVacio())
+  const [formControlPrenatal, setFormControlPrenatal] = useState(() => formControlPrenatalVacio())
+  const [embarazoId, setEmbarazoId] = useState<number | null>(null)
+  const [enfoqueSugerido, setEnfoqueSugerido] = useState<EnfoqueClinico>('general')
+  const [formConsultaGeneral, setFormConsultaGeneral] = useState(() => formConsultaGeneralVacio())
+  const [diagnosticosItems, setDiagnosticosItems] = useState<DiagnosticoItem[]>(() => diagnosticosVacios())
+  const [alergiasPaciente, setAlergiasPaciente] = useState<string | null>(null)
+  const [personalPaciente, setPersonalPaciente] = useState<string | null>(null)
+  const [catalogoVacunas, setCatalogoVacunas] = useState<VacunaCatalogo[]>([])
+  const [vacunasPaciente, setVacunasPaciente] = useState<PacienteVacuna[]>([])
+  const [labsHistorial, setLabsHistorial] = useState<{ nombre: string; fecha: string }[]>([])
 
   const sb = supabase()
 
@@ -558,6 +629,91 @@ export default function ConsultasClient({
       fechaHoy,
       servicioConsulta ? String(servicioConsulta.id) : '',
     ))
+
+    const sugerido = sugerirEnfoque(data.paciente)
+    setEnfoqueSugerido(sugerido)
+
+    const [pedRes, gineRes, goRes, genRes, antRes, dxRes, vacCatRes, vacPacRes, labsHistRes] = await Promise.all([
+      sb.from('consulta_pediatria').select('*').eq('consulta_id', id).maybeSingle(),
+      sb.from('consulta_ginecologia').select('*').eq('consulta_id', id).maybeSingle(),
+      sb.from('paciente_antecedentes_go')
+        .select('gestas,partos,cesareas,abortos,hijos_vivos,ultima_regla')
+        .eq('paciente_id', data.paciente_id)
+        .maybeSingle(),
+      sb.from('consulta_general').select('*').eq('consulta_id', id).maybeSingle(),
+      sb.from('paciente_antecedentes').select('alergias,personal').eq('paciente_id', data.paciente_id).maybeSingle(),
+      sb.from('consulta_diagnosticos').select('*').eq('consulta_id', id).order('orden'),
+      sb.from('vacuna_catalogo').select('*').eq('activo', true).order('orden'),
+      sb.from('paciente_vacuna').select('id,paciente_id,vacuna_id,fecha_aplicada').eq('paciente_id', data.paciente_id),
+      sb.from('consulta_analisis').select('no_analisis,fecha').eq('paciente_id', data.paciente_id).order('fecha', { ascending: false }).limit(12),
+    ])
+
+    setAlergiasPaciente(antRes.data?.alergias ?? null)
+    setPersonalPaciente(antRes.data?.personal ?? null)
+    if (!vacCatRes.error && vacCatRes.data) setCatalogoVacunas(vacCatRes.data as VacunaCatalogo[])
+    if (!vacPacRes.error && vacPacRes.data) setVacunasPaciente(vacPacRes.data as PacienteVacuna[])
+    if (!labsHistRes.error && labsHistRes.data) {
+      setLabsHistorial(labsHistRes.data.map((l: { no_analisis: string; fecha?: string | null }) => ({
+        nombre: l.no_analisis,
+        fecha: l.fecha ?? '',
+      })))
+    }
+
+    if (!dxRes.error && dxRes.data?.length) {
+      setDiagnosticosItems(mapDiagnosticosFromDb(dxRes.data as Record<string, unknown>[]))
+    } else {
+      setDiagnosticosItems(diagnosticosVacios())
+    }
+
+    if (!genRes.error && genRes.data) {
+      setFormConsultaGeneral(mapGeneralFromDb(genRes.data as Record<string, unknown>))
+    } else {
+      const imc = calcularIMC(data.peso, data.talla)
+      setFormConsultaGeneral({ ...formConsultaGeneralVacio(), imc })
+    }
+
+    if (!pedRes.error && pedRes.data) {
+      setFormPediatria(mapPediatriaFromDb(pedRes.data as Record<string, unknown>))
+    } else {
+      setFormPediatria(formPediatriaVacio())
+    }
+
+    if (!gineRes.error && gineRes.data) {
+      setFormGinecologia(mapGinecologiaFromDb(gineRes.data as Record<string, unknown>))
+    } else {
+      setFormGinecologia(formGinecologiaVacio(goRes.data))
+    }
+
+    const embRes = await sb.from('embarazo').select('id').eq('paciente_id', data.paciente_id).eq('activo', true).maybeSingle()
+    let embId: number | null = null
+    if (!embRes.error && embRes.data) embId = embRes.data.id as number
+    setEmbarazoId(embId)
+
+    const ctrlRes = await sb.from('control_prenatal').select('*').eq('consulta_id', id).maybeSingle()
+    if (!ctrlRes.error && ctrlRes.data) {
+      setFormControlPrenatal(mapControlPrenatalFromDb(ctrlRes.data as Record<string, unknown>))
+      if (ctrlRes.data.embarazo_id) embId = ctrlRes.data.embarazo_id as number
+      setEmbarazoId(embId)
+    } else if (embId) {
+      const { count } = await sb.from('control_prenatal').select('consulta_id', { count: 'exact', head: true }).eq('embarazo_id', embId)
+      const sem = (data as Record<string, unknown>).enfoque_clinico === 'ginecologia'
+        ? mapGinecologiaFromDb((gineRes.data ?? {}) as Record<string, unknown>).semanas_gestacion
+        : ''
+      setFormControlPrenatal(formControlPrenatalVacio(
+        sem ? Number(sem) : null,
+        siguienteNumControl(count ?? 0),
+      ))
+    } else {
+      setFormControlPrenatal(formControlPrenatalVacio())
+    }
+
+    const enfoqueGuardado = (data.enfoque_clinico as EnfoqueClinico) || 'general'
+    if (enfoqueGuardado !== 'general' || (!pedRes.error && pedRes.data) || (!gineRes.error && gineRes.data)) {
+      setEnfoqueClinico(enfoqueGuardado)
+    } else {
+      setEnfoqueClinico(sugerido)
+    }
+
     return true
   }
 
@@ -619,7 +775,11 @@ export default function ConsultasClient({
   async function persistirExamenMedico(finalizar: boolean, silencioso = false): Promise<boolean> {
     if (!consultaActual) return false
     if (finalizar) {
-      const validacion = validarExamenMedico(formMedico)
+      const medicoValidar = { ...formMedico }
+      if (!medicoValidar.impresion.trim() && diagnosticosItems.length > 0) {
+        medicoValidar.impresion = textoImpresionDiagnosticos(diagnosticosItems)
+      }
+      const validacion = validarExamenMedico(medicoValidar)
       if (validacion) {
         if (!silencioso) alert(validacion)
         return false
@@ -627,12 +787,20 @@ export default function ConsultasClient({
     }
 
     const totalServicios = servicioItems.reduce((a, s) => a + s.precio * s.cantidad, 0)
+    const medicoSync = { ...formMedico }
+    let generalSync = { ...formConsultaGeneral }
+    if (diagnosticosItems.length > 0) {
+      const textoDx = textoImpresionDiagnosticos(diagnosticosItems)
+      if (textoDx) medicoSync.impresion = textoDx
+      generalSync = { ...generalSync, ...denormalizarDiagnosticosGeneral(diagnosticosItems) }
+    }
     const payloadConsulta: Record<string, unknown> = {
-      ...formMedico,
-      dias_reposo: Number(formMedico.dias_reposo),
+      ...medicoSync,
+      dias_reposo: Number(medicoSync.dias_reposo),
       consulta_valor: Number(valorConsultaEdit) || 0,
       consulta_otros: totalServicios,
       consulta_nota: consultaNotaCobro.trim() || null,
+      enfoque_clinico: enfoqueClinico,
     }
     if (finalizar) {
       payloadConsulta.estado = 'FINALIZADO'
@@ -770,6 +938,91 @@ export default function ConsultasClient({
       }
     }
 
+    const { error: errDelDx } = await sb.from('consulta_diagnosticos').delete().eq('consulta_id', consultaActual.id)
+    if (errDelDx) {
+      if (!silencioso) alert('Error al actualizar diagnósticos: ' + errDelDx.message)
+      return false
+    }
+    if (diagnosticosItems.length > 0) {
+      const { error: errDx } = await sb.from('consulta_diagnosticos').insert(
+        payloadDiagnosticos(consultaActual.id, diagnosticosItems),
+      )
+      if (errDx) {
+        if (!silencioso) alert('Error al guardar diagnósticos: ' + errDx.message)
+        return false
+      }
+    }
+
+    if (enfoqueClinico === 'general') {
+      const gPayload = { ...generalSync }
+      const imc = calcularIMC(consultaActual.peso, consultaActual.talla)
+      if (imc && !gPayload.imc) gPayload.imc = imc
+      const { error: errGen } = await sb.from('consulta_general').upsert(
+        payloadConsultaGeneral(consultaActual.id, gPayload),
+        { onConflict: 'consulta_id' },
+      )
+      if (errGen && !silencioso) alert('Error al guardar consulta ampliada: ' + errGen.message)
+    } else if (enfoqueClinico === 'pediatria') {
+      const { error: errPed } = await sb.from('consulta_pediatria').upsert(
+        payloadPediatria(consultaActual.id, formPediatria),
+        { onConflict: 'consulta_id' },
+      )
+      if (errPed) {
+        if (!silencioso) alert('Error al guardar datos pediátricos: ' + errPed.message)
+        return false
+      }
+    } else if (enfoqueClinico === 'ginecologia') {
+      const { error: errGine } = await sb.from('consulta_ginecologia').upsert(
+        payloadGinecologia(consultaActual.id, formGinecologia),
+        { onConflict: 'consulta_id' },
+      )
+      if (errGine) {
+        if (!silencioso) alert('Error al guardar datos ginecológicos: ' + errGine.message)
+        return false
+      }
+
+      if (formGinecologia.embarazo_activo) {
+        let eid = embarazoId
+        if (formGinecologia.fum) {
+          if (eid) {
+            const { error: errEmbUpd } = await sb.from('embarazo').update({
+              fum: formGinecologia.fum || null,
+              fpp: formGinecologia.fpp || null,
+              activo: true,
+            }).eq('id', eid)
+            if (errEmbUpd && !silencioso) alert('Error al actualizar embarazo: ' + errEmbUpd.message)
+          } else {
+            const { data: embNew, error: errEmb } = await sb.from('embarazo')
+              .insert(payloadEmbarazo(consultaActual.paciente_id, formGinecologia.fum, formGinecologia.fpp))
+              .select('id').single()
+            if (errEmb) {
+              if (!silencioso) alert('Error al registrar embarazo: ' + errEmb.message)
+            } else if (embNew) {
+              eid = embNew.id as number
+              setEmbarazoId(eid)
+            }
+          }
+        }
+        if (eid) {
+          const cp = { ...formControlPrenatal }
+          if (!cp.semanas_gestacion.trim() && formGinecologia.semanas_gestacion) {
+            cp.semanas_gestacion = formGinecologia.semanas_gestacion
+          }
+          if (!cp.presion_arterial.trim() && consultaActual.presion) {
+            cp.presion_arterial = String(consultaActual.presion)
+          }
+          if (!cp.peso_materno.trim() && consultaActual.peso) {
+            cp.peso_materno = String(consultaActual.peso)
+          }
+          const { error: errCp } = await sb.from('control_prenatal').upsert(
+            payloadControlPrenatal(consultaActual.id, eid, cp),
+            { onConflict: 'consulta_id' },
+          )
+          if (errCp && !silencioso) alert('Error al guardar control prenatal: ' + errCp.message)
+        }
+      }
+    }
+
     return true
   }
 
@@ -789,16 +1042,29 @@ export default function ConsultasClient({
     const ok = await persistirExamenMedico(true, false)
     if (!ok) return
 
-    if (formSeguimiento.activo) {
-      const servSel = formSeguimiento.servicioId
-        ? serviciosConsulta.find(s => s.id === Number(formSeguimiento.servicioId))
+    let seguimientoFinal = formSeguimiento
+    if (!formSeguimiento.activo && enfoqueClinico === 'ginecologia' && formGinecologia.embarazo_activo) {
+      const sem = Number(formControlPrenatal.semanas_gestacion || formGinecologia.semanas_gestacion)
+      if (sem > 0) {
+        const svcPrenatal = serviciosConsulta.find(s => /prenatal/i.test(s.nombre))
+        seguimientoFinal = sugerirSeguimientoPrenatal(
+          fechaHoy,
+          sem,
+          svcPrenatal ? String(svcPrenatal.id) : (formSeguimiento.servicioId || ''),
+        )
+      }
+    }
+
+    if (seguimientoFinal.activo) {
+      const servSel = seguimientoFinal.servicioId
+        ? serviciosConsulta.find(s => s.id === Number(seguimientoFinal.servicioId))
         : serviciosConsulta.find(s => s.nombre === (consultaActual.tipo_nombre || consultaActual.tipo?.nombre))
 
       const { error: errCita, cita } = await crearCitaSeguimiento(sb, {
         pacienteId: consultaActual.paciente_id,
         sucursalId: consultaActual.sucursal_id ?? sucursalOperativa,
         consultaId: consultaActual.id,
-        form: formSeguimiento,
+        form: seguimientoFinal,
         servicioId: servSel?.id ?? null,
         servicioNombre: servSel?.nombre ?? consultaActual.tipo_nombre ?? consultaActual.tipo?.nombre ?? null,
         fechaHoy,
@@ -817,7 +1083,7 @@ export default function ConsultasClient({
         alert(`Consulta finalizada correctamente, pero no se pudo agendar la cita: ${errCita}`)
       } else if (cita) {
         const msgOk = `Próxima cita agendada: ${fmtFecha(cita.fecha)} a las ${cita.hora.slice(0, 5)}.`
-        if (formSeguimiento.enviarWhatsApp && consultaActual.paciente) {
+        if (seguimientoFinal.enviarWhatsApp && consultaActual.paciente) {
           const url = linkWhatsApp({
             fecha: cita.fecha,
             hora: cita.hora,
@@ -851,7 +1117,127 @@ export default function ConsultasClient({
     if (!modalMedico || !consultaActual) return
     const t = setTimeout(() => { guardarBorradorExamen(true) }, 5000)
     return () => clearTimeout(t)
-  }, [formMedico, recetaItems, servicioItems, labItems, valorConsultaEdit, consultaNotaCobro, modalMedico, consultaActual?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [formMedico, recetaItems, servicioItems, labItems, valorConsultaEdit, consultaNotaCobro, enfoqueClinico, formPediatria, formGinecologia, formControlPrenatal, formConsultaGeneral, diagnosticosItems, modalMedico, consultaActual?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!consultaActual) return
+    const imc = calcularIMC(consultaActual.peso, consultaActual.talla)
+    if (imc) setFormConsultaGeneral(prev => ({ ...prev, imc }))
+  }, [consultaActual?.peso, consultaActual?.talla, consultaActual?.id])
+
+  useEffect(() => {
+    if (!diagnosticosItems.length) return
+    const texto = textoImpresionDiagnosticos(diagnosticosItems)
+    if (!texto) return
+    setFormMedico(prev => (prev.impresion === texto ? prev : { ...prev, impresion: texto }))
+    setFormConsultaGeneral(prev => ({ ...prev, ...denormalizarDiagnosticosGeneral(diagnosticosItems) }))
+  }, [diagnosticosItems])
+
+  function aplicarPlantillaConsulta(id: string) {
+    const p = buscarPlantilla(id)
+    if (!p) return
+    setFormMedico(prev => ({
+      ...prev,
+      sintoma: p.sintoma,
+      historia: p.historia,
+      impresion: p.impresion,
+      tratamiento: p.tratamiento,
+      estudios_complementarios: p.general?.plan_estudios ?? prev.estudios_complementarios,
+    }))
+    setFormConsultaGeneral(prev => ({
+      ...prev,
+      ...(p.general ?? {}),
+      plantilla_usada: id,
+      diagnostico_principal: p.impresion,
+      plan_estudios: p.general?.plan_estudios ?? prev.plan_estudios,
+    }))
+    if (p.impresion?.trim()) {
+      setDiagnosticosItems(agregarDiagnostico(diagnosticosVacios(), {
+        descripcion: p.impresion,
+        principal: true,
+      }))
+    }
+  }
+
+  function conectarPlanMedicamentosAReceta() {
+    const nuevos = medicamentosPlanAReceta(formConsultaGeneral.plan_medicamentos)
+    if (!nuevos.length) {
+      alert('Escriba medicamentos en el plan (una línea por medicamento).')
+      return
+    }
+    let agregados = 0
+    setRecetaItems(prev => {
+      const copy = [...prev]
+      for (const n of nuevos) {
+        const dup = copy.some(r =>
+          r.no_producto.toLowerCase() === n.no_producto.toLowerCase(),
+        )
+        if (!dup) { copy.push(n); agregados++ }
+      }
+      return copy
+    })
+    alert(agregados > 0
+      ? `${agregados} medicamento(s) agregados a la receta.`
+      : 'Esos medicamentos ya están en la receta.')
+  }
+
+  function conectarPlanEstudiosALab() {
+    const matches = estudiosPlanAMatchear(formConsultaGeneral.plan_estudios, pruebas)
+    if (!matches.length) {
+      alert('No se encontraron pruebas del catálogo en el plan. Use nombres como en laboratorio o agréguelas manualmente.')
+      return
+    }
+    let nuevas = 0
+    setLabItems(prev => {
+      const copy = [...prev]
+      const listaId = listaPacienteActual(consultaActual?.paciente)
+      for (const p of matches) {
+        if (copy.some(l => l.prueba_id === p.id)) continue
+        const valor = precioLabParaPaciente(p as Prueba, listaId)
+        copy.push({
+          prueba_id: p.id,
+          no_analisis: p.nombre,
+          valor,
+          cant: 1,
+          importe: valor,
+        })
+        nuevas++
+      }
+      return copy
+    })
+    alert(nuevas > 0
+      ? `${nuevas} prueba(s) agregadas al pedido de laboratorio.`
+      : 'Las pruebas del plan ya están en el pedido.')
+  }
+
+  function imprimirResumenPaciente() {
+    if (!consultaActual?.paciente) return
+    const p = consultaActual.paciente
+    imprimirResumenConsultaPaciente({
+      id: consultaActual.id,
+      fecha: consultaActual.fecha,
+      paciente: {
+        nombre: p.nombre ?? '',
+        apellido1: p.apellido1 ?? '',
+        apellido2: p.apellido2,
+        codigo: p.codigo,
+        fecha_nac: p.fecha_nac,
+      },
+      doctor: medicoNombre,
+      sintoma: formMedico.sintoma,
+      historia: formMedico.historia,
+      impresion: formMedico.impresion,
+      tratamiento: formMedico.tratamiento,
+      estudios: formMedico.estudios_complementarios,
+      diasReposo: Number(formMedico.dias_reposo) || 0,
+      alergias: alergiasPaciente,
+      peso: consultaActual.peso,
+      talla: consultaActual.talla,
+      presion: consultaActual.presion,
+      general: formConsultaGeneral,
+      diagnosticos: diagnosticosItems,
+    })
+  }
 
   /* ── helpers receta ── */
   function vistaPreviaReceta() {
@@ -873,10 +1259,85 @@ export default function ConsultasClient({
 
   function agregarMedicamento() {
     if (!medForm.no_producto.trim()) return
-    setRecetaItems(prev => [...prev, { ...medForm }])
-    setMedForm({ no_producto: '', indicacion: '', cant: 1, via: 'Oral' })
+    const adv = advertenciasMedicamento({
+      medicamento: medForm.no_producto,
+      alergias: alergiasPaciente,
+      embarazoActivo: formGinecologia.embarazo_activo,
+    })
+    if (adv.some(a => a.severidad === 'urgent')) {
+      const msg = adv.map(a => a.mensaje).join('\n')
+      if (!confirm(`⚠ Alerta clínica:\n${msg}\n\n¿Agregar de todos modos?`)) return
+    }
+    const indicacion = construirIndicacionReceta(medForm)
+    setRecetaItems(prev => [...prev, { ...medForm, indicacion }])
+    setMedForm({ no_producto: '', indicacion: '', cant: 1, via: 'Oral', dosis: '', frecuencia: '', duracion: '' })
     setBuscarMed('')
   }
+
+  function aplicarPlantillaExamenFisico(plantillaId: string) {
+    setFormMedico(prev => ({
+      ...prev,
+      ...aplicarPlantillaExamen(prev as FormExamenFisico, plantillaId),
+    }))
+  }
+
+  function aplicarSugerenciaLabs(sugerencias: SugerenciaOrden[]) {
+    const matches = labsDesdeSugerencias(sugerencias, pruebas)
+    if (!matches.length) {
+      alert('No se encontraron pruebas del catálogo para esta sugerencia.')
+      return
+    }
+    let nuevas = 0
+    setLabItems(prev => {
+      const copy = [...prev]
+      const listaId = listaPacienteActual(consultaActual?.paciente)
+      for (const p of matches) {
+        if (copy.some(l => l.prueba_id === p.id)) continue
+        const valor = precioLabParaPaciente(p as Prueba, listaId)
+        copy.push({ prueba_id: p.id, no_analisis: p.nombre, valor, cant: 1, importe: valor })
+        nuevas++
+      }
+      return copy
+    })
+    if (nuevas) alert(`${nuevas} prueba(s) agregadas según diagnóstico.`)
+  }
+
+  function aplicarSugerenciaSeguimiento(s: SugerenciaOrden) {
+    if (!s.diasSeguimiento) return
+    const fecha = new Date()
+    fecha.setDate(fecha.getDate() + s.diasSeguimiento)
+    const iso = fecha.toISOString().slice(0, 10)
+    setFormSeguimiento(prev => ({
+      ...prev,
+      activo: true,
+      fecha: iso,
+      motivo: s.motivoSeguimiento ?? s.etiqueta,
+      nota: `Sugerido por diagnóstico: ${s.etiqueta}`,
+    }))
+  }
+
+  const alertasClinicas = useMemo(() => alertasConsultaEnVivo({
+    alergias: alergiasPaciente,
+    personal: personalPaciente,
+    recetaItems,
+    fechaNac: consultaActual?.paciente?.fecha_nac,
+    temperatura: consultaActual?.temperatura,
+    presion: consultaActual?.presion,
+    embarazoActivo: formGinecologia.embarazo_activo,
+    semanasGestacion: Number(formGinecologia.semanas_gestacion || formControlPrenatal.semanas_gestacion) || null,
+    fpp: formGinecologia.fpp,
+    ultimoControlPrenatal: formControlPrenatal.semanas_gestacion
+      ? { fecha: consultaActual?.fecha ?? fechaHoy, semanas_gestacion: Number(formControlPrenatal.semanas_gestacion) }
+      : null,
+    catalogoVacunas,
+    vacunasAplicadas: vacunasPaciente,
+    consultasConPeso: consultaActual ? [{ fecha: consultaActual.fecha, peso: consultaActual.peso }] : [],
+    diagnosticos: diagnosticosItems,
+    labsRecientes: labsHistorial,
+  }), [
+    alergiasPaciente, personalPaciente, recetaItems, consultaActual, formGinecologia,
+    formControlPrenatal, catalogoVacunas, vacunasPaciente, diagnosticosItems, labsHistorial, fechaHoy,
+  ])
 
   function quitarMedicamento(idx: number) {
     setRecetaItems(prev => prev.filter((_, i) => i !== idx))
@@ -939,6 +1400,25 @@ export default function ConsultasClient({
       importe:     valor,
     }])
     setBuscarLab('')
+  }
+
+  function agregarProtocoloLabEmbarazo() {
+    const encontradas = pruebasProtocoloEmbarazo(pruebas)
+    const faltantes = patronesNoEncontrados(pruebas)
+    let nuevas = 0
+    for (const p of encontradas) {
+      if (!labItems.find(l => l.prueba_id === p.id)) {
+        agregarLab(p as Prueba)
+        nuevas++
+      }
+    }
+    if (nuevas === 0 && encontradas.every(p => labItems.some(l => l.prueba_id === p.id))) {
+      alert('El protocolo de embarazo ya está en el pedido.')
+      return
+    }
+    let msg = `${nuevas} prueba(s) agregada(s) al pedido.`
+    if (faltantes.length) msg += `\n\nNo encontradas en catálogo:\n• ${faltantes.join('\n• ')}`
+    alert(msg)
   }
 
   function quitarLab(idx: number) {
@@ -1669,14 +2149,84 @@ export default function ConsultasClient({
               membresiasMap={membresiasMap}
             />
 
-            <ConsultaHistorialPanel
+            <ConsultaAlergiasBanner alergias={alergiasPaciente} personal={personalPaciente} />
+
+            <ConsultaProblemasPanel
               pacienteId={consultaActual.paciente_id}
-              consultaActualId={consultaActual.id}
+              diagnosticosActuales={diagnosticosItems}
             />
 
-            {/* examen físico */}
+            <ConsultaAlertasPanel alertas={alertasClinicas} />
+
+            <ConsultaContextoClinicoPanel
+              pacienteId={consultaActual.paciente_id}
+              consultaActualId={consultaActual.id}
+              alergias={alergiasPaciente}
+            />
+
+            <ConsultaEnfoqueClinico
+              enfoque={enfoqueClinico}
+              enfoqueSugerido={enfoqueSugerido}
+              fechaNac={consultaActual.paciente?.fecha_nac}
+              formPediatria={formPediatria}
+              formGinecologia={formGinecologia}
+              formConsultaGeneral={formConsultaGeneral}
+              formControlPrenatal={formControlPrenatal}
+              pesoPaciente={consultaActual.peso}
+              tallaPaciente={consultaActual.talla}
+              onEnfoqueChange={setEnfoqueClinico}
+              onPediatriaChange={setFormPediatria}
+              onGinecologiaChange={setFormGinecologia}
+              onGeneralChange={setFormConsultaGeneral}
+              onAplicarPlantilla={aplicarPlantillaConsulta}
+              onControlPrenatalChange={setFormControlPrenatal}
+              onAgregarProtocoloLab={agregarProtocoloLabEmbarazo}
+              onConectarMedicamentos={conectarPlanMedicamentosAReceta}
+              onConectarEstudios={conectarPlanEstudiosALab}
+            />
+
+            <ConsultaDiagnosticosPanel
+              items={diagnosticosItems}
+              onChange={setDiagnosticosItems}
+            />
+
+            <ConsultaSugerenciasOrdenesPanel
+              diagnosticos={diagnosticosItems}
+              onAgregarLabs={aplicarSugerenciaLabs}
+              onAgregarSeguimiento={aplicarSugerenciaSeguimiento}
+            />
+
+            <ConsultaAuditoriaPanel
+              sintoma={formMedico.sintoma}
+              historia={formMedico.historia}
+              impresion={formMedico.impresion}
+              tratamiento={formMedico.tratamiento}
+              tieneDiagnosticos={diagnosticosItems.length > 0}
+              recetaItems={recetaItems}
+              labItems={labItems}
+              embarazoActivo={formGinecologia.embarazo_activo}
+              fpp={formGinecologia.fpp}
+              fum={formGinecologia.fum}
+              fechaNac={consultaActual.paciente?.fecha_nac}
+              edadMeses={edadEnMeses(consultaActual.paciente?.fecha_nac)}
+            />
+
+            {/* examen físico — Objetivo */}
             <div>
-              <p className="text-sm font-semibold text-gray-700 mb-2">Examen Físico (NL = Normal)</p>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <p className="text-sm font-semibold text-gray-700">
+                  <span className="text-[10px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded mr-2">O</span>
+                  Examen Físico (NL = Normal)
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {PLANTILLAS_EXAMEN_FISICO.map(p => (
+                    <button key={p.id} type="button" onClick={() => aplicarPlantillaExamenFisico(p.id)}
+                      className="text-[10px] font-medium px-2 py-0.5 rounded-full border border-sky-200 bg-white hover:bg-sky-50 text-sky-800">
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3">
                 {(['cabeza','cuello','ojos','orl','pulmonar','abdomen','genito','extremidades','sistema','oste','piel'] as const).map(k => (
                   <div key={k}>
@@ -1689,21 +2239,47 @@ export default function ConsultasClient({
               </div>
             </div>
 
-            {/* clínico */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-              {[
-                { key: 'sintoma',   label: 'Síntoma Principal *', rows: 3 },
-                { key: 'historia',  label: 'Historia *', rows: 4 },
-                { key: 'impresion', label: 'Impresión Diagnóstica *', rows: 3 },
-                { key: 'tratamiento', label: 'Tratamiento Médico *', rows: 4 },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
-                  <textarea rows={f.rows} value={(formMedico as Record<string, string>)[f.key]}
-                    onChange={e => setFormMedico(p => ({ ...p, [f.key]: e.target.value }))}
+            {/* clínico — Subjetivo + Plan */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">
+                <span className="text-[10px] font-bold text-violet-700 bg-violet-100 px-1.5 py-0.5 rounded mr-2">S</span>
+                Subjetivo
+              </p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Síntoma Principal *</label>
+                  <textarea rows={3} value={formMedico.sintoma}
+                    onChange={e => setFormMedico(p => ({ ...p, sintoma: e.target.value }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm resize-y min-h-[4.5rem]" />
                 </div>
-              ))}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Historia *</label>
+                  <textarea rows={4} value={formMedico.historia}
+                    onChange={e => setFormMedico(p => ({ ...p, historia: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm resize-y min-h-[4.5rem]" />
+                </div>
+              </div>
+              <p className="text-sm font-semibold text-gray-700 mb-2">
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded mr-2">P</span>
+                Plan terapéutico
+              </p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Impresión diagnóstica {diagnosticosItems.length > 0 ? '(desde CIE-10 arriba)' : '*'}
+                  </label>
+                  <textarea rows={3} value={formMedico.impresion}
+                    onChange={e => setFormMedico(p => ({ ...p, impresion: e.target.value }))}
+                    readOnly={diagnosticosItems.length > 0}
+                    className={`w-full border rounded-lg px-3 py-2 text-sm resize-y min-h-[4.5rem] ${diagnosticosItems.length > 0 ? 'bg-gray-50 text-gray-600' : ''}`} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tratamiento Médico *</label>
+                  <textarea rows={4} value={formMedico.tratamiento}
+                    onChange={e => setFormMedico(p => ({ ...p, tratamiento: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm resize-y min-h-[4.5rem]" />
+                </div>
+              </div>
             </div>
 
             <div>
@@ -1900,13 +2476,22 @@ export default function ConsultasClient({
                     <span className="ml-1 bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">{recetaItems.length}</span>
                   )}
                 </p>
-                <button
-                  type="button"
-                  onClick={vistaPreviaReceta}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-purple-300 text-purple-800 hover:bg-purple-50"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Imprimir receta
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={imprimirResumenPaciente}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-300 text-slate-800 hover:bg-slate-50"
+                  >
+                    <FileText className="w-3.5 h-3.5" /> Resumen paciente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={vistaPreviaReceta}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-purple-300 text-purple-800 hover:bg-purple-50"
+                  >
+                    <Printer className="w-3.5 h-3.5" /> Imprimir receta
+                  </button>
+                </div>
               </div>
 
               {/* Buscador de medicamentos */}
@@ -1951,6 +2536,36 @@ export default function ConsultasClient({
                     placeholder="Nombre del medicamento"
                     value={medForm.no_producto}
                     onChange={e => setMedForm(p => ({ ...p, no_producto: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Dosis</label>
+                  <input
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                    placeholder="500mg"
+                    value={medForm.dosis ?? ''}
+                    onChange={e => setMedForm(p => ({ ...p, dosis: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Frecuencia</label>
+                  <select
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                    value={medForm.frecuencia ?? ''}
+                    onChange={e => setMedForm(p => ({ ...p, frecuencia: e.target.value }))}
+                  >
+                    {FRECUENCIAS_RECETA.map(f => (
+                      <option key={f || 'vacio'} value={f}>{f || '—'}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">Duración</label>
+                  <input
+                    className="w-full border rounded-lg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-purple-300"
+                    placeholder="5 días"
+                    value={medForm.duracion ?? ''}
+                    onChange={e => setMedForm(p => ({ ...p, duracion: e.target.value }))}
                   />
                 </div>
                 <div>

@@ -12,6 +12,7 @@ export interface PacienteConsulta {
   rtn_empresa?: string | null
   contacto?: string | null
   fecha_nac?: string
+  genero?: string | null
   celular?: string
   telefono?: string
   lista_id?: number | null
@@ -19,7 +20,7 @@ export interface PacienteConsulta {
 
 /** Select Supabase estándar para joins de paciente en consultas */
 export const PACIENTE_CONSULTA_SELECT =
-  'id,codigo,tipo,nombre,apellido1,apellido2,nombre_empresa,rtn_empresa,contacto,fecha_nac,celular,telefono,lista_id'
+  'id,codigo,tipo,nombre,apellido1,apellido2,nombre_empresa,rtn_empresa,contacto,fecha_nac,genero,celular,telefono,lista_id'
 
 export function esPacienteEmpresa(p?: { tipo?: string }): boolean {
   return (p?.tipo ?? '').toLowerCase() === 'empresa'
