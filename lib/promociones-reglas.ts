@@ -5,9 +5,10 @@ import {
 } from '@/lib/promocion-audiencia'
 import { aplicarPlantilla, type PromocionPlantilla } from '@/lib/promociones-plantillas'
 import type { CanalCampana, Promocion } from '@/lib/promociones-utils'
+import { esEncuesta } from '@/lib/promociones-utils'
 import { procesarPromocionesAutomaticas, proveedorAutomaticoPorDefecto } from '@/lib/promociones-sender'
 
-export type TipoDisparadorRegla = 'cumpleanos' | 'inactivo'
+export type TipoDisparadorRegla = 'cumpleanos' | 'inactivo' | 'post_consulta'
 
 export interface PromocionRegla {
   id: number
@@ -19,6 +20,7 @@ export interface PromocionRegla {
   modo_envio: 'asistido' | 'automatico'
   dias_anticipacion: number
   meses_inactivo: number
+  horas_post_consulta?: number
   activa: boolean
   sucursal_id?: number | null
   promocion?: Promocion | null
@@ -49,6 +51,58 @@ function fechaCorteInactivo(meses: number): string {
   const d = new Date()
   d.setMonth(d.getMonth() - meses)
   return d.toISOString().slice(0, 10)
+}
+
+function consultaDateTime(fecha: string, hora: string): Date {
+  const h = hora?.length === 5 ? `${hora}:00` : (hora || '00:00:00')
+  return new Date(`${fecha}T${h}`)
+}
+
+function consultaElegiblePostEncuesta(
+  fecha: string,
+  hora: string,
+  horasPost: number,
+  ahora = new Date(),
+): boolean {
+  const consultaAt = consultaDateTime(fecha, hora)
+  if (Number.isNaN(consultaAt.getTime())) return false
+  const enviarDesde = new Date(consultaAt.getTime() + horasPost * 3_600_000)
+  const ventanaMs = 12 * 3_600_000
+  return ahora >= enviarDesde && (ahora.getTime() - enviarDesde.getTime()) < ventanaMs
+}
+
+async function consultasElegiblesPostConsulta(
+  supabase: SupabaseClient,
+  regla: PromocionRegla,
+): Promise<{ consulta_id: number; paciente_id: number }[]> {
+  const horas = regla.horas_post_consulta ?? 24
+
+  let cq = supabase
+    .from('consultas')
+    .select('id, paciente_id, fecha, hora, sucursal_id, estado')
+    .in('estado', ['FINALIZADO', 'PAGADO'])
+    .order('fecha', { ascending: false })
+    .limit(500)
+
+  if (regla.sucursal_id) cq = cq.eq('sucursal_id', regla.sucursal_id)
+
+  const { data: consultas, error } = await cq
+  if (error) throw new Error(error.message)
+
+  const { data: yaEnviadas } = await supabase
+    .from('promocion_regla_consulta_envios')
+    .select('consulta_id')
+    .eq('regla_id', regla.id)
+
+  const omitidas = new Set((yaEnviadas ?? []).map(r => r.consulta_id))
+  const ahora = new Date()
+
+  return (consultas ?? [])
+    .filter(c =>
+      !omitidas.has(c.id)
+      && consultaElegiblePostEncuesta(c.fecha, c.hora, horas, ahora),
+    )
+    .map(c => ({ consulta_id: c.id, paciente_id: c.paciente_id }))
 }
 
 async function ultimaActividadPacientes(
@@ -104,9 +158,35 @@ export async function resolverPacientesRegla(
       const ultima = actividad.get(p.id)
       return !ultima || ultima < corte
     })
+  } else if (regla.tipo_disparador === 'post_consulta') {
+    const elegibles = await consultasElegiblesPostConsulta(supabase, regla)
+    const ids = new Set(elegibles.map(e => e.paciente_id))
+    lista = lista.filter(p => ids.has(p.id))
   }
 
   return lista
+}
+
+export async function resolverPacientesReglaPostConsulta(
+  supabase: SupabaseClient,
+  regla: PromocionRegla,
+): Promise<{ pacientes: PacienteAudiencia[]; consultas: { consulta_id: number; paciente_id: number }[] }> {
+  const consultas = await consultasElegiblesPostConsulta(supabase, regla)
+  if (consultas.length === 0) return { pacientes: [], consultas: [] }
+
+  const ids = [...new Set(consultas.map(c => c.paciente_id))]
+  let q = supabase
+    .from('pacientes')
+    .select('id, codigo, nombre, apellido1, apellido2, celular, telefono, correo, activo')
+    .eq('activo', true)
+    .in('id', ids)
+
+  if (regla.sucursal_id) q = q.eq('sucursal_id', regla.sucursal_id)
+
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+
+  return { pacientes: (data ?? []) as PacienteAudiencia[], consultas }
 }
 
 async function yaEjecutadaHoy(supabase: SupabaseClient, reglaId: number): Promise<boolean> {
@@ -142,14 +222,26 @@ export async function procesarReglasPromociones(
       errores.push(`Regla ${regla.id}: promoción inactiva`)
       continue
     }
-    if (await yaEjecutadaHoy(supabase, regla.id)) continue
+    if (await yaEjecutadaHoy(supabase, regla.id) && regla.tipo_disparador !== 'post_consulta') continue
 
     try {
-      const pacientes = await resolverPacientesRegla(supabase, regla)
+      let pacientes: PacienteAudiencia[] = []
+      let consultasPost: { consulta_id: number; paciente_id: number }[] = []
+
+      if (regla.tipo_disparador === 'post_consulta') {
+        const res = await resolverPacientesReglaPostConsulta(supabase, regla)
+        pacientes = res.pacientes
+        consultasPost = res.consultas
+      } else {
+        pacientes = await resolverPacientesRegla(supabase, regla)
+      }
+
       if (pacientes.length === 0) {
-        await supabase.from('promocion_regla_ejecuciones').insert({
-          regla_id: regla.id, fecha: hoy, total_destinatarios: 0,
-        })
+        if (regla.tipo_disparador !== 'post_consulta') {
+          await supabase.from('promocion_regla_ejecuciones').insert({
+            regla_id: regla.id, fecha: hoy, total_destinatarios: 0,
+          })
+        }
         continue
       }
 
@@ -174,8 +266,16 @@ export async function procesarReglasPromociones(
         continue
       }
 
-      const etiqueta = regla.tipo_disparador === 'cumpleanos' ? 'Cumpleaños' : 'Inactivos'
-      const proveedorAuto = regla.modo_envio === 'automatico'
+      const etiqueta = regla.tipo_disparador === 'cumpleanos'
+        ? 'Cumpleaños'
+        : regla.tipo_disparador === 'post_consulta'
+          ? 'Post consulta'
+          : 'Inactivos'
+
+      const forzarAsistido = regla.tipo_disparador === 'post_consulta'
+        || esEncuesta(regla.promocion!)
+      const modoEnvio = forzarAsistido ? 'asistido' : regla.modo_envio
+      const proveedorAuto = modoEnvio === 'automatico'
         ? proveedorAutomaticoPorDefecto()
         : 'asistido'
 
@@ -185,20 +285,21 @@ export async function procesarReglasPromociones(
           promocion_id: regla.promocion_id,
           nombre: `Auto — ${etiqueta} — ${regla.nombre}`,
           canal: regla.canal,
-          modo_envio: regla.modo_envio,
+          modo_envio: modoEnvio,
           proveedor_envio: proveedorAuto,
-          estado: regla.modo_envio === 'automatico' ? 'en_proceso' : 'lista_envio',
+          estado: modoEnvio === 'automatico' ? 'en_proceso' : 'lista_envio',
           filtro_audiencia: {
             tipo: 'manual',
             paciente_ids: pacientes.map(p => p.id),
             automatico_regla: regla.tipo_disparador,
+            consulta_ids: consultasPost.map(c => c.consulta_id),
           },
           mensaje_personalizado: mensajeBase,
           plantilla_id: regla.plantilla_id ?? null,
           regla_id: regla.id,
           total_destinatarios: filasEnvio.length,
           sucursal_id: regla.sucursal_id,
-          iniciada_at: regla.modo_envio === 'automatico' ? new Date().toISOString() : null,
+          iniciada_at: modoEnvio === 'automatico' ? new Date().toISOString() : null,
         })
         .select('id')
         .single()
@@ -209,12 +310,22 @@ export async function procesarReglasPromociones(
       const { error: errE } = await supabase.from('promocion_envios').insert(inserts)
       if (errE) throw errE
 
-      await supabase.from('promocion_regla_ejecuciones').insert({
-        regla_id: regla.id,
-        campana_id: campana.id,
-        fecha: hoy,
-        total_destinatarios: filasEnvio.length,
-      })
+      if (regla.tipo_disparador === 'post_consulta' && consultasPost.length > 0) {
+        await supabase.from('promocion_regla_consulta_envios').insert(
+          consultasPost.map(c => ({
+            regla_id: regla.id,
+            consulta_id: c.consulta_id,
+            campana_id: campana.id,
+          })),
+        )
+      } else {
+        await supabase.from('promocion_regla_ejecuciones').insert({
+          regla_id: regla.id,
+          campana_id: campana.id,
+          fecha: hoy,
+          total_destinatarios: filasEnvio.length,
+        })
+      }
 
       campanasCreadas++
       destinatarios += filasEnvio.length

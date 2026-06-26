@@ -320,7 +320,18 @@ export default function CajaClient({
 
   const supabase = sb()
 
+  const MSG_CIERRE_SIN_FACTURA =
+    '¿Está seguro de cerrar sin emitir factura fiscal?\n\n' +
+    'El cobro ya quedó registrado en caja. Si cierra sin facturar, la venta puede quedar pendiente en el orden cronológico de facturación.\n\n' +
+    'Deberá emitir la factura después desde el módulo Facturación.\n\n' +
+    '¿Desea cerrar sin facturar?'
+
+  function confirmarCierreSinFacturar(): boolean {
+    return window.confirm(MSG_CIERRE_SIN_FACTURA)
+  }
+
   function cerrarFlujoFacturaVentaRapida() {
+    if (ventaRapidaCobro && !factImpresaVentaRapida && !confirmarCierreSinFacturar()) return
     setVentaRapidaCobro(null)
     setModalFacturaVentaRapida(false)
     setFactImpresaVentaRapida(null)
@@ -1195,6 +1206,7 @@ export default function CajaClient({
 
   /* ── cerrar modal cobro limpiamente ── */
   function cerrarModalCobro() {
+    if (cobroExitoso && !factImpresa && !confirmarCierreSinFacturar()) return
     setModalCobro(false)
     setConsultaCobro(null)
     setCobroExitoso(null)
@@ -1228,6 +1240,7 @@ export default function CajaClient({
   }
 
   function cerrarModalCobroLab() {
+    if (labCobroExitoso && !factImpresa && !confirmarCierreSinFacturar()) return
     setModalCobroLab(false)
     setLabGrupoCobro(null)
     setLabCobroExitoso(null)
@@ -2818,7 +2831,9 @@ export default function CajaClient({
             )}
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
               <p className="text-sm font-semibold text-amber-800 mb-1">¿Desea emitir factura fiscal?</p>
-              <p className="text-xs text-amber-600">Puede facturar ahora o hacerlo después desde el módulo de Facturación.</p>
+              <p className="text-xs text-amber-600">
+                El cobro ya quedó en caja. Si cierra sin facturar, deberá emitir la factura después desde Facturación para no afectar el orden cronológico.
+              </p>
               {sucursalActiva
                 ? <p className="text-xs text-amber-700 mt-1 font-medium">📍 Sucursal: {sucursalActiva.nombre}</p>
                 : <p className="text-xs text-red-600 mt-1 font-semibold">⚠️ Sin sucursal asignada — no podrá facturar.</p>
@@ -3467,7 +3482,7 @@ export default function CajaClient({
       )}
 
       {/* ══════════ MODAL COBRO LABORATORIO DIRECTO ══════════ */}
-      {modalCobroLab && labGrupoCobro && (() => {
+      {modalCobroLab && labGrupoCobro && !labCobroExitoso && !factImpresa && (() => {
         const det = calcularDescuentoEdad(labGrupoCobro.paciente?.fecha_nac, labGrupoCobro.total, sucursalActiva)
         const detLabDesc = det
         const elegibleDescLab = !detLabDesc.fechaSospechosa && detLabDesc.pctDesc > 0
@@ -3753,7 +3768,9 @@ export default function CajaClient({
             )}
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
               <p className="text-sm font-semibold text-amber-800 mb-1">¿Desea emitir factura fiscal?</p>
-              <p className="text-xs text-amber-600">Puede facturar ahora o hacerlo después desde el módulo de Facturación.</p>
+              <p className="text-xs text-amber-600">
+                El cobro ya quedó en caja. Si cierra sin facturar, deberá emitir la factura después desde Facturación para no afectar el orden cronológico.
+              </p>
               {sucursalActiva
                 ? <p className="text-xs text-amber-700 mt-1 font-medium">📍 Sucursal: {sucursalActiva.nombre}</p>
                 : <p className="text-xs text-red-600 mt-1 font-semibold">⚠️ Sin sucursal asignada — no podrá facturar. Configura tu sucursal en Configuración → Usuarios.</p>
@@ -3881,7 +3898,7 @@ export default function CajaClient({
       )}
 
       {/* ══════════ MODAL COBRO DE CONSULTA ══════════ */}
-      {modalCobro && consultaCobro && (() => {
+      {modalCobro && consultaCobro && !cobroExitoso && !factImpresa && (() => {
         const det = calcularTotalConsulta(consultaCobro)
         const pctMax = det.pctDesc
         const elegibleDesc = !det.fechaSospechosa && pctMax > 0
@@ -3916,7 +3933,7 @@ export default function CajaClient({
             size="full"
             accent="green"
             icon={Stethoscope}
-            onClose={() => { setModalCobro(false); setConsultaCobro(null) }}
+            onClose={cerrarModalCobro}
             footer={(
               <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3">
                 <button type="button" onClick={cerrarModalCobro}
@@ -4183,7 +4200,9 @@ export default function CajaClient({
             )}
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
               <p className="text-sm font-semibold text-amber-800 mb-1">¿Desea emitir factura fiscal?</p>
-              <p className="text-xs text-amber-600">Puede facturar ahora o hacerlo después desde el módulo de Facturación.</p>
+              <p className="text-xs text-amber-600">
+                El cobro ya quedó en caja. Si cierra sin facturar, deberá emitir la factura después desde Facturación para no afectar el orden cronológico.
+              </p>
               {sucursalActiva
                 ? <p className="text-xs text-amber-700 mt-1 font-medium">📍 Sucursal: {sucursalActiva.nombre}</p>
                 : <p className="text-xs text-red-600 mt-1 font-semibold">⚠️ Sin sucursal asignada — no podrá facturar. Configura tu sucursal en Configuración → Usuarios.</p>

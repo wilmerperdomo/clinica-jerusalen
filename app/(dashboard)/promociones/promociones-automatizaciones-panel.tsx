@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
-import { Plus, Pencil, Trash2, Cake, UserX, Zap } from 'lucide-react'
+import { Plus, Pencil, Trash2, Cake, UserX, Zap, ClipboardList } from 'lucide-react'
 import ResponsiveModal from '@/components/responsive-modal'
-import { CANAL_CFG, type Promocion } from '@/lib/promociones-utils'
+import { CANAL_CFG, esEncuesta, type Promocion } from '@/lib/promociones-utils'
 import type { PromocionPlantilla } from '@/lib/promociones-plantillas'
 import type { PromocionRegla, TipoDisparadorRegla } from '@/lib/promociones-reglas'
 
@@ -26,17 +26,19 @@ function sb() {
 const DISPARADOR_CFG: Record<TipoDisparadorRegla, { label: string; icon: typeof Cake; desc: string }> = {
   cumpleanos: { label: 'Cumpleaños', icon: Cake, desc: 'Envía el día del cumpleaños (o días antes)' },
   inactivo: { label: 'Pacientes inactivos', icon: UserX, desc: 'Sin consulta ni laboratorio en X meses' },
+  post_consulta: { label: 'Post consulta', icon: ClipboardList, desc: 'Encuesta X horas después de consulta finalizada' },
 }
 
 const REGLA_VACIA = {
   nombre: '',
-  tipo_disparador: 'cumpleanos' as TipoDisparadorRegla,
+  tipo_disparador: 'post_consulta' as TipoDisparadorRegla,
   promocion_id: 0,
   plantilla_id: null as number | null,
   canal: 'ambos' as const,
-  modo_envio: 'automatico' as const,
+  modo_envio: 'asistido' as const,
   dias_anticipacion: 0,
   meses_inactivo: 6,
+  horas_post_consulta: 24,
   activa: true,
   sucursal_id: null as number | null,
 }
@@ -66,12 +68,18 @@ export default function PromocionesAutomatizacionesPanel({
   useEffect(() => { void cargar() }, [cargar])
 
   const promosActivas = promociones.filter(p => p.activa)
+  const encuestasActivas = promosActivas.filter(p => esEncuesta(p))
 
   function abrirNueva() {
+    const primeraEncuesta = encuestasActivas[0]
     setEdit(null)
     setForm({
       ...REGLA_VACIA,
-      promocion_id: promosActivas[0]?.id ?? 0,
+      nombre: primeraEncuesta ? 'Encuesta post-consulta' : '',
+      tipo_disparador: 'post_consulta',
+      promocion_id: primeraEncuesta?.id ?? promosActivas[0]?.id ?? 0,
+      modo_envio: 'asistido',
+      horas_post_consulta: 24,
       sucursal_id: esSuperAdmin ? null : sucursalId ?? null,
     })
     setModal(true)
@@ -87,7 +95,8 @@ export default function PromocionesAutomatizacionesPanel({
       canal: r.canal,
       modo_envio: r.modo_envio,
       dias_anticipacion: r.dias_anticipacion,
-      meses_inactivo: r.meses_inactivo,
+      meses_inactivo: r.meses_inactivo ?? 6,
+      horas_post_consulta: r.horas_post_consulta ?? 24,
       activa: r.activa,
       sucursal_id: r.sucursal_id ?? null,
     })
@@ -107,9 +116,10 @@ export default function PromocionesAutomatizacionesPanel({
         promocion_id: form.promocion_id,
         plantilla_id: form.plantilla_id,
         canal: form.canal,
-        modo_envio: form.modo_envio,
+        modo_envio: form.tipo_disparador === 'post_consulta' ? 'asistido' : form.modo_envio,
         dias_anticipacion: form.dias_anticipacion,
         meses_inactivo: form.meses_inactivo,
+        horas_post_consulta: form.horas_post_consulta,
         activa: form.activa,
         sucursal_id: form.sucursal_id,
         ...(edit ? {} : { creado_por: user?.id ?? null }),
@@ -145,7 +155,7 @@ export default function PromocionesAutomatizacionesPanel({
             <Zap className="w-4 h-4" /> Automatizaciones diarias
           </p>
           <p className="text-xs text-emerald-700 mt-1">
-            El cron (9:00 AM) evalúa cumpleaños e inactivos y crea campañas. También puede ejecutar manualmente.
+            Evalúa cumpleaños, inactivos y encuestas post-consulta. Las encuestas se crean en modo asistido para enviar una por una.
           </p>
         </div>
         {onProcesar && (
@@ -166,7 +176,7 @@ export default function PromocionesAutomatizacionesPanel({
         </div>
         {reglas.length === 0 ? (
           <p className="text-center py-12 text-gray-400 text-sm px-4">
-            Configure reglas para felicitar cumpleaños o reactivar pacientes inactivos.
+            Configure reglas para encuestas post-consulta, cumpleaños o pacientes inactivos.
           </p>
         ) : (
           <div className="divide-y">
@@ -189,8 +199,10 @@ export default function PromocionesAutomatizacionesPanel({
                     <p className="text-[10px] text-gray-400 mt-1">
                       {r.tipo_disparador === 'cumpleanos'
                         ? `Anticipación: ${r.dias_anticipacion} día(s)`
-                        : `Inactivo ≥ ${r.meses_inactivo} meses`}
-                      {' · '}{r.modo_envio === 'automatico' ? 'Envío automático' : 'Lista asistida'}
+                        : r.tipo_disparador === 'post_consulta'
+                          ? `${r.horas_post_consulta ?? 24} h después de consulta`
+                          : `Inactivo ≥ ${r.meses_inactivo} meses`}
+                      {' · '}{r.modo_envio === 'automatico' ? 'Envío automático' : 'Cola asistida (uno por uno)'}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -230,11 +242,18 @@ export default function PromocionesAutomatizacionesPanel({
               <input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
                 className="w-full border rounded-xl px-3 py-2 mt-1" placeholder="Ej. Felicitación cumpleaños" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {(Object.keys(DISPARADOR_CFG) as TipoDisparadorRegla[]).map(t => {
                 const c = DISPARADOR_CFG[t]
                 return (
-                  <button key={t} type="button" onClick={() => setForm(f => ({ ...f, tipo_disparador: t }))}
+                  <button key={t} type="button" onClick={() => setForm(f => ({
+                    ...f,
+                    tipo_disparador: t,
+                    modo_envio: t === 'post_consulta' ? 'asistido' : f.modo_envio,
+                    promocion_id: t === 'post_consulta'
+                      ? (encuestasActivas[0]?.id ?? f.promocion_id)
+                      : f.promocion_id,
+                  }))}
                     className={`p-3 rounded-xl border text-left ${form.tipo_disparador === t ? 'border-[#003366] bg-rose-50' : ''}`}>
                     <c.icon className="w-4 h-4 text-rose-500 mb-1" />
                     <p className="font-semibold text-xs">{c.label}</p>
@@ -251,6 +270,23 @@ export default function PromocionesAutomatizacionesPanel({
                   className="w-full border rounded-xl px-3 py-2 mt-1" />
               </div>
             )}
+            {form.tipo_disparador === 'post_consulta' && (
+              <div>
+                <label className="text-xs text-gray-600">Horas después de la consulta</label>
+                <select value={form.horas_post_consulta}
+                  onChange={e => setForm(f => ({ ...f, horas_post_consulta: Number(e.target.value), modo_envio: 'asistido' }))}
+                  className="w-full border rounded-xl px-3 py-2 mt-1">
+                  <option value={2}>2 horas</option>
+                  <option value={6}>6 horas</option>
+                  <option value={12}>12 horas</option>
+                  <option value={24}>24 horas (recomendado)</option>
+                  <option value={48}>48 horas</option>
+                </select>
+                <p className="text-[10px] text-indigo-700 mt-1 bg-indigo-50 border border-indigo-100 rounded-lg p-2">
+                  Se crea una cola de envío asistido. Usted abre WhatsApp y envía uno por uno (no requiere Evolution API).
+                </p>
+              </div>
+            )}
             {form.tipo_disparador === 'inactivo' && (
               <div>
                 <label className="text-xs text-gray-600">Meses sin actividad</label>
@@ -265,14 +301,21 @@ export default function PromocionesAutomatizacionesPanel({
               </div>
             )}
             <div>
-              <label className="text-xs text-gray-600">Promoción a enviar</label>
+              <label className="text-xs text-gray-600">
+                {form.tipo_disparador === 'post_consulta' ? 'Encuesta a enviar' : 'Promoción a enviar'}
+              </label>
               <select value={form.promocion_id}
                 onChange={e => setForm(f => ({ ...f, promocion_id: Number(e.target.value) }))}
                 className="w-full border rounded-xl px-3 py-2 mt-1">
-                {promosActivas.map(p => (
-                  <option key={p.id} value={p.id}>{p.titulo}</option>
+                {(form.tipo_disparador === 'post_consulta' ? encuestasActivas : promosActivas).map(p => (
+                  <option key={p.id} value={p.id}>
+                    {esEncuesta(p) ? `📋 ${p.titulo}` : p.titulo}
+                  </option>
                 ))}
               </select>
+              {form.tipo_disparador === 'post_consulta' && encuestasActivas.length === 0 && (
+                <p className="text-[10px] text-amber-700 mt-1">Cree primero una encuesta en el catálogo.</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-600">Plantilla de mensaje (opcional)</label>
@@ -297,10 +340,13 @@ export default function PromocionesAutomatizacionesPanel({
               </div>
               <div>
                 <label className="text-xs text-gray-600">Modo</label>
-                <select value={form.modo_envio} onChange={e => setForm(f => ({ ...f, modo_envio: e.target.value as typeof form.modo_envio }))}
-                  className="w-full border rounded-xl px-3 py-2 mt-1">
-                  <option value="automatico">Automático (API)</option>
-                  <option value="asistido">Asistido (revisar antes)</option>
+                <select
+                  value={form.modo_envio}
+                  disabled={form.tipo_disparador === 'post_consulta'}
+                  onChange={e => setForm(f => ({ ...f, modo_envio: e.target.value as typeof form.modo_envio }))}
+                  className="w-full border rounded-xl px-3 py-2 mt-1 disabled:bg-gray-50">
+                  <option value="asistido">Asistido — uno por uno (recomendado)</option>
+                  <option value="automatico">Automático (requiere API)</option>
                 </select>
               </div>
             </div>

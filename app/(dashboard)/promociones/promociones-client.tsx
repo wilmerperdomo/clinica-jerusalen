@@ -559,7 +559,7 @@ export default function PromocionesClient({
       alert('Seleccione al menos un contacto de la lista.')
       return
     }
-    const proveedor = formCampana.proveedor_envio
+    const proveedor = esEncuesta(promoCampana) ? 'asistido' as ProveedorEnvio : formCampana.proveedor_envio
     const automatico = proveedor !== 'asistido'
     if (automatico) {
       const canal = formCampana.canal
@@ -1762,6 +1762,15 @@ export default function PromocionesClient({
           )}
           {pasoCampana === 3 && (
             <div className="space-y-4">
+              {esEncuesta(promoCampana) ? (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
+                  <p className="font-semibold mb-1">Envío asistido — uno por uno</p>
+                  <p className="text-xs leading-relaxed">
+                    Las encuestas se envían de forma asistida: usted abre WhatsApp o correo, envía el mensaje y marca
+                    &quot;Enviado y siguiente&quot;. No requiere Evolution API ni WhatsApp oficial de Meta.
+                  </p>
+                </div>
+              ) : (
               <div>
                 <label className="text-xs font-semibold text-gray-600 mb-2 block">Proveedor de envío</label>
                 <div className="space-y-2">
@@ -1803,6 +1812,7 @@ export default function PromocionesClient({
                   })}
                 </div>
               </div>
+              )}
               <label className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border">
                 <input type="checkbox" checked={formCampana.programado}
                   onChange={e => setFormCampana(p => ({ ...p, programado: e.target.checked }))} />

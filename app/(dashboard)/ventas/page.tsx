@@ -3,6 +3,7 @@ import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { PACIENTE_BUSQUEDA_SELECT } from '@/lib/buscar-pacientes'
 import { agruparLabPorCobrar, type LabOrdenCobroRow } from '@/lib/lab-cobro-utils'
 import { buildMembresiasMap } from '@/lib/membresia-utils'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import CajaClient from './caja-client'
 
 export const dynamic = 'force-dynamic'
@@ -15,7 +16,9 @@ export default async function VentasPage() {
   let sucursalId = perfilAuth.sucursalId
   // dummy user object for compat
   const user = { id: uid }
-  const hoy = new Date().toISOString().split('T')[0]
+  // Fecha local de Honduras (UTC-6). No usar toISOString() porque en UTC
+  // la fecha cambia a las 6 PM hora local y la caja abierta "desaparecería".
+  const hoy = fechaHoyHN()
 
 
   async function getSucursales() {
