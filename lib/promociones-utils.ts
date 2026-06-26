@@ -222,10 +222,10 @@ export function mensajePromocion(
     promo.subtitulo ? `_${promo.subtitulo}_` : '',
     oferta ?? '',
     promo.descripcion ? promo.descripcion : '',
-    promo.imagen_url ? `\n🖼️ Ver promoción: ${promo.imagen_url}` : '',
     '',
     `— ${BRAND.nombre}`,
     'Responda este mensaje o llámenos para más información. ¡Gracias!',
+    promo.imagen_url ? `\n${promo.imagen_url}` : '',
   ]
   return lineas.filter(l => l !== '').join('\n')
 }

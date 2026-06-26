@@ -6,7 +6,7 @@ import { Megaphone, Plus, Image as ImageIcon, Calendar, Send, Users,
   MessageCircle, Mail, Sparkles, Trash2, Pencil, Play, Clock,
   CheckCircle2, ChevronRight, ChevronLeft, RefreshCw,
   AlertCircle, Target, Zap, BookUser, Phone, AtSign, Search,
-  FileText, BarChart3, Cake, Reply,
+  FileText, BarChart3, Cake, Reply, Copy, Download, SkipForward,
 } from 'lucide-react'
 import PromocionesPlantillasPanel from './promociones-plantillas-panel'
 import PromocionesReportesPanel from './promociones-reportes-panel'
@@ -24,7 +24,7 @@ import {
 import {
   AUDIENCIA_OPCIONES, CANAL_CFG, CATEGORIAS_SERVICIO_PROMO, ESTADO_CAMPANA_CFG,
   campanaVencidaProgramacion, cfgCategoriaServicio, claveDestinatario, destinatarioAContacto,
-  fmtVigencia, linkEnvioPromocion, serviciosParaCategoria,
+  fmtVigencia, linkEnvioPromocion, mensajePromocion, serviciosParaCategoria,
   type Campana, type CanalCampana, type CategoriaServicioPromo, type DestinatarioPromo,
   type EnvioRegistro, type FiltroAudiencia, type Promocion, type PromocionContacto,
   type ServicioPromo, type TipoAudiencia,
@@ -64,6 +64,35 @@ function mensajeError(e: unknown): string {
       .join(' · ') || 'desconocido'
   }
   return typeof e === 'string' ? e : 'desconocido'
+}
+
+async function copiarImagenPortapapeles(url: string): Promise<void> {
+  const res = await fetch(url, { mode: 'cors' })
+  const blob = await res.blob()
+  const bitmap = await createImageBitmap(blob)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('No se pudo procesar la imagen')
+  ctx.drawImage(bitmap, 0, 0)
+  const pngBlob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+  if (!pngBlob) throw new Error('No se pudo convertir la imagen')
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+}
+
+async function descargarImagen(url: string, nombre: string): Promise<void> {
+  const res = await fetch(url, { mode: 'cors' })
+  const blob = await res.blob()
+  const objUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objUrl
+  const ext = blob.type.split('/')[1] || 'jpg'
+  a.download = `${nombre.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.${ext}`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(objUrl), 5000)
 }
 
 const PROMO_VACIA: Omit<Promocion, 'id' | 'created_at'> = {
@@ -128,6 +157,7 @@ export default function PromocionesClient({
 
   const [modalEnvio, setModalEnvio] = useState(false)
   const [campanaEnvio, setCampanaEnvio] = useState<Campana | null>(null)
+  const [estadoImagen, setEstadoImagen] = useState<'idle' | 'copiando' | 'copiado' | 'error'>('idle')
   const [envios, setEnvios] = useState<EnvioRegistro[]>([])
   const [indiceEnvio, setIndiceEnvio] = useState(0)
 
@@ -651,6 +681,7 @@ export default function PromocionesClient({
 
     const siguiente = actualizados.findIndex((e, i) => i > indiceEnvio && e.estado === 'pendiente')
     if (siguiente >= 0) {
+      setEstadoImagen('idle')
       setIndiceEnvio(siguiente)
     } else if (!actualizados.some(e => e.estado === 'pendiente')) {
       await sb.from('promocion_campanas').update({
@@ -693,6 +724,55 @@ export default function PromocionesClient({
     setEnvios(prev => prev.map((e, i) =>
       i === indiceEnvio ? { ...e, respondio: true, respondio_at: ahora } : e,
     ))
+  }
+
+  const textoMensajeActual = useMemo(() => {
+    const dest = envioActual?.paciente ?? envioActual?.contacto
+    if (!dest || !promoEnvio) return ''
+    return mensajePromocion(promoEnvio, destinatarioAContacto(dest), campanaEnvio?.mensaje_personalizado)
+  }, [envioActual, promoEnvio, campanaEnvio])
+
+  function irAEnvio(indice: number) {
+    setEstadoImagen('idle')
+    setIndiceEnvio(indice)
+  }
+
+  async function copiarMensajeActual() {
+    if (!textoMensajeActual) return
+    try {
+      await navigator.clipboard.writeText(textoMensajeActual)
+      setEstadoImagen('idle')
+    } catch {
+      alert('No se pudo copiar el mensaje.')
+    }
+  }
+
+  async function copiarImagenActual() {
+    if (!promoEnvio?.imagen_url) return
+    setEstadoImagen('copiando')
+    try {
+      await copiarImagenPortapapeles(promoEnvio.imagen_url)
+      setEstadoImagen('copiado')
+      setTimeout(() => setEstadoImagen('idle'), 2500)
+    } catch {
+      setEstadoImagen('error')
+      try {
+        await descargarImagen(promoEnvio.imagen_url, promoEnvio.titulo || 'promocion')
+        alert('No se pudo copiar al portapapeles, pero se descargó la imagen. Adjúntela manualmente en WhatsApp.')
+      } catch {
+        alert('No se pudo copiar ni descargar la imagen. Verifique su conexión.')
+      }
+      setTimeout(() => setEstadoImagen('idle'), 2500)
+    }
+  }
+
+  async function descargarImagenActual() {
+    if (!promoEnvio?.imagen_url) return
+    try {
+      await descargarImagen(promoEnvio.imagen_url, promoEnvio.titulo || 'promocion')
+    } catch {
+      alert('No se pudo descargar la imagen.')
+    }
   }
 
   async function cancelarCampana(id: number) {
@@ -1597,14 +1677,16 @@ export default function PromocionesClient({
       {/* Modal envío asistido */}
       {modalEnvio && campanaEnvio && envioActual && promoEnvio && (
         <ResponsiveModal
-          title="Envío asistido"
+          title="Cola de envío asistido"
           subtitle={`${campanaEnvio.nombre} · ${indiceEnvio + 1} de ${envios.length}`}
           onClose={() => setModalEnvio(false)}
-          size="md"
+          size="lg"
           footer={
             <div className="flex flex-wrap justify-between gap-2 w-full">
               <button type="button" onClick={() => marcarEnvio('omitido')}
-                className="px-3 py-2 text-xs border rounded-xl text-gray-500">Omitir</button>
+                className="px-3 py-2 text-xs border rounded-xl text-gray-500 flex items-center gap-1">
+                <SkipForward className="w-3.5 h-3.5" /> Omitir
+              </button>
               <div className="flex gap-2 flex-wrap">
                 <button type="button" onClick={() => marcarRespondio()}
                   disabled={envioActual.respondio}
@@ -1618,51 +1700,143 @@ export default function PromocionesClient({
                 </button>
                 <button type="button" onClick={() => marcarEnvio('enviado')}
                   className="px-4 py-2.5 bg-[#003366] text-white rounded-xl text-sm font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4" /> Marcar enviado
+                  <CheckCircle2 className="w-4 h-4" /> Enviado y siguiente
                 </button>
               </div>
             </div>
           }
         >
-          <div className="space-y-4">
-            <div className="w-full bg-gray-100 rounded-full h-2">
-              <div className="bg-emerald-500 h-2 rounded-full transition-all"
-                style={{ width: `${((envios.filter(e => e.estado === 'enviado').length) / envios.length) * 100}%` }} />
+          <div className="grid md:grid-cols-[1fr_240px] gap-4">
+            {/* Columna principal */}
+            <div className="space-y-4 min-w-0">
+              <div className="w-full bg-gray-100 rounded-full h-2">
+                <div className="bg-emerald-500 h-2 rounded-full transition-all"
+                  style={{ width: `${((envios.filter(e => e.estado === 'enviado').length) / envios.length) * 100}%` }} />
+              </div>
+
+              <div className="rounded-xl border p-4 bg-gradient-to-br from-rose-50 to-amber-50">
+                <p className="font-bold text-lg text-gray-900">
+                  {envioActual.paciente
+                    ? nombrePaciente(envioActual.paciente)
+                    : envioActual.contacto?.nombre ?? 'Destinatario'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {envioActual.paciente?.codigo ?? (envioActual.contacto ? 'Contacto externo' : '')}
+                </p>
+                <p className="text-sm mt-2 flex items-center gap-2">
+                  {envioActual.canal === 'whatsapp' ? <MessageCircle className="w-4 h-4 text-emerald-600" /> : <Mail className="w-4 h-4 text-sky-600" />}
+                  {envioActual.canal === 'whatsapp'
+                    ? (envioActual.paciente?.celular || envioActual.paciente?.telefono || envioActual.contacto?.celular || 'Sin teléfono')
+                    : (envioActual.paciente?.correo || envioActual.contacto?.correo || 'Sin correo')}
+                </p>
+              </div>
+
+              {/* Vista previa del mensaje */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-gray-600">Mensaje a enviar</label>
+                  <button type="button" onClick={copiarMensajeActual}
+                    className="text-[11px] text-[#003366] font-semibold flex items-center gap-1 hover:underline">
+                    <Copy className="w-3 h-3" /> Copiar texto
+                  </button>
+                </div>
+                <textarea readOnly value={textoMensajeActual} rows={6}
+                  className="w-full border rounded-xl px-3 py-2 text-xs bg-gray-50 resize-y text-gray-700" />
+              </div>
+
+              {/* Imagen de la promoción (solo WhatsApp) */}
+              {promoEnvio.imagen_url && envioActual.canal === 'whatsapp' && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                  <div className="flex gap-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={promoEnvio.imagen_url} alt={promoEnvio.titulo}
+                      className="w-20 h-20 object-cover rounded-lg border flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-emerald-900 mb-1">Adjuntar imagen</p>
+                      <p className="text-[11px] text-emerald-700 leading-snug mb-2">
+                        WhatsApp no permite adjuntar la imagen por enlace. Cópiela y péguela con
+                        <strong> Ctrl+V</strong> en el chat, o descárguela para adjuntarla.
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        <button type="button" onClick={copiarImagenActual}
+                          disabled={estadoImagen === 'copiando'}
+                          className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center gap-1 ${
+                            estadoImagen === 'copiado'
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-white border border-emerald-300 text-emerald-700'
+                          }`}>
+                          {estadoImagen === 'copiando'
+                            ? <><RefreshCw className="w-3 h-3 animate-spin" /> Copiando…</>
+                            : estadoImagen === 'copiado'
+                              ? <><CheckCircle2 className="w-3 h-3" /> ¡Copiada!</>
+                              : <><Copy className="w-3 h-3" /> Copiar imagen</>}
+                        </button>
+                        <button type="button" onClick={descargarImagenActual}
+                          className="px-3 py-1.5 text-[11px] font-bold rounded-lg bg-white border border-gray-300 text-gray-600 flex items-center gap-1">
+                          <Download className="w-3 h-3" /> Descargar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {envioActual.abierto_at && (
+                  <p className="text-xs text-violet-700">Abierto · {new Date(envioActual.abierto_at).toLocaleString('es-HN')}</p>
+                )}
+                {envioActual.respondio && (
+                  <p className="text-xs text-emerald-700">Respondió · {envioActual.respondio_at ? new Date(envioActual.respondio_at).toLocaleString('es-HN') : ''}</p>
+                )}
+                {envioActual.estado !== 'pendiente' && (
+                  <p className="text-xs text-amber-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Ya procesado: {envioActual.estado}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button type="button" disabled={indiceEnvio <= 0}
+                  onClick={() => irAEnvio(Math.max(0, indiceEnvio - 1))}
+                  className="flex-1 py-2 border rounded-xl text-xs disabled:opacity-40 flex items-center justify-center gap-1">
+                  <ChevronLeft className="w-4 h-4" /> Anterior
+                </button>
+                <button type="button" disabled={indiceEnvio >= envios.length - 1}
+                  onClick={() => irAEnvio(Math.min(envios.length - 1, indiceEnvio + 1))}
+                  className="flex-1 py-2 border rounded-xl text-xs disabled:opacity-40 flex items-center justify-center gap-1">
+                  Siguiente <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-            <div className="rounded-xl border p-4 bg-gradient-to-br from-rose-50 to-amber-50">
-              <p className="font-bold text-lg text-gray-900">
-                {envioActual.paciente
-                  ? nombrePaciente(envioActual.paciente)
-                  : envioActual.contacto?.nombre ?? 'Destinatario'}
+
+            {/* Cola lateral */}
+            <div className="md:border-l md:pl-4">
+              <p className="text-xs font-semibold text-gray-600 mb-2">
+                Cola ({envios.filter(e => e.estado === 'enviado').length}/{envios.length} enviados)
               </p>
-              <p className="text-xs text-gray-500">
-                {envioActual.paciente?.codigo ?? (envioActual.contacto ? 'Contacto externo' : '')}
-              </p>
-              <p className="text-sm mt-2 flex items-center gap-2">
-                {envioActual.canal === 'whatsapp' ? <MessageCircle className="w-4 h-4 text-emerald-600" /> : <Mail className="w-4 h-4 text-sky-600" />}
-                {envioActual.canal === 'whatsapp'
-                  ? (envioActual.paciente?.celular || envioActual.paciente?.telefono || envioActual.contacto?.celular || 'Sin teléfono')
-                  : (envioActual.paciente?.correo || envioActual.contacto?.correo || 'Sin correo')}
-              </p>
-            </div>
-            {envioActual.abierto_at && (
-              <p className="text-xs text-violet-700">Abierto · {new Date(envioActual.abierto_at).toLocaleString('es-HN')}</p>
-            )}
-            {envioActual.respondio && (
-              <p className="text-xs text-emerald-700">Respondió · {envioActual.respondio_at ? new Date(envioActual.respondio_at).toLocaleString('es-HN') : ''}</p>
-            )}
-            {envioActual.estado !== 'pendiente' && (
-              <p className="text-xs text-amber-700 flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Ya procesado: {envioActual.estado}
-              </p>
-            )}
-            <div className="flex gap-2">
-              <button type="button" disabled={indiceEnvio <= 0}
-                onClick={() => setIndiceEnvio(i => Math.max(0, i - 1))}
-                className="flex-1 py-2 border rounded-xl text-xs disabled:opacity-40">← Anterior</button>
-              <button type="button" disabled={indiceEnvio >= envios.length - 1}
-                onClick={() => setIndiceEnvio(i => Math.min(envios.length - 1, i + 1))}
-                className="flex-1 py-2 border rounded-xl text-xs disabled:opacity-40">Siguiente →</button>
+              <div className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
+                {envios.map((e, i) => {
+                  const nombre = e.paciente ? nombrePaciente(e.paciente) : e.contacto?.nombre ?? 'Destinatario'
+                  const activo = i === indiceEnvio
+                  return (
+                    <button key={e.id} type="button" onClick={() => irAEnvio(i)}
+                      className={`w-full text-left px-2.5 py-2 rounded-lg text-xs flex items-center gap-2 transition ${
+                        activo ? 'bg-[#003366] text-white' : 'hover:bg-gray-100 text-gray-700'
+                      }`}>
+                      {e.estado === 'enviado'
+                        ? <CheckCircle2 className={`w-3.5 h-3.5 flex-shrink-0 ${activo ? 'text-emerald-300' : 'text-emerald-600'}`} />
+                        : e.estado === 'pendiente'
+                          ? <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${activo ? 'text-amber-300' : 'text-amber-500'}`} />
+                          : <SkipForward className={`w-3.5 h-3.5 flex-shrink-0 ${activo ? 'text-gray-300' : 'text-gray-400'}`} />}
+                      <span className="flex-1 min-w-0 truncate">{nombre}</span>
+                      {e.respondio && <Reply className={`w-3 h-3 flex-shrink-0 ${activo ? 'text-violet-300' : 'text-violet-500'}`} />}
+                      {e.canal === 'whatsapp'
+                        ? <MessageCircle className={`w-3 h-3 flex-shrink-0 ${activo ? 'text-emerald-300' : 'text-emerald-500'}`} />
+                        : <Mail className={`w-3 h-3 flex-shrink-0 ${activo ? 'text-sky-300' : 'text-sky-500'}`} />}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           </div>
         </ResponsiveModal>
