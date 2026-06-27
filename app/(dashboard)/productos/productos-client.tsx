@@ -29,13 +29,14 @@ const TIPO_CFG: Record<string, { color: string; bg: string; icon: React.ElementT
   'Insumo':      { color: 'text-amber-700',  bg: 'bg-amber-50 border-amber-200', icon: Beaker  },
 }
 
+// En Honduras los medicamentos están exentos de ISV.
 const FORM_VACIO = {
   codigo: '', nombre: '', nombre_generico: '', laboratorio: '',
   categoria: 'Medicamentos', unidad: 'Unidad', tipo: 'Medicamento',
   es_antibiotico: false, costo: '', precio_venta: '', stock_minimo: '5', activo: true,
   codigo_barra: '', principio_activo: '', concentracion: '', presentacion: '', marca: '',
-  requiere_receta: false, es_controlado: false, gravado: true, facturable: true,
-  precio_minimo: '', dias_reposicion: '7', isv_porcentaje: '15', proveedor_preferido_id: '',
+  requiere_receta: false, es_controlado: false, gravado: false, facturable: true,
+  precio_minimo: '', dias_reposicion: '7', isv_porcentaje: '0', proveedor_preferido_id: '',
 }
 
 function sb() {
@@ -162,6 +163,15 @@ export default function ProductosClient({
     const p = detalle
     setDetalle(null)
     abrirEditar(p)
+  }
+
+  // En Honduras los medicamentos son exentos de ISV; al cambiar el tipo
+  // ajustamos automáticamente gravado/ISV como ayuda (editable manualmente).
+  function cambiarTipo(nuevoTipo: string) {
+    setForm(p => {
+      const esMed = nuevoTipo === 'Medicamento'
+      return { ...p, tipo: nuevoTipo, gravado: !esMed, isv_porcentaje: esMed ? '0' : (p.gravado ? p.isv_porcentaje : '15') }
+    })
   }
 
   async function generarCodigo() {
@@ -519,7 +529,7 @@ export default function ProductosClient({
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
                   <select value={form.tipo}
-                    onChange={e => setForm(p => ({ ...p, tipo: e.target.value }))}
+                    onChange={e => cambiarTipo(e.target.value)}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none">
                     {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
@@ -662,10 +672,13 @@ export default function ProductosClient({
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">ISV</label>
                   <select value={form.isv_porcentaje}
-                    onChange={e => setForm(p => ({ ...p, isv_porcentaje: e.target.value }))}
+                    onChange={e => setForm(p => ({ ...p, isv_porcentaje: e.target.value, gravado: Number(e.target.value) > 0 }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none">
                     {ISV_OPCIONES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
+                  {form.tipo === 'Medicamento' && (
+                    <p className="text-[11px] text-emerald-600 mt-1">Medicamentos exentos de ISV en Honduras</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Días reposición</label>

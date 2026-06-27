@@ -62,4 +62,10 @@ $$;
 CREATE INDEX IF NOT EXISTS idx_prec_hist_producto
   ON producto_precio_historial (producto_id, created_at DESC);
 
+-- Honduras: medicamentos exentos de ISV
+UPDATE productos
+   SET gravado = FALSE, isv_porcentaje = 0
+ WHERE tipo = 'Medicamento'
+   AND (gravado IS DISTINCT FROM FALSE OR isv_porcentaje IS DISTINCT FROM 0);
+
 NOTIFY pgrst, 'reload schema';
