@@ -200,6 +200,10 @@ export default async function VentasPage() {
     sucursalId = sucursales[0].id
   }
 
+  const sucursalesCaja = (esAdmin || esSuperAdmin)
+    ? sucursales
+    : sucursales.filter(s => s.id === sucursalId)
+
   const perfil = {
     nombre: nombre.split(' ')[0] ?? '',
     apellido: nombre.split(' ').slice(1).join(' ') ?? '',
@@ -211,7 +215,7 @@ export default async function VentasPage() {
       sesionActual={sesionActual}
       conceptos={conceptos || []}
       pacientes={pacientes || []}
-      sucursales={sucursales}
+      sucursales={sucursalesCaja}
       perfil={perfil}
       userId={user?.id || ''}
       esAdmin={esAdmin || esSuperAdmin}

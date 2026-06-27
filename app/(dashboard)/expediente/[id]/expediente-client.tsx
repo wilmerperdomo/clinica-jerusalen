@@ -12,6 +12,7 @@ import { etiquetaEstadoLab, claseBadgeEstadoLab, inferirEstadoLab } from '@/lib/
 import { imprimirResultadoLaboratorio, linkWhatsAppResultado } from '@/lib/lab-resultado-print'
 import { imprimirRecetaMedica, edadPacientePrint } from '@/lib/consulta-documentos-print'
 import { imprimirExpedienteClinico } from '@/lib/expediente-print'
+import { imprimirHistoriaClinica } from '@/lib/historia-clinica-print'
 import ContactoPacienteButtons from '@/components/contacto-paciente-buttons'
 import { BRAND } from '@/lib/brand'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost } from '@/components/module-layout'
@@ -33,17 +34,24 @@ interface Paciente {
 interface DetalleMed {
   id: number; no_producto: string; indicacion?: string; cant?: number; via?: string
 }
+interface DiagnosticoConsulta {
+  cie10_codigo?: string | null
+  descripcion: string
+  principal?: boolean
+}
 interface Consulta {
   id: number; fecha: string; hora: string; estado: string
   tipo_nombre?: string; doctor?: string; enfoque_clinico?: EnfoqueClinico | string
   presion?: string; temperatura?: string; peso?: string
   talla?: string; frecuencia?: string; perim_cefalico?: string; pulso?: string
+  saturacion_oxigeno?: string; dolor_eva?: number; glucosa_capilar?: string
   cabeza?: string; cuello?: string; ojos?: string; orl?: string
   pulmonar?: string; abdomen?: string; genito?: string
   extremidades?: string; sistema?: string; oste?: string; piel?: string
   sintoma?: string; historia?: string; impresion?: string; tratamiento?: string
   estudios_complementarios?: string; dias_reposo?: number; nota?: string
   consulta_detalle?: DetalleMed[]
+  consulta_diagnosticos?: DiagnosticoConsulta[]
 }
 interface LabResultado {
   valor_resultado?: string; unidad?: string; rango_texto?: string
@@ -69,6 +77,7 @@ interface Props {
   antecedentes: Antecedentes | null
   consultas: Consulta[]
   analisis:  Analisis[]
+  problemasActivos?: { descripcion: string; cie10_codigo?: string | null; estado?: string }[]
 }
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -380,7 +389,7 @@ function BloqueAntecedente({ titulo, texto }: { titulo: string; texto?: string |
   )
 }
 
-export default function ExpedienteClient({ paciente, antecedentes, consultas, analisis }: Props) {
+export default function ExpedienteClient({ paciente, antecedentes, consultas, analisis, problemasActivos = [] }: Props) {
   const [tab, setTab]         = useState<'resumen'|'historial'|'laboratorio'|'pediatria'|'prenatal'>('resumen')
   const [buscar, setBuscar]   = useState('')
   const [fechaI, setFechaI]   = useState('')
@@ -454,10 +463,23 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
         actions={
           <div className="flex flex-wrap gap-2">
             <ModuleBtnGhost
+              onClick={() => imprimirHistoriaClinica(
+                paciente, antecedentes,
+                consultas.map(c => ({
+                  ...c,
+                  diagnosticos: c.consulta_diagnosticos,
+                })),
+                { fechaDesde: fechaI || undefined, fechaHasta: fechaF || undefined, problemasActivos },
+              )}
+              className="!text-white/90 !border-white/30 hover:!bg-white/10"
+            >
+              <Printer className="w-4 h-4" /> Historia clínica
+            </ModuleBtnGhost>
+            <ModuleBtnGhost
               onClick={() => imprimirExpedienteClinico(paciente, antecedentes, consultas)}
               className="!text-white/90 !border-white/30 hover:!bg-white/10"
             >
-              <Printer className="w-4 h-4" /> Imprimir expediente
+              <Printer className="w-4 h-4" /> Resumen expediente
             </ModuleBtnGhost>
             <Link href={`/pacientes/${paciente.id}`}
               className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border border-white/30 text-white/90 hover:bg-white/10 transition">
@@ -649,7 +671,21 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
                 <button onClick={() => { setBuscar(''); setFechaI(''); setFechaF('') }}
                   className="text-xs text-gray-400 hover:text-red-500">Limpiar</button>
               )}
+              <button
+                type="button"
+                onClick={() => imprimirHistoriaClinica(
+                  paciente, antecedentes,
+                  consultasFilt.map(c => ({ ...c, diagnosticos: c.consulta_diagnosticos })),
+                  { fechaDesde: fechaI || undefined, fechaHasta: fechaF || undefined, problemasActivos },
+                )}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-[#003366] text-white hover:bg-[#004080]"
+              >
+                <Printer className="w-3.5 h-3.5" /> Imprimir rango
+              </button>
             </div>
+            {(fechaI || fechaF) && (
+              <p className="text-[11px] text-slate-500">Use las fechas para filtrar e imprimir la historia clínica del período.</p>
+            )}
 
             {consultasFilt.length === 0
               ? <div className="text-center py-14 text-gray-400">

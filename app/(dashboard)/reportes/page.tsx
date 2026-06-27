@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { esRolEnfermeria, esRolMedico } from '@/lib/consultas-utils'
+import { redirect } from 'next/navigation'
 import ReportesClient from './reportes-client'
 
 export const dynamic = 'force-dynamic'
@@ -11,7 +13,8 @@ export default async function ReportesPage({
   searchParams: Promise<{ desde?: string; hasta?: string; sucursal?: string; tab?: string }>
 }) {
   const supabase  = await createClient()
-  const { sucursalId: sucursalUsuario, esSuperAdmin } = await getPerfilSucursal()
+  const { sucursalId: sucursalUsuario, esSuperAdmin, rol } = await getPerfilSucursal()
+  if (!esSuperAdmin && (esRolEnfermeria(rol) || esRolMedico(rol))) redirect('/')
   const params    = await searchParams
   const hoy       = new Date().toISOString().split('T')[0]
   const desde     = params.desde    || hoy

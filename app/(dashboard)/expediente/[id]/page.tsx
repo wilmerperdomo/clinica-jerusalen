@@ -20,6 +20,7 @@ export default async function ExpedientePage({
     { data: consultas },
     { data: analisisOrds },
     { data: antecedentes },
+    { data: problemas },
   ] = await Promise.all([
     // datos completos del paciente
     supabase
@@ -34,12 +35,16 @@ export default async function ExpedientePage({
       .select(`
         id, fecha, hora, estado, tipo_nombre, doctor, enfoque_clinico,
         presion, temperatura, peso, talla, frecuencia, perim_cefalico, pulso,
+        saturacion_oxigeno, dolor_eva, glucosa_capilar,
         cabeza, cuello, ojos, orl, pulmonar, abdomen,
         genito, extremidades, sistema, oste, piel,
         sintoma, historia, impresion, tratamiento,
         estudios_complementarios, dias_reposo, nota,
         consulta_detalle(
           id, no_producto, indicacion, cant, via
+        ),
+        consulta_diagnosticos(
+          cie10_codigo, descripcion, principal
         )
       `)
       .eq('paciente_id', pacienteId)
@@ -65,6 +70,13 @@ export default async function ExpedientePage({
       .select('alergias, personal, familiares, hospitalario')
       .eq('paciente_id', pacienteId)
       .maybeSingle(),
+
+    supabase
+      .from('paciente_problema_activo')
+      .select('descripcion, cie10_codigo, estado')
+      .eq('paciente_id', pacienteId)
+      .neq('estado', 'resuelto')
+      .order('created_at', { ascending: false }),
   ])
 
   if (!paciente) notFound()
@@ -87,6 +99,7 @@ export default async function ExpedientePage({
       antecedentes={antecedentes}
       consultas={consultas || []}
       analisis={analisisOrds || []}
+      problemasActivos={problemas || []}
     />
   )
 }

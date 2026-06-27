@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 export default async function LaboratorioPage() {
   const supabase = await createClient()
   if (!supabase) throw new Error('No se pudo inicializar Supabase')
-  const { sucursalId, esSuperAdmin } = await getPerfilSucursal()
+  const { sucursalId, esSuperAdmin, rol } = await getPerfilSucursal()
   const hoy = new Date().toISOString().split('T')[0]
 
   const hace7 = new Date()
@@ -123,6 +123,7 @@ export default async function LaboratorioPage() {
       costosOrden={costosOrden || []}
       sucursalId={sucursalId ?? undefined}
       esSuperAdmin={esSuperAdmin}
+      rolUsuario={rol}
     />
   )
 }

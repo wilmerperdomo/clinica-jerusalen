@@ -500,7 +500,11 @@ export default function CajaClient({
   /* ── apertura de caja ─ */
   async function abrirCaja() {
     setErrorAp('')
-    if (!formApertura.sucursal_id) {
+    // No-admins siempre abren en su sucursal asignada, sin importar el valor del form.
+    const sucursalFinal = esAdmin
+      ? Number(formApertura.sucursal_id)
+      : Number(perfil?.sucursal_id ?? formApertura.sucursal_id)
+    if (!sucursalFinal) {
       setErrorAp('Debes seleccionar una sucursal')
       return
     }
@@ -508,7 +512,7 @@ export default function CajaClient({
     const nombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
     const { data, error } = await supabase.from('caja_sesiones').insert({
-      sucursal_id:   Number(formApertura.sucursal_id),
+      sucursal_id:   sucursalFinal,
       cajero_id:     userId,
       cajero_nombre: nombre,
       fecha:         fechaHoy,
@@ -2260,7 +2264,9 @@ export default function CajaClient({
               </div>
             ) : (
               <select value={formApertura.sucursal_id}
+                disabled={!esAdmin}
                 onChange={e => {
+                  if (!esAdmin) return
                   const sid = e.target.value
                   const suc = sucursales.find(s => s.id === Number(sid))
                   setFormApertura(p => ({
@@ -2270,10 +2276,15 @@ export default function CajaClient({
                   }))
                   setFondoMsg(null)
                 }}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${!esAdmin ? 'bg-gray-50 text-gray-600 cursor-not-allowed' : ''}`}>
                 <option value="">— Seleccionar sucursal —</option>
                 {sucursales.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
               </select>
+            )}
+            {!esAdmin && (
+              <p className="text-[11px] text-gray-500 mt-1">
+                Tu caja está fijada a tu sucursal asignada. Solo un administrador puede cambiarla.
+              </p>
             )}
           </div>
 

@@ -13,6 +13,7 @@ import {
 import { puntosDesdeConsultas, generoOMS, percentilPesoAprox } from '@/lib/crecimiento-oms'
 import { imprimirCarnetVacunas } from '@/lib/vacunas-print'
 import { imprimirCurvaCrecimiento } from '@/lib/crecimiento-print'
+import { imprimirCarnetPediatrico } from '@/lib/carnet-pediatrico-print'
 
 interface Props {
   pacienteId: number
@@ -37,6 +38,7 @@ export default function ExpedientePediatriaPanel({
   const [catalogo, setCatalogo] = useState<VacunaCatalogo[]>([])
   const [vacunas, setVacunas] = useState<PacienteVacuna[]>([])
   const [consultas, setConsultas] = useState<{ id: number; fecha: string; peso?: string; talla?: string; perim_cefalico?: string }[]>([])
+  const [controlesPed, setControlesPed] = useState<{ fecha: string; control_nino_sano?: string | null; hitos_desarrollo?: string | null; tipo_alimentacion?: string | null }[]>([])
   const [cargando, setCargando] = useState(true)
   const [vacunaSel, setVacunaSel] = useState('')
   const [fechaVac, setFechaVac] = useState(new Date().toISOString().slice(0, 10))
@@ -46,14 +48,30 @@ export default function ExpedientePediatriaPanel({
   async function recargar() {
     setCargando(true)
     const sb = supabase()
-    const [catRes, vacRes, conRes] = await Promise.all([
+    const [catRes, vacRes, conRes, pedRes] = await Promise.all([
       sb.from('vacuna_catalogo').select('*').eq('activo', true).order('orden'),
       sb.from('paciente_vacuna').select('*, vacuna:vacuna_catalogo(*)').eq('paciente_id', pacienteId).order('fecha_aplicada', { ascending: false }),
       sb.from('consultas').select('id,fecha,peso,talla,perim_cefalico').eq('paciente_id', pacienteId).in('estado', ['FINALIZADO', 'PAGADO']).order('fecha'),
+      sb.from('consultas')
+        .select('fecha, consulta_pediatria(control_nino_sano, hitos_desarrollo, tipo_alimentacion)')
+        .eq('paciente_id', pacienteId)
+        .not('consulta_pediatria', 'is', null),
     ])
     if (!catRes.error) setCatalogo((catRes.data ?? []) as VacunaCatalogo[])
     if (!vacRes.error) setVacunas((vacRes.data ?? []) as PacienteVacuna[])
     if (!conRes.error) setConsultas(conRes.data ?? [])
+    if (!pedRes.error) {
+      setControlesPed((pedRes.data ?? []).map((r: Record<string, unknown>) => {
+        const ped = r.consulta_pediatria as Record<string, unknown> | Record<string, unknown>[] | null
+        const row = Array.isArray(ped) ? ped[0] : ped
+        return {
+          fecha: String(r.fecha ?? ''),
+          control_nino_sano: row?.control_nino_sano as string | null,
+          hitos_desarrollo: row?.hitos_desarrollo as string | null,
+          tipo_alimentacion: row?.tipo_alimentacion as string | null,
+        }
+      }).filter(c => c.fecha))
+    }
     setCargando(false)
   }
 
@@ -104,6 +122,13 @@ export default function ExpedientePediatriaPanel({
       )}
 
       <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => imprimirCarnetPediatrico(
+          { codigo, nombre, apellido1, apellido2, fecha_nac: fechaNac ?? undefined, genero: genero ?? undefined },
+          catalogo, vacunas, consultas, controlesPed,
+        )}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+          <Printer className="w-3.5 h-3.5" /> Carnet pediátrico completo
+        </button>
         <button type="button" onClick={() => imprimirCarnetVacunas({ codigo, nombre, apellido1, apellido2, fecha_nac: fechaNac ?? undefined }, catalogo, vacunas)}
           className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-sky-600 text-white hover:bg-sky-700">
           <Printer className="w-3.5 h-3.5" /> Carnet de vacunas

@@ -44,6 +44,7 @@ import {
 import BuscarPacienteInput, { type PacienteBusqueda } from '@/components/buscar-paciente-input'
 import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
 import { normalizarCodigoPaciente, edadPaciente } from '@/lib/paciente-utils'
+import { esRolEnfermeria, esRolMedico } from '@/lib/consultas-utils'
 import {
   ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost,
 } from '@/components/module-layout'
@@ -68,6 +69,7 @@ interface Props {
   costosOrden: LabCostoOrden[]
   sucursalId?: number
   esSuperAdmin?: boolean
+  rolUsuario?: string
 }
 
 type TabLab = 'cola' | 'ordenes' | 'catalogo' | 'reportes'
@@ -96,7 +98,7 @@ export default function LaboratorioClient({
   rangos, panelCampos: initPanelCampos, insumos: initInsumos,
   preciosLista, productos, medicos: initMedicos, perfiles: initPerfiles,
   proveedores, costosOrden: initCostosOrden,
-  sucursalId, esSuperAdmin = false,
+  sucursalId, esSuperAdmin = false, rolUsuario = '',
 }: Props) {
   const [tab, setTab] = useState<TabLab>('cola')
   const [filtroLab, setFiltroLab] = useState<FiltroLab>('procesar')
@@ -205,6 +207,25 @@ export default function LaboratorioClient({
   const [guardandoPerfil, setGuardandoPerfil] = useState(false)
 
   const supabase = useMemo(() => sb(), [])
+  const esRolClinicoBasico = esRolEnfermeria(rolUsuario) || esRolMedico(rolUsuario)
+  const puedeVerAdminLab = esSuperAdmin || !esRolClinicoBasico
+  const tabsLaboratorio = useMemo(() => {
+    const base: { id: TabLab; label: string; icon: React.ElementType }[] = [
+      { id: 'cola', label: 'Cola / Kanban', icon: LayoutGrid },
+      { id: 'ordenes', label: 'Órdenes agrupadas', icon: List },
+    ]
+    if (puedeVerAdminLab) {
+      base.push(
+        { id: 'catalogo', label: `Catálogo (${pruebasCatalogo.length})`, icon: Beaker },
+        { id: 'reportes', label: 'Reportes', icon: BarChart3 },
+      )
+    }
+    return base
+  }, [puedeVerAdminLab, pruebasCatalogo.length])
+
+  useEffect(() => {
+    if (!tabsLaboratorio.some(t => t.id === tab)) setTab('cola')
+  }, [tab, tabsLaboratorio])
 
   const cargarArchivosGrupo = useCallback(async (grupoId: string) => {
     const { data, error } = await supabase
@@ -1423,12 +1444,7 @@ export default function LaboratorioClient({
       <ModuleContent>
         <div className="bg-white rounded-xl border">
           <div className="flex border-b overflow-x-auto">
-            {([
-              ['cola', 'Cola / Kanban', LayoutGrid],
-              ['ordenes', 'Órdenes agrupadas', List],
-              ['catalogo', `Catálogo (${pruebasCatalogo.length})`, Beaker],
-              ['reportes', 'Reportes', BarChart3],
-            ] as const).map(([t, label, Icon]) => (
+            {tabsLaboratorio.map(({ id: t, label, icon: Icon }) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                   tab === t ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -1577,7 +1593,7 @@ export default function LaboratorioClient({
               </>
             )}
 
-            {tab === 'catalogo' && (
+            {puedeVerAdminLab && tab === 'catalogo' && (
               <>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {([
@@ -1596,7 +1612,7 @@ export default function LaboratorioClient({
               </>
             )}
 
-            {tab === 'catalogo' && catTab === 'pruebas' && (
+            {puedeVerAdminLab && tab === 'catalogo' && catTab === 'pruebas' && (
               <>
                 <div className="flex justify-end mb-3">
                   <button onClick={() => {
@@ -1695,7 +1711,7 @@ export default function LaboratorioClient({
               </>
             )}
 
-            {tab === 'catalogo' && catTab === 'perfiles' && (
+            {puedeVerAdminLab && tab === 'catalogo' && catTab === 'perfiles' && (
               <>
                 <div className="flex justify-end mb-3">
                   <button onClick={() => abrirModalPerfil(null)}
@@ -1745,7 +1761,7 @@ export default function LaboratorioClient({
               </>
             )}
 
-            {tab === 'catalogo' && catTab === 'medicos' && (
+            {puedeVerAdminLab && tab === 'catalogo' && catTab === 'medicos' && (
               <>
                 <div className="flex justify-end mb-3">
                   <button onClick={() => abrirModalMedico(null)}
@@ -1795,7 +1811,7 @@ export default function LaboratorioClient({
               </>
             )}
 
-            {tab === 'reportes' && <LabReportesPanel stats={reportes} />}
+            {puedeVerAdminLab && tab === 'reportes' && <LabReportesPanel stats={reportes} />}
           </div>
         </div>
 

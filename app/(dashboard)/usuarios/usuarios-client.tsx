@@ -22,6 +22,24 @@ interface Perfil {
 interface Sucursal { id: number; nombre: string; activo: boolean }
 interface PerfilRol { perfil_id: string; rol_id: number }
 
+function esSuperAdminPerfil(
+  perfil: Perfil,
+  perfilRoles: PerfilRol[],
+  roles: Rol[],
+): boolean {
+  if (perfil.rol?.es_super_admin) return true
+  const ids = perfilRoles.filter(pr => pr.perfil_id === perfil.id).map(pr => pr.rol_id)
+  return roles.some(r => ids.includes(r.id) && r.es_super_admin)
+}
+
+function requiereSucursalAsignada(
+  perfil: Perfil,
+  perfilRoles: PerfilRol[],
+  roles: Rol[],
+): boolean {
+  return perfil.activo && !esSuperAdminPerfil(perfil, perfilRoles, roles)
+}
+
 interface Props {
   perfiles:    Perfil[]
   roles:       Rol[]
@@ -146,6 +164,11 @@ export default function UsuariosClient({
 
   async function guardarUsuario() {
     if (!perfilActual) return
+    const necesitaSucursal = requiereSucursalAsignada(perfilActual, perfilRoles, roles)
+    if (necesitaSucursal && !formUsuario.sucursal_id) {
+      alert('Los usuarios operativos deben tener una sucursal asignada.')
+      return
+    }
     const payload: Record<string, unknown> = {
       nombre:      formUsuario.nombre      || null,
       apellido:    formUsuario.apellido    || null,
@@ -222,6 +245,7 @@ export default function UsuariosClient({
   /* stats */
   const activos   = perfiles.filter(p => p.activo).length
   const inactivos = perfiles.filter(p => !p.activo).length
+  const sinSucursalOperativos = perfiles.filter(p => requiereSucursalAsignada(p, perfilRoles, roles) && !p.sucursal_id)
 
   /* ═══════════════ JSX ════════════════════════════════════ */
   return (
@@ -247,6 +271,17 @@ export default function UsuariosClient({
       />
       <ModuleContent>
         <div className="bg-white rounded-xl border p-4 space-y-3">
+          {sinSucursalOperativos.length > 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold">{sinSucursalOperativos.length} usuario(s) operativo(s) sin sucursal</p>
+                <p className="text-xs mt-0.5 text-amber-800">
+                  Asigne sucursal en Editar para evitar que abran caja o trabajen en la sucursal equivocada.
+                </p>
+              </div>
+            </div>
+          )}
           <div className="flex justify-end">
             <button onClick={() => { setErrorNuevo(''); setOkNuevo(''); setModalNuevo(true) }}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
@@ -271,8 +306,10 @@ export default function UsuariosClient({
                 {perfiles.length === 0 && (
                   <tr><td colSpan={7} className="text-center py-10 text-gray-400">No hay usuarios registrados aún</td></tr>
                 )}
-                {perfiles.map(p => (
-                  <tr key={p.id} className={`hover:bg-gray-50 ${!p.activo ? 'opacity-50' : ''}`}>
+                {perfiles.map(p => {
+                  const faltaSucursal = requiereSucursalAsignada(p, perfilRoles, roles) && !p.sucursal_id
+                  return (
+                  <tr key={p.id} className={`hover:bg-gray-50 ${!p.activo ? 'opacity-50' : ''} ${faltaSucursal ? 'bg-amber-50/60' : ''}`}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
@@ -312,7 +349,11 @@ export default function UsuariosClient({
                       </div>
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">
-                      {sucursales.find(s => s.id === p.sucursal_id)?.nombre || '—'}
+                      {sucursales.find(s => s.id === p.sucursal_id)?.nombre || (
+                        faltaSucursal
+                          ? <span className="text-amber-700 font-semibold">Sin sucursal</span>
+                          : '—'
+                      )}
                     </td>
                     <td className="px-4 py-3 text-center">
                       {p.activo
@@ -333,7 +374,7 @@ export default function UsuariosClient({
                       </div>
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
@@ -413,10 +454,17 @@ export default function UsuariosClient({
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Sucursal</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Sucursal{perfilActual && requiereSucursalAsignada(perfilActual, perfilRoles, roles) ? ' *' : ''}
+              </label>
               <select value={formUsuario.sucursal_id} onChange={e => setFormUsuario(p => ({ ...p, sucursal_id: e.target.value }))}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                <option value="">— Sin sucursal —</option>
+                className={`w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                  perfilActual && requiereSucursalAsignada(perfilActual, perfilRoles, roles) && !formUsuario.sucursal_id
+                    ? 'border-amber-300 bg-amber-50' : ''
+                }`}>
+                {!(perfilActual && requiereSucursalAsignada(perfilActual, perfilRoles, roles)) && (
+                  <option value="">— Sin sucursal —</option>
+                )}
                 {sucursales.filter(s => s.activo).map(s => (<option key={s.id} value={s.id}>{s.nombre}</option>))}
               </select>
             </div>

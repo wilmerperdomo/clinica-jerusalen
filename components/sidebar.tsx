@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, getInitials } from '@/lib/utils'
+import { esRolEnfermeria, esRolMedico } from '@/lib/consultas-utils'
 import ClinicaLogo from '@/components/clinica-logo'
 import SucursalNombre from '@/components/sucursal-nombre'
 
@@ -125,6 +126,8 @@ export default function Sidebar({
 
   function puedeVer(href: string) {
     if (!modulosPermitidos || modulosPermitidos.length === 0) return false
+    const esClinicoBasico = esRolEnfermeria(userRole) || esRolMedico(userRole)
+    if (esClinicoBasico && href === '/reportes') return false
     if (href === '/colonias') {
       return modulosPermitidos.includes('pacientes') || modulosPermitidos.includes('configuracion')
     }

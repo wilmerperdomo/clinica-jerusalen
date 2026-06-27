@@ -5,6 +5,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { Heart, Printer, AlertTriangle } from 'lucide-react'
 import { alertasPrenatales, claseSeveridadAlerta } from '@/lib/alertas-clinicas'
 import { imprimirHojaControlPrenatal } from '@/lib/prenatal-print'
+import { imprimirCarnetMaterno } from '@/lib/carnet-materno-print'
 
 interface Props {
   pacienteId: number
@@ -40,8 +41,13 @@ function supabase() {
 export default function ExpedientePrenatalPanel({
   pacienteId, codigo, nombre, apellido1, apellido2, fechaNac,
 }: Props) {
-  const [embarazo, setEmbarazo] = useState<{ fum?: string; fpp?: string; activo?: boolean } | null>(null)
+  const [embarazo, setEmbarazo] = useState<{ id?: number; fum?: string; fpp?: string; activo?: boolean } | null>(null)
   const [controles, setControles] = useState<ControlRow[]>([])
+  const [gineco, setGineco] = useState<{
+    gestas?: number | null; partos?: number | null; cesareas?: number | null; abortos?: number | null
+    menarquia?: string | null; ciclos_menstruales?: string | null; planificacion?: string | null
+    riesgo_prenatal?: string | null; plan_parto_notas?: string | null
+  } | null>(null)
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
@@ -51,10 +57,18 @@ export default function ExpedientePrenatalPanel({
       const embRes = await sb.from('embarazo').select('id,fum,fpp,activo').eq('paciente_id', pacienteId).eq('activo', true).maybeSingle()
       if (!embRes.error && embRes.data) {
         setEmbarazo(embRes.data)
-        const ctrlRes = await sb.from('control_prenatal')
-          .select('*, consulta:consultas(fecha)')
-          .eq('embarazo_id', embRes.data.id)
-          .order('num_control')
+        const [ctrlRes, gineRes] = await Promise.all([
+          sb.from('control_prenatal')
+            .select('*, consulta:consultas(fecha)')
+            .eq('embarazo_id', embRes.data.id)
+            .order('num_control'),
+          sb.from('consulta_ginecologia')
+            .select('gestas,partos,cesareas,abortos,menarquia,ciclos_menstruales,planificacion,riesgo_prenatal,plan_parto_notas, consulta:consultas!inner(paciente_id)')
+            .eq('consulta.paciente_id', pacienteId)
+            .order('consulta_id', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ])
         if (!ctrlRes.error) {
           setControles((ctrlRes.data ?? []).map((r: Record<string, unknown>) => {
             const consulta = r.consulta as { fecha?: string } | null
@@ -74,9 +88,26 @@ export default function ExpedientePrenatalPanel({
             }
           }))
         }
+        if (!gineRes.error && gineRes.data) {
+          const g = gineRes.data as Record<string, unknown>
+          setGineco({
+            gestas: g.gestas as number | null,
+            partos: g.partos as number | null,
+            cesareas: g.cesareas as number | null,
+            abortos: g.abortos as number | null,
+            menarquia: g.menarquia as string | null,
+            ciclos_menstruales: g.ciclos_menstruales as string | null,
+            planificacion: g.planificacion as string | null,
+            riesgo_prenatal: g.riesgo_prenatal as string | null,
+            plan_parto_notas: g.plan_parto_notas as string | null,
+          })
+        } else {
+          setGineco(null)
+        }
       } else {
         setEmbarazo(null)
         setControles([])
+        setGineco(null)
       }
       setCargando(false)
     }
@@ -120,14 +151,36 @@ export default function ExpedientePrenatalPanel({
             <p className="text-xs text-pink-700">FUM: {embarazo.fum ?? '—'} · FPP: {embarazo.fpp ?? '—'}</p>
           </div>
         </div>
-        <button type="button"
-          onClick={() => imprimirHojaControlPrenatal(
-            { codigo, nombre, apellido1, apellido2, fecha_nac: fechaNac ?? undefined },
-            embarazo.fum, embarazo.fpp, controles,
-          )}
-          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-pink-600 text-white hover:bg-pink-700">
-          <Printer className="w-3.5 h-3.5" /> Hoja control prenatal
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button"
+            onClick={() => imprimirCarnetMaterno(
+              { codigo, nombre, apellido1, apellido2, fecha_nac: fechaNac ?? undefined },
+              {
+                fum: embarazo.fum, fpp: embarazo.fpp,
+                gestas: gineco?.gestas, partos: gineco?.partos,
+                cesareas: gineco?.cesareas, abortos: gineco?.abortos,
+              },
+              {
+                menarquia: gineco?.menarquia,
+                ciclo_menstrual: gineco?.ciclos_menstruales,
+                metodo_planificacion: gineco?.planificacion,
+                riesgo_obstetrico: gineco?.riesgo_prenatal,
+                plan_parto: gineco?.plan_parto_notas,
+              },
+              controles,
+            )}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700">
+            <Printer className="w-3.5 h-3.5" /> Carnet materno
+          </button>
+          <button type="button"
+            onClick={() => imprimirHojaControlPrenatal(
+              { codigo, nombre, apellido1, apellido2, fecha_nac: fechaNac ?? undefined },
+              embarazo.fum, embarazo.fpp, controles,
+            )}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-pink-600 text-white hover:bg-pink-700">
+            <Printer className="w-3.5 h-3.5" /> Hoja control prenatal
+          </button>
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-xl border">

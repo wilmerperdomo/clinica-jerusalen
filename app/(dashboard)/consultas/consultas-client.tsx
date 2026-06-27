@@ -23,6 +23,10 @@ import ConsultaSugerenciasOrdenesPanel from '@/components/consulta-sugerencias-o
 import ConsultaEnfoqueClinico from '@/components/consulta-enfoque-clinico'
 import ConsultaAlergiasBanner from '@/components/consulta-alergias-banner'
 import ConsultaDiagnosticosPanel from '@/components/consulta-diagnosticos-panel'
+import SignosVitalesForm from '@/components/signos-vitales-form'
+import {
+  signosVitalesVacio, signosDesdeConsulta, payloadSignosVitales,
+} from '@/lib/signos-vitales-utils'
 import { PacientePlanBadge, PacientePlanBanner } from '@/components/paciente-plan-badge'
 import { BRAND } from '@/lib/brand'
 import { precioLabLista, type MembresiasMap } from '@/lib/membresia-utils'
@@ -269,10 +273,7 @@ export default function ConsultasClient({
     () => servicios.filter(esServicioConsulta).sort((a, b) => a.nombre.localeCompare(b.nombre)),
     [servicios],
   )
-  const [formSignos, setFormSignos] = useState({
-    presion: '', frecuencia: '', pulso: '', temperatura: '',
-    peso: '', talla: '', perim_cefalico: '',
-  })
+  const [formSignos, setFormSignos] = useState(signosVitalesVacio)
   const [formMedico, setFormMedico] = useState({
     cabeza: 'NL', cuello: 'NL', ojos: 'NL', orl: 'NL',
     pulmonar: 'NL', abdomen: 'NL', genito: 'NL', extremidades: 'NL',
@@ -558,9 +559,7 @@ export default function ConsultasClient({
   async function guardarSignos() {
     if (!consultaActual) return
     const { error } = await sb.from('consultas').update({
-      ...formSignos,
-      peso:   formSignos.peso  ? Number(formSignos.peso)  : null,
-      talla:  formSignos.talla ? Number(formSignos.talla) : null,
+      ...payloadSignosVitales(formSignos),
       estado: 'SIGNOS',
     }).eq('id', consultaActual.id)
     if (error) {
@@ -1829,7 +1828,7 @@ export default function ConsultasClient({
                           {c.estado === 'REGISTRO' && esEnfermeria && (
                             <button onClick={() => {
                               setConsultaActual(c)
-                              setFormSignos({ presion: '', frecuencia: '', pulso: '', temperatura: '', peso: '', talla: '', perim_cefalico: '' })
+                              setFormSignos(signosDesdeConsulta(c as unknown as Record<string, unknown>))
                               setModalSignos(true)
                             }} className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-medium hover:bg-amber-600">
                               Signos vitales
@@ -2008,25 +2007,11 @@ export default function ConsultasClient({
               listaNombre={consultaActual.paciente?.lista_id ? listasMap[consultaActual.paciente.lista_id] : undefined}
               membresiasMap={membresiasMap}
             />
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {[
-                { key: 'presion',         label: 'Presión Arterial',    ph: 'ej: 120/80' },
-                { key: 'frecuencia',      label: 'Frec. Respiratoria',  ph: 'resp/min' },
-                { key: 'pulso',           label: 'Pulso',               ph: 'lat/min' },
-                { key: 'temperatura',     label: 'Temperatura (°C)',     ph: '36.5' },
-                { key: 'peso',            label: 'Peso (kg)',            ph: '65.0' },
-                { key: 'talla',           label: 'Talla (cm)',           ph: '165' },
-                { key: 'perim_cefalico',  label: 'Perím. Cefálico',      ph: 'cm' },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">{f.label}</label>
-                  <input value={(formSignos as Record<string, string>)[f.key]}
-                    onChange={e => setFormSignos(p => ({ ...p, [f.key]: e.target.value }))}
-                    placeholder={f.ph}
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" />
-                </div>
-              ))}
-            </div>
+            <SignosVitalesForm
+              form={formSignos}
+              onChange={setFormSignos}
+              enfoque={sugerirEnfoque(consultaActual.paciente)}
+            />
           </div>
         </ResponsiveModal>
       )}
