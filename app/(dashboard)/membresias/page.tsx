@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import MembresiasClient from './membresias-client'
 
 export const metadata = { title: 'Planes Médicos' }
@@ -13,9 +14,20 @@ export default async function MembresiasPage({
   const renovarId = params.renovar ? parseInt(params.renovar, 10) || null : null
 
   const supabase = await createClient()
-  const { esSuperAdmin, esAdmin } = await getPerfilSucursal()
-  const hoy      = new Date().toISOString().split('T')[0]
+  const { esSuperAdmin, esAdmin, userId } = await getPerfilSucursal()
+  const hoy      = fechaHoyHN()
   const hace90   = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0]
+
+  // ¿Caja del día abierta para este cajero? (aviso en Planes Activos)
+  const { data: sesionCaja } = userId
+    ? await supabase
+        .from('caja_sesiones')
+        .select('id')
+        .eq('cajero_id', userId)
+        .eq('fecha', hoy)
+        .eq('estado', 'ABIERTA')
+        .maybeSingle()
+    : { data: null }
 
   // Marcar cuotas vencidas (estado vencido en BD)
   try {
@@ -97,6 +109,7 @@ export default async function MembresiasPage({
       esAdmin={esAdmin || esSuperAdmin}
       renovarIdInicial={renovarId}
       descuentosPlan={descuentosPlan ?? []}
+      cajaAbierta={!!sesionCaja}
     />
   )
 }

@@ -13,7 +13,9 @@ import {
 import CarnetMembresia from './CarnetMembresia'
 import { useConfirm } from '@/components/confirm-dialog'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary } from '@/components/module-layout'
-import { estadoVisualPlan, etiquetaEstadoPlan, claseEstadoPlan, diasRestantesPlan, numCuotasPlan } from '@/lib/membresia-estado'
+import { estadoVisualPlan, etiquetaEstadoPlan, claseEstadoPlan, diasRestantesPlan, numCuotasPlan, prioridadEstadoPlan, bordeFilaEstadoPlan, fondoFilaEstadoPlan } from '@/lib/membresia-estado'
+import { calcularRecargoCuota, montoCuotaConRecargo, totalLoteConRecargo } from '@/lib/membresia-mora'
+import { urlCobrarCuota, urlCobrarCuotasVencidas } from '@/lib/membresia-cobro-url'
 import { imprimirContratoMembresia } from '@/lib/membresia-contrato-print'
 
 /* ══════════════════ TIPOS ════════════════════════════════════ */
@@ -64,6 +66,7 @@ interface Props {
   esAdmin?:        boolean
   renovarIdInicial?: number | null
   descuentosPlan?: { id: number; fecha: string; paciente_nombre?: string; concepto?: string; descuento_monto: number; descuento_motivo?: string }[]
+  cajaAbierta?: boolean
 }
 
 /* ══════════════════ HELPERS ══════════════════════════════════ */
@@ -93,6 +96,25 @@ function proximaCuotaPendiente(membresiaId: number, pagosList: Pago[]) {
   return pagosList
     .filter(p => p.membresia_id === membresiaId && p.estado !== 'pagado')
     .sort((a, b) => a.fecha_vencimiento.localeCompare(b.fecha_vencimiento))[0]
+}
+function cuotasVencidasPendientes(membresiaId: number, pagosList: Pago[], hoyD: string) {
+  return pagosList
+    .filter(p => p.membresia_id === membresiaId && p.estado !== 'pagado' && p.fecha_vencimiento < hoyD)
+    .sort((a, b) => a.fecha_vencimiento.localeCompare(b.fecha_vencimiento))
+}
+function respaldoCobroDesdePago(p: Pago): { paciente: string; plan: string; monto: number } {
+  const pac = p.membresia?.paciente
+  return {
+    paciente: pac ? `${pac.nombre} ${pac.apellido1}`.trim() : '',
+    plan: p.membresia?.tipo?.nombre || '',
+    monto: Number(p.monto) || 0,
+  }
+}
+function respaldoCobroDesdeMembresia(m: Membresia): { paciente: string; plan: string } {
+  return {
+    paciente: m.paciente ? `${m.paciente.nombre} ${m.paciente.apellido1}`.trim() : '',
+    plan: m.tipo?.nombre || '',
+  }
 }
 function descuentosPlanTipo(t: Tipo) {
   const chips: { label: string; cls: string }[] = []
@@ -139,7 +161,7 @@ function mensajeError(err: unknown) {
 export default function MembresiasClient({
   tipos, membresias: init, pacientes, sucursales,
   pagos: initPagos, sucursalDefault, hoy, esSuperAdmin = false, esAdmin = false,
-  renovarIdInicial = null, descuentosPlan = [],
+  renovarIdInicial = null, descuentosPlan = [], cajaAbierta = false,
 }: Props) {
   const supabase  = createClient()
   const confirmDialog = useConfirm()
@@ -232,7 +254,7 @@ export default function MembresiasClient({
   }, [membresias, pagos, hoy])
 
   const memFiltradas = useMemo(() => {
-    return membresias.filter(m => {
+    const lista = membresias.filter(m => {
       const nombre = `${m.paciente?.nombre || ''} ${m.paciente?.apellido1 || ''}`.toLowerCase()
       const passQ  = !buscar || nombre.includes(buscar.toLowerCase()) || (m.tipo?.nombre || '').toLowerCase().includes(buscar.toLowerCase()) || (m.numero_carnet || '').toLowerCase().includes(buscar.toLowerCase())
       const badge  = estadoBadge(m, pagos)
@@ -241,7 +263,23 @@ export default function MembresiasClient({
         || (filtroEstado === 'vence' && badge.ev === 'por_vencer')
       return passQ && passE
     })
-  }, [membresias, buscar, filtroEstado])
+    return lista.sort((a, b) => {
+      const pa = prioridadEstadoPlan(estadoBadge(a, pagos).ev)
+      const pb = prioridadEstadoPlan(estadoBadge(b, pagos).ev)
+      if (pa !== pb) return pa - pb
+      return diasRestantesPlan(a.fecha_fin) - diasRestantesPlan(b.fecha_fin)
+    })
+  }, [membresias, buscar, filtroEstado, pagos])
+
+  const planesPrecioCero = useMemo(
+    () => tiposList.filter(t => t.activo && (t.precio ?? 0) <= 0),
+    [tiposList],
+  )
+
+  const cuotasMontoCero = useMemo(
+    () => pagos.filter(p => p.estado !== 'pagado' && Number(p.monto) <= 0),
+    [pagos],
+  )
 
   const cobrosFiltrados = useMemo(() => {
     const hoyD   = hoyStr()
@@ -258,8 +296,25 @@ export default function MembresiasClient({
       const q   = buscarCobro.toLowerCase()
       const nom = `${p.membresia?.paciente?.nombre || ''} ${p.membresia?.paciente?.apellido1 || ''}`.toLowerCase()
       return nom.includes(q) || (p.membresia?.numero_carnet || '').toLowerCase().includes(q)
-    })
+    }).sort((a, b) => a.fecha_vencimiento.localeCompare(b.fecha_vencimiento))
   }, [pagos, cobroFiltro, buscarCobro])
+
+  const lotesVencidosPorMembresia = useMemo(() => {
+    const hoyD = hoyStr()
+    const map = new Map<number, Pago[]>()
+    for (const p of pagos) {
+      if (p.estado === 'pagado' || p.fecha_vencimiento >= hoyD) continue
+      const list = map.get(p.membresia_id) ?? []
+      list.push(p)
+      map.set(p.membresia_id, list)
+    }
+    return Array.from(map.entries())
+      .map(([membresiaId, cuotas]) => ({
+        membresiaId,
+        cuotas: cuotas.sort((a, b) => a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)),
+      }))
+      .filter(l => l.cuotas.length > 0)
+  }, [pagos])
 
   /* ranking de planes vendidos */
   const rankingPlanes = useMemo(() => {
@@ -402,6 +457,9 @@ export default function MembresiasClient({
     if (!formMem.fecha_inicio || !formMem.fecha_fin) return setErrorMem('Completa las fechas')
 
     const tipoActualPre = tiposList.find(t => t.id === formMem.tipo_id)
+    if (!tipoActualPre || (tipoActualPre.precio ?? 0) <= 0) {
+      return setErrorMem('El plan seleccionado no tiene precio válido. Configure el precio del plan antes de asignarlo.')
+    }
     const maxBen = tipoActualPre?.max_beneficiarios ?? 0
     const benCount = beneficiarios.filter(b => b.nombre.trim()).length
     if (maxBen > 0 && benCount > maxBen) {
@@ -638,6 +696,7 @@ export default function MembresiasClient({
 
   async function guardarTipo() {
     if (!formTipo.nombre.trim()) return setErrorTipo('Ingresa el nombre del plan')
+    if (formTipo.precio <= 0)  return setErrorTipo('El precio debe ser mayor a cero (L 0.00 genera cuotas inválidas)')
     if (formTipo.precio < 0)     return setErrorTipo('El precio no puede ser negativo')
     if (formTipo.duracion_dias < 1) return setErrorTipo('La duración debe ser al menos 1 día')
     setLoadingTipo(true); setErrorTipo('')
@@ -818,6 +877,37 @@ export default function MembresiasClient({
 
       {/* ══════════════ TAB: LISTA ═══════════════════════════ */}
       {tab === 'lista' && (
+        <div className="space-y-3">
+          {!cajaAbierta && (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl px-4 py-3 text-sm">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+              <div>
+                <p className="font-semibold">Caja del día cerrada</p>
+                <p className="text-amber-800 mt-0.5">
+                  Abra la caja en <Link href="/ventas" className="underline font-medium">Ventas / Caja</Link> antes de cobrar cuotas.
+                  Puede preparar el cobro desde aquí, pero el registro del ingreso requiere caja abierta.
+                </p>
+              </div>
+            </div>
+          )}
+          {(planesPrecioCero.length > 0 || cuotasMontoCero.length > 0) && (
+            <div className="flex items-start gap-3 bg-red-50 border border-red-200 text-red-900 rounded-2xl px-4 py-3 text-sm">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+              <div className="space-y-1">
+                {planesPrecioCero.length > 0 && (
+                  <p>
+                    <strong>{planesPrecioCero.length} plan(es) con precio L 0.00:</strong>{' '}
+                    {planesPrecioCero.map(t => t.nombre).join(', ')} — corrija el precio en la pestaña Planes.
+                  </p>
+                )}
+                {cuotasMontoCero.length > 0 && (
+                  <p>
+                    <strong>{cuotasMontoCero.length} cuota(s) con monto L 0.00</strong> — no se pueden cobrar en caja hasta corregir el plan.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         <div className="bg-white border rounded-2xl overflow-hidden">
           <div className="p-4 border-b flex flex-wrap gap-3 items-center">
             <div className="relative flex-1 min-w-[200px]">
@@ -829,8 +919,9 @@ export default function MembresiasClient({
             <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
               className="border rounded-lg px-3 py-2 text-sm text-gray-700">
               <option value="">Todos los estados</option>
-              <option value="activo">Activos</option>
+              <option value="activo">Al día</option>
               <option value="por_vencer">Por vencer</option>
+              <option value="cuota_vencida">Cuota vencida</option>
               <option value="vencido">Vencidos</option>
               <option value="mora">Suspendido por mora</option>
               <option value="inactivo">Inactivos</option>
@@ -869,9 +960,12 @@ export default function MembresiasClient({
                   const dias  = diasRestantes(m.fecha_fin)
                   const open  = expandido === m.id
                   const cuota = proximaCuotaPendiente(m.id, pagos)
+                  const vencidas = cuotasVencidasPendientes(m.id, pagos, hoy)
+                  const respaldo = respaldoCobroDesdeMembresia(m)
+                  const totalVencidas = totalLoteConRecargo(vencidas, hoy)
                   return (
                     <Fragment key={m.id}>
-                      <tr className="hover:bg-gray-50">
+                      <tr className={`hover:bg-gray-50/80 ${bordeFilaEstadoPlan(badge.ev)} ${fondoFilaEstadoPlan(badge.ev)}`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2.5">
                             {m.paciente?.foto_url ? (
@@ -904,12 +998,46 @@ export default function MembresiasClient({
                         <td className="px-3 py-3 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badge.color}`}>{badge.label}</span>
                           {cuota && (
-                            <div className="mt-1.5">
-                              <p className="text-[10px] text-gray-500">Cuota #{cuota.numero_cuota} · {fmt(cuota.monto)}</p>
-                              <Link href={`/ventas?membresia_pago=${cuota.id}`}
-                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-violet-700 hover:underline mt-0.5">
-                                <Wallet className="w-3 h-3" /> Cobrar ahora
-                              </Link>
+                            <div className="mt-1.5 space-y-1">
+                              {Number(cuota.monto) <= 0 ? (
+                                <p className="text-[10px] text-red-600 font-semibold">Cuota #{cuota.numero_cuota} · L 0.00 — corrija el plan</p>
+                              ) : (
+                                <>
+                                  {(() => {
+                                    const det = montoCuotaConRecargo(cuota.monto, cuota.fecha_vencimiento, hoy, cuota.estado)
+                                    return (
+                                      <p className="text-[10px] text-gray-500">
+                                        Cuota #{cuota.numero_cuota} · {fmt(det.total)}
+                                        {det.recargo > 0 && (
+                                          <span className="text-red-600"> (+{fmt(det.recargo)} recargo)</span>
+                                        )}
+                                      </p>
+                                    )
+                                  })()}
+                                  <Link
+                                    href={urlCobrarCuota(cuota.id, {
+                                      ...respaldo,
+                                      monto: montoCuotaConRecargo(cuota.monto, cuota.fecha_vencimiento, hoy, cuota.estado).total,
+                                    })}
+                                    className={`inline-flex items-center gap-0.5 text-[10px] font-semibold mt-0.5 hover:underline ${cajaAbierta ? 'text-violet-700' : 'text-amber-700'}`}
+                                  >
+                                    <Wallet className="w-3 h-3" />
+                                    {cajaAbierta ? 'Cobrar ahora' : 'Ir a cobrar (abrir caja)'}
+                                  </Link>
+                                </>
+                              )}
+                              {vencidas.length > 1 && (
+                                <Link
+                                  href={urlCobrarCuotasVencidas(
+                                    vencidas.map(v => v.id),
+                                    { ...respaldo, monto: totalVencidas.total },
+                                  )}
+                                  className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-orange-700 hover:underline"
+                                >
+                                  <Wallet className="w-3 h-3" />
+                                  Cobrar {vencidas.length} vencidas ({fmt(totalVencidas.total)})
+                                </Link>
+                              )}
                             </div>
                           )}
                         </td>
@@ -994,11 +1122,22 @@ export default function MembresiasClient({
             </table>
           </div>
         </div>
+        </div>
       )}
 
       {/* ══════════════ TAB: COBROS ══════════════════════════ */}
       {tab === 'cobros' && (
         <div className="space-y-4">
+          {!cajaAbierta && (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl px-4 py-3 text-sm">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+              <p>
+                <strong>Caja cerrada.</strong> Abra la caja en{' '}
+                <Link href="/ventas" className="underline font-medium">Ventas / Caja</Link>{' '}
+                antes de registrar cobros de cuotas.
+              </p>
+            </div>
+          )}
           <div className="bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-violet-800">
               Los cobros de cuotas se registran en <strong>Caja / Ventas</strong> para reflejar el ingreso en la sesión del día.
@@ -1029,6 +1168,44 @@ export default function MembresiasClient({
             <p className="text-sm text-gray-500 ml-auto">{cobrosFiltrados.length} cobros</p>
           </div>
 
+          {cobroFiltro === 'vencidos' && lotesVencidosPorMembresia.length > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 space-y-3">
+              <p className="text-sm font-semibold text-orange-900">Cobro masivo — cuotas vencidas por paciente</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {lotesVencidosPorMembresia.map(({ membresiaId, cuotas }) => {
+                  const pac = cuotas[0]?.membresia?.paciente
+                  const respaldo = respaldoCobroDesdePago(cuotas[0])
+                  const totales = totalLoteConRecargo(cuotas, hoy)
+                  const ids = cuotas.map(c => c.id)
+                  const montoInvalido = cuotas.some(c => Number(c.monto) <= 0)
+                  return (
+                    <div key={membresiaId} className="flex items-center justify-between gap-3 bg-white rounded-xl border border-orange-100 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {pac ? `${pac.nombre} ${pac.apellido1}` : `Membresía #${membresiaId}`}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {cuotas.length} cuota(s) vencida(s)
+                          {totales.recargo > 0 && ` · recargo ${fmt(totales.recargo)}`}
+                        </p>
+                      </div>
+                      {montoInvalido ? (
+                        <span className="text-xs text-red-600 font-medium shrink-0">Monto L 0.00</span>
+                      ) : (
+                        <Link
+                          href={urlCobrarCuotasVencidas(ids, { ...respaldo, monto: totales.total })}
+                          className="shrink-0 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-lg"
+                        >
+                          Cobrar {fmt(totales.total)}
+                        </Link>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {cobrosFiltrados.length === 0 ? (
             <div className="bg-white border rounded-2xl py-16 text-center text-gray-400">
               <CheckCircle className="w-10 h-10 mx-auto mb-2 opacity-30 text-green-500" />
@@ -1040,6 +1217,9 @@ export default function MembresiasClient({
               {cobrosFiltrados.map(p => {
                 const badge = badgePago(p.estado, p.fecha_vencimiento)
                 const pac   = p.membresia?.paciente
+                const det   = montoCuotaConRecargo(p.monto, p.fecha_vencimiento, hoy, p.estado)
+                const respaldo = respaldoCobroDesdePago(p)
+                const montoInvalido = Number(p.monto) <= 0
                 return (
                   <div key={p.id} className={`border rounded-2xl p-4 flex flex-col gap-3 ${colorPago(p.estado, p.fecha_vencimiento)}`}>
                     {/* header tarjeta pago */}
@@ -1082,18 +1262,32 @@ export default function MembresiasClient({
                       </div>
                       <div className="flex justify-between items-center border-t pt-1.5">
                         <span className="text-xs font-semibold text-gray-600">MONTO</span>
-                        <span className="font-bold text-blue-700">{fmt(p.monto)}</span>
+                        <div className="text-right">
+                          <span className="font-bold text-blue-700">{fmt(det.total)}</span>
+                          {det.recargo > 0 && (
+                            <p className="text-[10px] text-red-600">+{fmt(det.recargo)} recargo mora</p>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    {/* acción */}
                     {p.estado !== 'pagado' && (
-                      <Link
-                        href={`/ventas?membresia_pago=${p.id}`}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-xl text-sm font-medium hover:bg-violet-700 transition"
-                      >
-                        <Wallet className="w-4 h-4" /> Cobrar ahora <ArrowRight className="w-3.5 h-3.5 ml-auto"/>
-                      </Link>
+                      montoInvalido ? (
+                        <p className="text-xs text-red-600 text-center py-1 font-medium">Cuota L 0.00 — corrija el plan</p>
+                      ) : (
+                        <Link
+                          href={urlCobrarCuota(p.id, { ...respaldo, monto: det.total })}
+                          className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition ${
+                            cajaAbierta
+                              ? 'bg-violet-600 hover:bg-violet-700 text-white'
+                              : 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                          }`}
+                        >
+                          <Wallet className="w-4 h-4" />
+                          {cajaAbierta ? 'Cobrar ahora' : 'Ir a caja (abrir sesión)'}
+                          <ArrowRight className="w-3.5 h-3.5 ml-auto"/>
+                        </Link>
+                      )
                     )}
                     {p.estado === 'pagado' && (
                       <div className="flex items-center gap-1.5 text-green-600 text-xs justify-center py-1">
@@ -1278,10 +1472,16 @@ export default function MembresiasClient({
             {tiposList.map(t => {
               const vendidas = membresias.filter(m => m.tipo_id === t.id).length
               return (
-                <div key={t.id} className={`bg-white border rounded-2xl overflow-hidden ${!t.activo ? 'opacity-60' : ''}`}>
+                <div key={t.id} className={`bg-white border rounded-2xl overflow-hidden ${!t.activo ? 'opacity-60' : ''} ${(t.precio ?? 0) <= 0 ? 'border-red-300 ring-1 ring-red-200' : ''}`}>
                   {/* color strip */}
-                  <div className="h-1.5 bg-gradient-to-r from-blue-500 to-blue-700"/>
+                  <div className={`h-1.5 ${(t.precio ?? 0) <= 0 ? 'bg-gradient-to-r from-red-500 to-red-700' : 'bg-gradient-to-r from-blue-500 to-blue-700'}`}/>
                   <div className="p-5 space-y-3">
+                    {(t.precio ?? 0) <= 0 && (
+                      <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        Precio L 0.00 — las cuotas no se podrán cobrar en caja
+                      </div>
+                    )}
                     <div className="flex items-start justify-between">
                       <div>
                         <h3 className="font-bold text-gray-900 flex items-center gap-1.5">
@@ -1407,7 +1607,14 @@ export default function MembresiasClient({
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
                   <option value={0}>— Seleccionar —</option>
                   {tiposList.filter(t => t.activo || t.id === formMem.tipo_id).map(t => (
-                    <option key={t.id} value={t.id}>{t.nombre} — {fmt(t.precio)} / {t.duracion_dias}d</option>
+                    <option
+                      key={t.id}
+                      value={t.id}
+                      disabled={!editMemId && (t.precio ?? 0) <= 0}
+                    >
+                      {t.nombre} — {fmt(t.precio)} / {t.duracion_dias}d
+                      {(t.precio ?? 0) <= 0 ? ' (sin precio — no asignable)' : ''}
+                    </option>
                   ))}
                 </select>
                 {!editMemId && tipoSel && (tipoSel.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
@@ -1530,9 +1737,11 @@ export default function MembresiasClient({
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Precio (L.)</label>
-                  <input type="number" step="0.01" min={0} value={formTipo.precio}
+                  <input type="number" step="0.01" min={0.01} value={formTipo.precio || ''}
                     onChange={e => setFormTipo(p => ({ ...p, precio: Number(e.target.value) }))}
+                    placeholder="Ej. 500.00"
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                  <p className="text-[10px] text-gray-400 mt-1">Mínimo L 0.01 — L 0.00 bloquea el cobro en caja</p>
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Duración (días)</label>

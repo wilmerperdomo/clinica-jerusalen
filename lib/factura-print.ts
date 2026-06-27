@@ -33,6 +33,12 @@ export interface FacturaPrintData {
   estado?: string
   /** Acceso al portal del paciente (se imprime cuando la venta incluye laboratorio) */
   portal?: { usuario: string; password: string; url: string }
+  /** Programa de fidelidad — puntos del paciente */
+  fidelidad?: {
+    puntos_acumulados: number
+    puntos_ganados?: number
+    mensaje_canje?: string
+  }
 }
 
 export interface FacturaPrintOptions {
@@ -327,6 +333,20 @@ ${f.portal ? `
 </div>
 <div class="center" style="font-size:8.5px;font-weight:normal;margin-top:2px">Guarde esta contraseña: no se vuelve a mostrar.</div>` : ''}
 
+${f.fidelidad ? `
+<div class="line-solid"></div>
+<div class="center pie" style="margin-top:4px">
+  <strong>PROGRAMA DE FIDELIDAD</strong><br>
+  <span style="font-size:9px">Puntos acumulados</span><br>
+  <strong style="font-size:16px">${f.fidelidad.puntos_acumulados} punto${f.fidelidad.puntos_acumulados !== 1 ? 's' : ''}</strong>
+  ${f.fidelidad.puntos_ganados && f.fidelidad.puntos_ganados > 0
+    ? `<br><span style="font-size:9px">En esta visita: +${f.fidelidad.puntos_ganados} punto${f.fidelidad.puntos_ganados !== 1 ? 's' : ''}</span>`
+    : ''}
+</div>
+<div class="center" style="font-size:8.5px;font-weight:normal;margin-top:3px;padding:0 2mm;line-height:1.4">
+  ${f.fidelidad.mensaje_canje ?? 'Sus puntos se pueden canjear en exámenes de laboratorio.'}
+</div>` : ''}
+
 ${incluirQr && qr ? `<div class="center" style="margin-top:8px"><img src="${qr}" width="72" height="72" alt="QR"/></div>` : ''}
 </div>
 
@@ -384,6 +404,7 @@ export function facturaPrintDesdeRegistro(f: Record<string, unknown>): FacturaPr
     items: f.items,
     estado: f.estado as string | undefined,
     portal: f.portal as { usuario: string; password: string; url: string } | undefined,
+    fidelidad: f.fidelidad as FacturaPrintData['fidelidad'],
   }
 }
 

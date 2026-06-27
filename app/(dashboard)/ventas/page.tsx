@@ -6,6 +6,7 @@ import { buildMembresiasMap } from '@/lib/membresia-utils'
 import { UMBRAL_CUOTAS_MORA } from '@/lib/membresia-mora'
 import { fechaHoyHN } from '@/lib/fecha-hn'
 import { obtenerFidelidadConfig } from '@/lib/fidelidad-config'
+import { parseMembresiaPagosBulk, type RespaldoCobroMembresia } from '@/lib/membresia-cobro-url'
 import CajaClient from './caja-client'
 
 export const dynamic = 'force-dynamic'
@@ -14,12 +15,24 @@ export const metadata = { title: 'Caja / Ventas' }
 export default async function VentasPage({
   searchParams,
 }: {
-  searchParams: Promise<{ membresia_pago?: string }>
+  searchParams: Promise<{
+    membresia_pago?: string
+    membresia_pagos?: string
+    paciente?: string
+    plan?: string
+    monto?: string
+  }>
 }) {
   const params = await searchParams
   const membresiaPagoPrecarga = params.membresia_pago
     ? parseInt(params.membresia_pago, 10) || null
     : null
+  const membresiaPagosBulkPrecarga = parseMembresiaPagosBulk(params.membresia_pagos)
+  const membresiaCobroRespaldo: RespaldoCobroMembresia = {
+    paciente: params.paciente?.trim() || undefined,
+    plan: params.plan?.trim() || undefined,
+    monto: params.monto ? parseFloat(params.monto) : undefined,
+  }
   const supabase = await createClient()
   const perfilAuth = await getPerfilSucursal()
   const { userId: uid, esSuperAdmin, esAdmin, nombre } = perfilAuth
@@ -264,6 +277,8 @@ export default async function VentasPage({
       cotizacionesPorCobrar={cotizacionesPorCobrarRaw || []}
       correlativos={correlativos || []}
       membresiaPagoPrecarga={membresiaPagoPrecarga}
+      membresiaPagosBulkPrecarga={membresiaPagosBulkPrecarga}
+      membresiaCobroRespaldo={membresiaCobroRespaldo}
       fidelidadConfig={fidelidadConfig}
     />
   )

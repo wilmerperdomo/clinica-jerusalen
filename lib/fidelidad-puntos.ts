@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   type FidelidadConfig,
   FIDELIDAD_CONFIG_DEFAULT,
+  obtenerFidelidadConfig,
 } from '@/lib/fidelidad-config'
 
 /** @deprecated Usar FIDELIDAD_CONFIG_DEFAULT.lempiras_por_punto */
@@ -66,7 +67,39 @@ export async function obtenerSaldoPuntos(
 export type ResultadoAcumulacion = {
   ok: boolean
   puntos?: number
+  saldo?: number
   error?: string
+}
+
+/** Mensaje estándar en la factura sobre el canje de puntos */
+export const MENSAJE_CANJE_FIDELIDAD =
+  'Sus puntos se pueden canjear en exámenes de laboratorio.'
+
+export type FidelidadFacturaPrint = {
+  puntos_acumulados: number
+  puntos_ganados?: number
+  mensaje_canje: string
+}
+
+/** Datos de fidelidad para imprimir en la factura */
+export async function datosFidelidadParaFactura(
+  sb: SupabaseClient,
+  pacienteId: number | null | undefined,
+  opts?: { puntosGanados?: number; saldo?: number; config?: FidelidadConfig },
+): Promise<FidelidadFacturaPrint | undefined> {
+  if (!pacienteId) return undefined
+  const config = opts?.config ?? await obtenerFidelidadConfig(sb)
+  if (!config.activo) return undefined
+
+  const saldo = opts?.saldo != null
+    ? opts.saldo
+    : await obtenerSaldoPuntos(sb, pacienteId)
+
+  return {
+    puntos_acumulados: saldo,
+    puntos_ganados: opts?.puntosGanados && opts.puntosGanados > 0 ? opts.puntosGanados : undefined,
+    mensaje_canje: MENSAJE_CANJE_FIDELIDAD,
+  }
 }
 
 /** Acumula puntos tras emitir factura fiscal (idempotente por factura_id) */
@@ -80,7 +113,8 @@ export async function acumularPuntosPorFactura(
   if (error) return { ok: false, error: error.message }
   const row = Array.isArray(data) ? data[0] : data
   const puntos = Number(row?.puntos_otorgados ?? row?.puntos ?? 0)
-  return { ok: true, puntos }
+  const saldo = Number(row?.saldo_nuevo ?? 0)
+  return { ok: true, puntos, saldo }
 }
 
 export type ResultadoCanje = {

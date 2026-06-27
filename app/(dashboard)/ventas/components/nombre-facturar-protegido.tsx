@@ -8,6 +8,8 @@ export type FormFacturaCliente = {
   nombre_cliente: string
   rtn_cliente: string
   exento: boolean
+  /** Si true, la factura impresa muestra el nombre de cada medicamento. */
+  mostrar_nombres_meds: boolean
 }
 
 interface Props {

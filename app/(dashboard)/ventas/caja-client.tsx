@@ -28,6 +28,18 @@ import {
   reservarSiguienteCorrelativo, confirmarCorrelativo, esErrorNumeroDuplicado,
 } from '@/lib/factura-correlativo'
 import { abrirFacturaTermica, facturaPrintDesdeRegistro, type FacturaPrintData } from '@/lib/factura-print'
+import {
+  aplicarPrivacidadMedicamentosImpresion,
+  ETIQUETA_MEDICAMENTO_FACTURA,
+  facturaTieneMedicamentos,
+  itemMedicamentoParaFactura,
+  prepararItemsCotizacionParaBd,
+  prepararItemsMedicamentosParaBd,
+} from '@/lib/factura-medicamentos'
+import CheckboxNombresMedicamentosFactura from '@/components/factura/checkbox-nombres-medicamentos'
+import { calcularTotalesCot, type ItemCotizacion } from '@/lib/cotizacion-utils'
+import type { RespaldoCobroMembresia } from '@/lib/membresia-cobro-url'
+import { calcularRecargoCuota, montoCuotaConRecargo, totalLoteConRecargo } from '@/lib/membresia-mora'
 import { generarAccesoPortal } from '@/app/(dashboard)/laboratorio/portal-actions'
 import { abrirCierreCajaPrint, type CajaCierrePrintData } from '@/lib/caja-cierre-print'
 import { formatearNombreMedico } from '@/lib/medico-utils'
@@ -56,6 +68,7 @@ import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
 import {
   acumularPuntosPorFactura,
   canjearPuntosLaboratorio,
+  datosFidelidadParaFactura,
   descuentoMaximoCanje,
   maxPuntosCanjeables,
   obtenerSaldoPuntos,
@@ -199,6 +212,8 @@ interface Props {
   cotizacionesPorCobrar:   CotizacionPorCobrar[]
   correlativos:            Correlativo[]
   membresiaPagoPrecarga?:  number | null
+  membresiaPagosBulkPrecarga?: number[]
+  membresiaCobroRespaldo?: RespaldoCobroMembresia
   fidelidadConfig:         FidelidadConfig
 }
 
@@ -220,6 +235,8 @@ export default function CajaClient({
   cotizacionesPorCobrar: initCotizacionesPorCobrar,
   correlativos: initCorrelativos,
   membresiaPagoPrecarga = null,
+  membresiaPagosBulkPrecarga = [],
+  membresiaCobroRespaldo: membresiaCobroRespaldoInit = {},
   fidelidadConfig,
 }: Props) {
   const confirmDialog = useConfirm()
@@ -237,11 +254,12 @@ export default function CajaClient({
   const [modalCobroCot, setModalCobroCot] = useState(false)
   const [guardandoCobroCot, setGuardandoCobroCot] = useState(false)
   const [formCobroCot, setFormCobroCot] = useState({
-    forma_pago: 'EFECTIVO', referencia: '', nota: '',
+    forma_pago: 'EFECTIVO', referencia: '', nota: '', mostrar_nombres_meds: false,
   })
   const [modalCobroLab, setModalCobroLab] = useState(false)
   const [modalCobroMembresia, setModalCobroMembresia] = useState(false)
-  const [membresiaPagoCobro, setMembresiaPagoCobro] = useState<MembresiaPagoCobro | null>(null)
+  const [membresiaCobroLote, setMembresiaCobroLote] = useState<MembresiaPagoCobro[]>([])
+  const [membresiaCobroRespaldoUi, setMembresiaCobroRespaldoUi] = useState<RespaldoCobroMembresia>({})
   const [guardandoCobroMembresia, setGuardandoCobroMembresia] = useState(false)
   const [formCobroMembresia, setFormCobroMembresia] = useState({
     forma_pago: 'EFECTIVO', referencia: '', nota: '',
@@ -272,7 +290,7 @@ export default function CajaClient({
   const [consultaCobro,  setConsultaCobro]  = useState<ConsultaPorCobrar | null>(null)
   const [correlativos,   setCorrelativos]   = useState(initCorrelativos)
   const [modalFactura,   setModalFactura]   = useState(false)
-  const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: true })
+  const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
   const [titularFacturaRegistrado, setTitularFacturaRegistrado] = useState({ nombre: '', rtn: '' })
   const [guardandoFact,  setGuardandoFact]  = useState(false)
   const [factImpresa,    setFactImpresa]    = useState<Record<string, unknown> | null>(null)
@@ -324,7 +342,7 @@ export default function CajaClient({
   const [ventaRapidaCobro, setVentaRapidaCobro] = useState<VentaRapidaIngresoOk | null>(null)
   const [modalFacturaVentaRapida, setModalFacturaVentaRapida] = useState(false)
   const [formFacturaVentaRapida, setFormFacturaVentaRapida] = useState({
-    nombre_cliente: '', rtn_cliente: '', exento: true,
+    nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false,
   })
   const [titularFacturaVentaRapida, setTitularFacturaVentaRapida] = useState({ nombre: '', rtn: '' })
   const [guardandoFactVentaRapida, setGuardandoFactVentaRapida] = useState(false)
@@ -350,7 +368,7 @@ export default function CajaClient({
     setVentaRapidaCobro(null)
     setModalFacturaVentaRapida(false)
     setFactImpresaVentaRapida(null)
-    setFormFacturaVentaRapida({ nombre_cliente: '', rtn_cliente: '', exento: true })
+    setFormFacturaVentaRapida({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
   }
 
   const ventaRapida = useVentaRapida({
@@ -374,6 +392,7 @@ export default function CajaClient({
         nombre_cliente: factInit.nombre_cliente,
         rtn_cliente: factInit.rtn_cliente,
         exento: true,
+        mostrar_nombres_meds: false,
       })
       setVentaRapidaCobro(data)
       startTransition(() => { recargar() })
@@ -1015,7 +1034,7 @@ export default function CajaClient({
       setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
       setConsultaCobro(full)
       setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
-      setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true })
+      setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true, mostrar_nombres_meds: false })
       setModalCobro(true)
     } finally {
       setLoadingCobro(false)
@@ -1284,7 +1303,7 @@ export default function CajaClient({
     setModalFactura(false)
     setFactImpresa(null)
     setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
-    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true })
+    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
   }
 
   async function abrirModalCobroLab(grupo: LabGrupoCobro) {
@@ -1303,7 +1322,7 @@ export default function CajaClient({
     setPuntosFidelidadLab(
       grupo.pacienteId ? await obtenerSaldoPuntos(supabase, grupo.pacienteId) : 0,
     )
-    setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true })
+    setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true, mostrar_nombres_meds: false })
     setLabCobroExitoso(null)
     setLabFacturaCtx(null)
     setModalFacturaLab(false)
@@ -1320,7 +1339,7 @@ export default function CajaClient({
     setModalFacturaLab(false)
     setFactImpresa(null)
     setFormCobroLab({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', descuento_confirmado: false })
-    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true })
+    setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
     setPuntosFidelidadLab(0)
     setUsarPuntosLab(false)
     setPuntosCanjearLab('')
@@ -1551,89 +1570,94 @@ export default function CajaClient({
     })
   }
 
-  function abrirModalCobroMembresia(pago: MembresiaPagoCobro) {
+  const QUERY_PAGO_MEMBRESIA = `
+    id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado,
+    membresia:membresias(
+      numero_carnet, paciente_id, sucursal_id,
+      tipo:membresia_tipos(nombre),
+      paciente:pacientes(id, codigo, nombre, apellido1, apellido2, telefono, celular, correo)
+    )
+  `
+
+  function abrirModalCobroMembresia(pagos: MembresiaPagoCobro | MembresiaPagoCobro[], respaldo?: RespaldoCobroMembresia) {
+    const lote = Array.isArray(pagos) ? pagos : [pagos]
+    if (lote.length === 0) return
     if (!sesion) {
-      alert('Debes abrir la caja del día antes de cobrar cuotas de membresía')
+      setMembresiaCobroLote(lote)
+      setMembresiaCobroRespaldoUi(respaldo ?? {})
+      setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+      setModalCobroMembresia(true)
       return
     }
-    setMembresiaPagoCobro(pago)
+    setMembresiaCobroLote(lote)
+    setMembresiaCobroRespaldoUi(respaldo ?? {})
     setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
     setModalCobroMembresia(true)
   }
 
-  // Precarga desde Planes Médicos: /ventas?membresia_pago=ID
-  // Se abre el modal con el monto SIEMPRE (haya o no caja abierta);
-  // si la caja está cerrada el botón "Cobrar" queda deshabilitado con aviso.
+  // Precarga desde Planes Médicos: /ventas?membresia_pago=ID o ?membresia_pagos=1,2,3
   useEffect(() => {
-    if (!membresiaPagoPrecarga) return
+    const idsBulk = membresiaPagosBulkPrecarga?.length
+      ? membresiaPagosBulkPrecarga
+      : (membresiaPagoPrecarga ? [membresiaPagoPrecarga] : [])
+    if (idsBulk.length === 0) return
     setTab('membresias_cobrar')
     if (precargaMembresiaRef.current) return
 
-    const abrir = (pago: MembresiaPagoCobro) => {
+    const abrirLote = (pagos: MembresiaPagoCobro[]) => {
+      if (pagos.length === 0) return
       precargaMembresiaRef.current = true
-      setMembresiaPagoCobro(pago)
-      setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
-      setModalCobroMembresia(true)
+      setMembresiaPorCobrar(prev => {
+        const merged = [...prev]
+        for (const p of pagos) {
+          if (!merged.some(x => x.id === p.id)) merged.push(p)
+        }
+        return merged
+      })
+      abrirModalCobroMembresia(pagos, membresiaCobroRespaldoInit)
     }
 
-    const enLista = initMembresiaPagosPorCobrar?.find(p => p.id === membresiaPagoPrecarga)
-      ?? membresiaPorCobrar.find(p => p.id === membresiaPagoPrecarga)
-    if (enLista) {
-      abrir(enLista)
+    const enLista = idsBulk
+      .map(id => initMembresiaPagosPorCobrar?.find(p => p.id === id)
+        ?? membresiaPorCobrar.find(p => p.id === id))
+      .filter((p): p is MembresiaPagoCobro => !!p && p.estado !== 'pagado')
+
+    if (enLista.length === idsBulk.length) {
+      abrirLote(enLista)
       return
     }
 
     void (async () => {
-      const { data } = await supabase
+      const { data: rows } = await supabase
         .from('membresia_pagos')
-        .select(`
-          id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado,
-          membresia:membresias(
-            numero_carnet, paciente_id, sucursal_id,
-            tipo:membresia_tipos(nombre),
-            paciente:pacientes(id, codigo, nombre, apellido1, apellido2, telefono, celular, correo)
-          )
-        `)
-        .eq('id', membresiaPagoPrecarga)
-        .maybeSingle()
-      if (data && data.estado !== 'pagado') {
-        const pago = data as MembresiaPagoCobro
-        setMembresiaPorCobrar(prev => prev.some(p => p.id === pago.id) ? prev : [...prev, pago])
-        abrir(pago)
-      }
+        .select(QUERY_PAGO_MEMBRESIA)
+        .in('id', idsBulk)
+      const pagos = (rows ?? []).filter(r => r.estado !== 'pagado') as MembresiaPagoCobro[]
+      if (pagos.length > 0) abrirLote(pagos)
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [membresiaPagoPrecarga, sesion])
+  }, [membresiaPagoPrecarga, membresiaPagosBulkPrecarga, sesion])
 
   function cerrarModalCobroMembresia() {
     setModalCobroMembresia(false)
-    setMembresiaPagoCobro(null)
+    setMembresiaCobroLote([])
+    setMembresiaCobroRespaldoUi({})
     setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
   }
 
   async function procesarCobroMembresia() {
-    if (!membresiaPagoCobro || !sesion) return
+    if (membresiaCobroLote.length === 0 || !sesion) return
     const errSesion = validarSesionOperacion(sesion, userId)
     if (errSesion) { alert(errSesion); return }
 
     setGuardandoCobroMembresia(true)
     const sb = supabase
-    const pago = membresiaPagoCobro
+    const lote = membresiaCobroLote
 
-    const { data: pagoDb } = await sb.from('membresia_pagos')
-      .select('id, monto, estado')
-      .eq('id', pago.id)
-      .maybeSingle()
-
-    if (!pagoDb || pagoDb.estado === 'pagado') {
-      alert('Esta cuota ya fue cobrada')
-      setGuardandoCobroMembresia(false)
-      return
-    }
-
-    const total = Number(pagoDb.monto)
+    const totalesLote = totalLoteConRecargo(lote, fechaHoy)
+    const total = totalesLote.total
     if (total <= 0) {
-      alert('El monto a cobrar debe ser mayor a cero')
+      alert('El monto a cobrar debe ser mayor a cero. Verifique que el plan tenga precio configurado.')
       setGuardandoCobroMembresia(false)
       return
     }
@@ -1641,55 +1665,97 @@ export default function CajaClient({
     const errRef = validarReferenciaPago(formCobroMembresia.forma_pago, formCobroMembresia.referencia)
     if (errRef) { alert(errRef); setGuardandoCobroMembresia(false); return }
 
-    const pac = pago.membresia?.paciente
-    const pacNombre = pac ? `${pac.nombre} ${pac.apellido1}` : 'Membresía'
-    const planNombre = pago.membresia?.tipo?.nombre || 'Plan médico'
-    const carnet = pago.membresia?.numero_carnet || ''
+    const primerPago = lote[0]
+    const pac = primerPago.membresia?.paciente
+    const pacNombre = pac
+      ? `${pac.nombre} ${pac.apellido1}`
+      : (membresiaCobroRespaldoUi.paciente || 'Membresía')
+    const planNombre = primerPago.membresia?.tipo?.nombre
+      || membresiaCobroRespaldoUi.plan
+      || 'Plan médico'
+    const carnet = primerPago.membresia?.numero_carnet || ''
     const hora = new Date().toTimeString().slice(0, 5)
     const cajeroNombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
-    // ── 1. RECLAMAR la cuota primero (anti doble-cobro) ──
-    const { data: cuotaReclamada, error: errPago } = await sb.from('membresia_pagos').update({
-      estado:        'pagado',
-      fecha_pago:    fechaHoy,
-      forma_pago:    formCobroMembresia.forma_pago,
-      cajero_nombre: cajeroNombre,
-      notas:         formCobroMembresia.nota || null,
-    }).eq('id', pago.id).in('estado', ['pendiente', 'vencido']).select('id')
-    if (errPago) {
-      alert('Error al actualizar cuota: ' + errPago.message)
-      setGuardandoCobroMembresia(false)
-      return
-    }
-    if (!cuotaReclamada || cuotaReclamada.length === 0) {
-      alert('Esta cuota ya fue cobrada por otra caja. Actualice la lista.')
-      setGuardandoCobroMembresia(false)
-      startTransition(() => recargar())
-      return
+    const claimedIds: number[] = []
+    const revertirTodas = async () => {
+      for (const id of claimedIds) {
+        await sb.from('membresia_pagos').update({
+          estado: 'pendiente', fecha_pago: null, forma_pago: null, cajero_nombre: null,
+        }).eq('id', id)
+      }
     }
 
-    const revertirCuota = async () => {
-      await sb.from('membresia_pagos').update({ estado: 'pendiente', fecha_pago: null }).eq('id', pago.id)
+    for (const pago of lote) {
+      const { data: pagoDb } = await sb.from('membresia_pagos')
+        .select('id, monto, estado')
+        .eq('id', pago.id)
+        .maybeSingle()
+
+      if (!pagoDb || pagoDb.estado === 'pagado') {
+        alert(`La cuota #${pago.numero_cuota} ya fue cobrada. Actualice la lista.`)
+        setGuardandoCobroMembresia(false)
+        return
+      }
+      if (Number(pagoDb.monto) <= 0) {
+        alert(`La cuota #${pago.numero_cuota} tiene monto L 0.00. Corrija el precio del plan.`)
+        setGuardandoCobroMembresia(false)
+        return
+      }
+
+      const { data: cuotaReclamada, error: errPago } = await sb.from('membresia_pagos').update({
+        estado:        'pagado',
+        fecha_pago:    fechaHoy,
+        forma_pago:    formCobroMembresia.forma_pago,
+        cajero_nombre: cajeroNombre,
+        notas:         [
+          formCobroMembresia.nota || null,
+          totalesLote.recargo > 0
+            ? `Recargo mora ${calcularRecargoCuota(pago.monto, pago.fecha_vencimiento, fechaHoy, pago.estado).toFixed(2)}`
+            : null,
+        ].filter(Boolean).join(' · ') || null,
+      }).eq('id', pago.id).in('estado', ['pendiente', 'vencido']).select('id')
+
+      if (errPago) {
+        await revertirTodas()
+        alert('Error al actualizar cuota: ' + errPago.message)
+        setGuardandoCobroMembresia(false)
+        return
+      }
+      if (!cuotaReclamada || cuotaReclamada.length === 0) {
+        await revertirTodas()
+        alert('Una o más cuotas ya fueron cobradas por otra caja. Actualice la lista.')
+        setGuardandoCobroMembresia(false)
+        startTransition(() => recargar())
+        return
+      }
+      claimedIds.push(pago.id)
     }
 
-    // ── 2. Registrar el dinero; si falla, revertir el claim de la cuota ──
+    const concepto = lote.length === 1
+      ? `Membresía — ${planNombre} · Cuota #${primerPago.numero_cuota}`
+      : `Membresía — ${planNombre} · ${lote.length} cuotas`
+
     const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id:       sesion.id,
       sucursal_id:     sesion.sucursal_id,
       cajero_id:       userId,
       tipo:            'INGRESO',
-      concepto:        `Membresía — ${planNombre} · Cuota #${pago.numero_cuota}`,
-      paciente_id:     pago.membresia?.paciente_id ?? pac?.id ?? null,
+      concepto,
+      paciente_id:     primerPago.membresia?.paciente_id ?? pac?.id ?? null,
       paciente_nombre: pacNombre,
       monto:           total,
       forma_pago:      formCobroMembresia.forma_pago,
       referencia_pago: formCobroMembresia.referencia || null,
-      nota:            formCobroMembresia.nota || `Carnet ${carnet} · pago #${pago.id}`,
+      nota:            [
+        formCobroMembresia.nota || `Carnet ${carnet} · pagos ${lote.map(p => p.id).join(',')}`,
+        totalesLote.recargo > 0 ? `Incluye recargo mora L ${totalesLote.recargo.toFixed(2)}` : null,
+      ].filter(Boolean).join(' · '),
       fecha:           fechaHoy,
       hora,
     })
     if (errMov) {
-      await revertirCuota()
+      await revertirTodas()
       alert('Error al registrar cobro: ' + errMov.message)
       setGuardandoCobroMembresia(false)
       return
@@ -1700,17 +1766,24 @@ export default function CajaClient({
     }).eq('id', sesion.id)
     if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
 
-    const { data: memb } = await sb.from('membresias')
-      .select('cuotas_pagadas')
-      .eq('id', pago.membresia_id)
-      .maybeSingle()
-    if (memb) {
-      await sb.from('membresias').update({
-        cuotas_pagadas: (memb.cuotas_pagadas || 0) + 1,
-      }).eq('id', pago.membresia_id)
+    const porMembresia = new Map<number, number>()
+    for (const p of lote) {
+      porMembresia.set(p.membresia_id, (porMembresia.get(p.membresia_id) ?? 0) + 1)
+    }
+    for (const [memId, count] of porMembresia) {
+      const { data: memb } = await sb.from('membresias')
+        .select('cuotas_pagadas')
+        .eq('id', memId)
+        .maybeSingle()
+      if (memb) {
+        await sb.from('membresias').update({
+          cuotas_pagadas: (memb.cuotas_pagadas || 0) + count,
+        }).eq('id', memId)
+      }
     }
 
-    setMembresiaPorCobrar(prev => prev.filter(p => p.id !== pago.id))
+    const idsCobrados = new Set(lote.map(p => p.id))
+    setMembresiaPorCobrar(prev => prev.filter(p => !idsCobrados.has(p.id)))
     cerrarModalCobroMembresia()
     setGuardandoCobroMembresia(false)
 
@@ -1729,14 +1802,14 @@ export default function CajaClient({
       return
     }
     setCotCobro(c)
-    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '', mostrar_nombres_meds: false })
     setModalCobroCot(true)
   }
 
   function cerrarModalCobroCot() {
     setModalCobroCot(false)
     setCotCobro(null)
-    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '', mostrar_nombres_meds: false })
   }
 
   async function procesarCobroCotizacion() {
@@ -1760,7 +1833,36 @@ export default function CajaClient({
       return
     }
 
-    const total = Number(cot.total)
+    // ── Blindaje fiscal: los medicamentos son exentos por ley. Recalculamos
+    //    los totales de la cotización forzando ISV 0 en medicamentos, para que
+    //    el cobro en caja y la factura nunca apliquen ISV a un medicamento mal
+    //    configurado. El total corregido se usa tanto en el movimiento como en
+    //    la factura, manteniéndolos consistentes.
+    let itemsCot: ItemCotizacion[] = []
+    {
+      let raw: unknown = cot.items
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw) } catch { raw = [] }
+      }
+      itemsCot = Array.isArray(raw) ? (raw as ItemCotizacion[]) : []
+    }
+    const itemsCotBlind: ItemCotizacion[] = itemsCot.map(it =>
+      it.tipo === 'MEDICAMENTO' ? { ...it, isv_pct: 0 } : it,
+    )
+    const subtotalCot = Number(cot.subtotal) || 0
+    const porDescuentoCot = subtotalCot > 0
+      ? (Number(cot.descuento_monto) || 0) / subtotalCot * 100
+      : 0
+    const totalesCot = itemsCotBlind.length > 0
+      ? calcularTotalesCot(itemsCotBlind, porDescuentoCot, !!cot.exento_isv)
+      : {
+          subtotal: subtotalCot,
+          descuento_monto: Number(cot.descuento_monto) || 0,
+          isv_monto: Number(cot.isv_monto) || 0,
+          total: Number(cot.total) || 0,
+        }
+
+    const total = totalesCot.total
     if (total <= 0) {
       alert('El total de la cotización debe ser mayor a cero')
       setGuardandoCobroCot(false)
@@ -1805,8 +1907,8 @@ export default function CajaClient({
       paciente_id:     cot.paciente_id ?? null,
       paciente_nombre: cot.cliente_nombre,
       monto:           total,
-      monto_bruto:     Number(cot.subtotal) || total,
-      descuento_monto: Number(cot.descuento_monto) || 0,
+      monto_bruto:     totalesCot.subtotal || total,
+      descuento_monto: totalesCot.descuento_monto || 0,
       forma_pago:      formCobroCot.forma_pago,
       referencia_pago: formCobroCot.referencia || null,
       nota:            formCobroCot.nota || `Cotización ${cot.numero}`,
@@ -1842,10 +1944,7 @@ export default function CajaClient({
     }
 
     // ── 4. Emitir factura fiscal con correlativo (claim-first del número) ──
-    let itemsFactura: unknown = cot.items
-    if (typeof itemsFactura === 'string') {
-      try { itemsFactura = JSON.parse(itemsFactura) } catch { itemsFactura = [] }
-    }
+    const itemsBd = prepararItemsCotizacionParaBd(itemsCotBlind)
 
     const payloadBase = {
       fecha:            fechaHoy,
@@ -1855,10 +1954,10 @@ export default function CajaClient({
       cliente_nombre:   cot.cliente_nombre || 'CONSUMIDOR FINAL',
       cliente_rtn:      cot.cliente_rtn || null,
       cliente_email:    cot.cliente_email || null,
-      items:            itemsFactura,
-      subtotal:         Number(cot.subtotal),
-      descuento_monto:  Number(cot.descuento_monto) || 0,
-      isv_monto:        Number(cot.isv_monto) || 0,
+      items:            itemsBd,
+      subtotal:         totalesCot.subtotal,
+      descuento_monto:  totalesCot.descuento_monto,
+      isv_monto:        totalesCot.isv_monto,
       total,
       exento_isv:       !!cot.exento_isv,
       cotizacion_id:    cot.id,
@@ -1916,13 +2015,31 @@ export default function CajaClient({
     if (fact.paciente_id) {
       const resPts = await acumularPuntosPorFactura(sb2, fact.id as number)
       if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+      const printCot = await adjuntarFidelidadAFactura(
+        aplicarPrivacidadMedicamentosImpresion(
+          facturaPrintDesdeRegistro({ ...fact, sucursal: suc }),
+          formCobroCot.mostrar_nombres_meds,
+        ),
+        fact.paciente_id as number,
+        resPts.puntos,
+        resPts.saldo,
+      )
+      setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
+      cerrarModalCobroCot()
+      setGuardandoCobroCot(false)
+      abrirFacturaTermica(printCot, { autoPrint: true })
+    } else {
+      setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
+      cerrarModalCobroCot()
+      setGuardandoCobroCot(false)
+      abrirFacturaTermica(
+        aplicarPrivacidadMedicamentosImpresion(
+          facturaPrintDesdeRegistro({ ...fact, sucursal: suc }),
+          formCobroCot.mostrar_nombres_meds,
+        ),
+        { autoPrint: true },
+      )
     }
-
-    setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
-    cerrarModalCobroCot()
-    setGuardandoCobroCot(false)
-
-    abrirFacturaTermica(facturaPrintDesdeRegistro({ ...fact, sucursal: suc }), { autoPrint: true })
 
     startTransition(async () => {
       const { data: s2 } = await sb2.from('caja_sesiones')
@@ -1962,7 +2079,10 @@ export default function CajaClient({
     const base = desgloseFact.subtotal
     const valDesc = desgloseFact.descTotal
     const subtotalConDesc = desgloseFact.total
-    const isv  = formFactura.exento ? 0 : subtotalConDesc * 0.15
+    // Los medicamentos son exentos por ley: nunca entran en la base gravable del ISV.
+    const medsNeto = desgloseFact.lineas.find(l => l.categoria === 'medicamentos')?.neto ?? 0
+    const baseGravable = Math.max(0, subtotalConDesc - medsNeto)
+    const isv  = formFactura.exento ? 0 : baseGravable * 0.15
     const total = subtotalConDesc + isv
 
     // items de la factura
@@ -1970,7 +2090,22 @@ export default function CajaClient({
     if (det.consulta > 0)   items.push({ descripcion: `Consulta - ${consultaCobro.tipo_nombre || 'General'}`, cantidad: 1, precio_unitario: det.consulta,  isv_pct: formFactura.exento ? 0 : 15, subtotal: det.consulta })
     if (det.servicios > 0)  items.push({ descripcion: 'Servicios Médicos', cantidad: 1, precio_unitario: det.servicios, isv_pct: formFactura.exento ? 0 : 15, subtotal: det.servicios })
     if (det.lab > 0)        items.push({ descripcion: 'Análisis de Laboratorio', cantidad: 1, precio_unitario: det.lab, isv_pct: formFactura.exento ? 0 : 15, subtotal: det.lab })
-    if (det.meds > 0)       items.push({ descripcion: 'Medicamentos', cantidad: 1, precio_unitario: det.meds, isv_pct: formFactura.exento ? 0 : 15, subtotal: det.meds })
+    if (det.meds > 0) {
+      const nombresMeds = consultaCobro.consulta_detalle
+        ?.map(d => d.no_producto)
+        .filter(Boolean)
+        .join(', ') || undefined
+      items.push({
+        descripcion: ETIQUETA_MEDICAMENTO_FACTURA,
+        cantidad: 1,
+        precio_unitario: det.meds,
+        isv_pct: 0,
+        subtotal: det.meds,
+        tipo_item: 'MEDICAMENTO',
+        nombre_real: nombresMeds,
+        es_medicamento: true,
+      })
+    }
     if (items.length === 0) items.push({ descripcion: `Consulta - ${consultaCobro.tipo_nombre || 'General'}`, cantidad: 1, precio_unitario: cobroExitoso.total, isv_pct: formFactura.exento ? 0 : 15, subtotal: cobroExitoso.total })
 
     const pac  = consultaCobro.paciente
@@ -2052,17 +2187,27 @@ export default function CajaClient({
       return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
     })
 
+    let puntosGanados = 0
+    let saldoPts = 0
     if (fact.paciente_id) {
       const resPts = await acumularPuntosPorFactura(sb2, fact.id)
       if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+      else { puntosGanados = resPts.puntos ?? 0; saldoPts = resPts.saldo ?? 0 }
     }
 
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresa(impresa)
     setGuardandoFact(false)
     const tieneLab = (consultaCobro?.consulta_analisis?.length ?? 0) > 0
-    const printDataCons = await adjuntarPortalSiLab(
-      facturaPrintDesdeRegistro(impresa), fact?.paciente_id ?? consultaCobro?.paciente_id ?? null, tieneLab,
+    let printDataCons = await adjuntarPortalSiLab(
+      aplicarPrivacidadMedicamentosImpresion(
+        facturaPrintDesdeRegistro(impresa),
+        formFactura.mostrar_nombres_meds,
+      ),
+      fact?.paciente_id ?? consultaCobro?.paciente_id ?? null, tieneLab,
+    )
+    printDataCons = await adjuntarFidelidadAFactura(
+      printDataCons, fact?.paciente_id ?? consultaCobro?.paciente_id ?? null, puntosGanados, saldoPts,
     )
     abrirFacturaTermica(printDataCons, { autoPrint: true })
   }
@@ -2167,16 +2312,22 @@ export default function CajaClient({
       return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
     })
 
+    let puntosGanadosLab = 0
+    let saldoPtsLab = 0
     if (fact.paciente_id) {
       const resPts = await acumularPuntosPorFactura(sb2, fact.id)
       if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+      else { puntosGanadosLab = resPts.puntos ?? 0; saldoPtsLab = resPts.saldo ?? 0 }
     }
 
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresa(impresa)
     setGuardandoFact(false)
-    const printDataLab = await adjuntarPortalSiLab(
+    let printDataLab = await adjuntarPortalSiLab(
       facturaPrintDesdeRegistro(impresa), grupo.pacienteId || null, true,
+    )
+    printDataLab = await adjuntarFidelidadAFactura(
+      printDataLab, grupo.pacienteId || fact.paciente_id || null, puntosGanadosLab, saldoPtsLab,
     )
     abrirFacturaTermica(printDataLab, { autoPrint: true })
   }
@@ -2222,10 +2373,33 @@ export default function CajaClient({
     return printData
   }
 
+  /** Adjunta puntos de fidelidad del paciente al ticket de factura */
+  async function adjuntarFidelidadAFactura(
+    printData: FacturaPrintData,
+    pacienteId: number | null | undefined,
+    puntosGanados?: number,
+    saldo?: number,
+  ): Promise<FacturaPrintData> {
+    if (!pacienteId || !fidelidadConfig.activo) return printData
+    const fidelidad = await datosFidelidadParaFactura(supabase, pacienteId, {
+      puntosGanados,
+      saldo,
+      config: fidelidadConfig,
+    })
+    if (!fidelidad) return printData
+    return { ...printData, fidelidad }
+  }
+
   /* ── imprimir factura generada desde caja ── */
-  function imprimirFacturaCaja() {
+  async function imprimirFacturaCaja(mostrarNombresMeds = false) {
     if (!factImpresa) return
-    abrirFacturaTermica(facturaPrintDesdeRegistro(factImpresa as Record<string, unknown>), { autoPrint: true })
+    const pacId = (factImpresa as { paciente_id?: number }).paciente_id
+    let printData = aplicarPrivacidadMedicamentosImpresion(
+      facturaPrintDesdeRegistro(factImpresa as Record<string, unknown>),
+      mostrarNombresMeds,
+    )
+    printData = await adjuntarFidelidadAFactura(printData, pacId)
+    abrirFacturaTermica(printData, { autoPrint: true })
   }
 
   /* ── generar factura fiscal después de venta rápida ── */
@@ -2244,16 +2418,32 @@ export default function CajaClient({
     const base = ventaRapidaCobro.subtotal
     const valDesc = ventaRapidaCobro.descuentoMonto
     const subtotalConDesc = base - valDesc
-    const isv = formFacturaVentaRapida.exento ? 0 : subtotalConDesc * 0.15
+    // Los medicamentos son exentos: se excluyen de la base gravable del ISV.
+    const medsBruto = ventaRapidaCobro.items
+      .filter(i => i.tipo === 'MEDICAMENTO')
+      .reduce((s, i) => s + i.precio * i.cantidad, 0)
+    const factorDesc = base > 0 ? subtotalConDesc / base : 1
+    const baseGravable = Math.max(0, subtotalConDesc - medsBruto * factorDesc)
+    const isv = formFacturaVentaRapida.exento ? 0 : baseGravable * 0.15
     const total = subtotalConDesc + isv
 
-    const items = ventaRapidaCobro.items.map(item => ({
-      descripcion: `${PREFIJOS_CONCEPTO_VENTA[item.tipo]} — ${item.nombre}`,
-      cantidad: item.cantidad,
-      precio_unitario: item.precio,
-      isv_pct: formFacturaVentaRapida.exento ? 0 : 15,
-      subtotal: item.precio * item.cantidad,
-    }))
+    const itemsRaw = ventaRapidaCobro.items.map(item => {
+      if (item.tipo === 'MEDICAMENTO') {
+        return itemMedicamentoParaFactura({
+          nombreReal: item.nombre,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio,
+        })
+      }
+      return {
+        descripcion: `${PREFIJOS_CONCEPTO_VENTA[item.tipo]} — ${item.nombre}`,
+        cantidad: item.cantidad,
+        precio_unitario: item.precio,
+        isv_pct: formFacturaVentaRapida.exento ? 0 : 15,
+        subtotal: item.precio * item.cantidad,
+      }
+    })
+    const items = prepararItemsMedicamentosParaBd(itemsRaw)
 
     const pac = ventaRapidaCobro.paciente
     const hora = new Date().toTimeString().slice(0, 8)
@@ -2328,15 +2518,27 @@ export default function CajaClient({
       return [...prev, { sucursal_id: suc.id, ultimo_numero: numSig }]
     })
 
+    let puntosGanadosVr = 0
+    let saldoPtsVr = 0
     if (fact.paciente_id) {
       const resPts = await acumularPuntosPorFactura(sb2, fact.id)
       if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
+      else { puntosGanadosVr = resPts.puntos ?? 0; saldoPtsVr = resPts.saldo ?? 0 }
     }
 
     const impresa = { ...fact!, sucursal: suc }
     setFactImpresaVentaRapida(impresa)
     setGuardandoFactVentaRapida(false)
-    abrirFacturaTermica(facturaPrintDesdeRegistro(impresa), { autoPrint: true })
+    const printVr = await adjuntarFidelidadAFactura(
+      aplicarPrivacidadMedicamentosImpresion(
+        facturaPrintDesdeRegistro(impresa),
+        formFacturaVentaRapida.mostrar_nombres_meds,
+      ),
+      fact.paciente_id as number | null,
+      puntosGanadosVr,
+      saldoPtsVr,
+    )
+    abrirFacturaTermica(printVr, { autoPrint: true })
   }
 
   /* ══════════════════ JSX ══════════════════════════════════ */
@@ -2795,6 +2997,7 @@ export default function CajaClient({
                   {membresiaPorCobrar.map(p => {
                     const pac = p.membresia?.paciente
                     const vencida = p.fecha_vencimiento < fechaHoy && p.estado !== 'pagado'
+                    const det = montoCuotaConRecargo(p.monto, p.fecha_vencimiento, fechaHoy, p.estado)
                     return (
                       <div key={p.id} className="px-4 py-3 flex items-center gap-4 hover:bg-gray-50">
                         <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center shrink-0">
@@ -2809,14 +3012,15 @@ export default function CajaClient({
                           </p>
                           <p className={`text-xs mt-0.5 ${vencida ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
                             Vence {p.fecha_vencimiento}{vencida ? ' · Vencida' : ''}
+                            {det.recargo > 0 && ` · +${fmt(det.recargo)} recargo`}
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className="font-bold text-gray-900">{fmt(p.monto)}</p>
+                          <p className="font-bold text-gray-900">{fmt(det.total)}</p>
                           <button
                             type="button"
                             onClick={() => abrirModalCobroMembresia(p)}
-                            disabled={!sesion || guardandoCobroMembresia}
+                            disabled={guardandoCobroMembresia || Number(p.monto) <= 0}
                             className="mt-1 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition"
                           >
                             Cobrar cuota
@@ -3035,6 +3239,14 @@ export default function CajaClient({
               </label>
             </div>
 
+            {ventaRapidaCobro.items.some(i => i.tipo === 'MEDICAMENTO') && (
+              <CheckboxNombresMedicamentosFactura
+                id="nombres-meds-vr"
+                checked={formFacturaVentaRapida.mostrar_nombres_meds}
+                onChange={v => setFormFacturaVentaRapida(p => ({ ...p, mostrar_nombres_meds: v }))}
+              />
+            )}
+
             <div className="flex flex-col-reverse sm:flex-row gap-2 pt-1">
               <button
                 onClick={() => setModalFacturaVentaRapida(false)}
@@ -3062,15 +3274,38 @@ export default function CajaClient({
               Factura No. {(factImpresaVentaRapida as { numero?: string }).numero}
             </p>
             <p className="text-green-700 font-bold text-2xl">{fmt(ventaRapidaCobro.totalNeto)}</p>
-            <button
-              onClick={() => abrirFacturaTermica(
-                facturaPrintDesdeRegistro(factImpresaVentaRapida as Record<string, unknown>),
-                { autoPrint: true },
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={async () => {
+                  const pacId = (factImpresaVentaRapida as { paciente_id?: number }).paciente_id
+                  let printData = aplicarPrivacidadMedicamentosImpresion(
+                    facturaPrintDesdeRegistro(factImpresaVentaRapida as Record<string, unknown>),
+                    false,
+                  )
+                  printData = await adjuntarFidelidadAFactura(printData, pacId)
+                  abrirFacturaTermica(printData, { autoPrint: true })
+                }}
+                className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+              >
+                <Printer className="w-4 h-4" /> Imprimir Factura
+              </button>
+              {facturaTieneMedicamentos((factImpresaVentaRapida as { items?: unknown }).items) && (
+                <button
+                  onClick={async () => {
+                    const pacId = (factImpresaVentaRapida as { paciente_id?: number }).paciente_id
+                    let printData = aplicarPrivacidadMedicamentosImpresion(
+                      facturaPrintDesdeRegistro(factImpresaVentaRapida as Record<string, unknown>),
+                      true,
+                    )
+                    printData = await adjuntarFidelidadAFactura(printData, pacId)
+                    abrirFacturaTermica(printData, { autoPrint: true })
+                  }}
+                  className="w-full px-4 py-2.5 border border-green-300 bg-green-50 hover:bg-green-100 text-green-800 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                >
+                  <Pill className="w-4 h-4" /> Imprimir con nombres de medicamentos
+                </button>
               )}
-              className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
-            >
-              <Printer className="w-4 h-4" /> Imprimir Factura
-            </button>
+            </div>
             <button onClick={cerrarFlujoFacturaVentaRapida} className="w-full px-4 py-2 border rounded-lg text-sm">
               Cerrar
             </button>
@@ -3431,14 +3666,27 @@ export default function CajaClient({
       )}
 
       {/* ══════════ MODAL COBRO MEMBRESÍA ══════════ */}
-      {modalCobroMembresia && membresiaPagoCobro && (() => {
-        const pac = membresiaPagoCobro.membresia?.paciente
-        const vencida = membresiaPagoCobro.fecha_vencimiento < fechaHoy
+      {modalCobroMembresia && membresiaCobroLote.length > 0 && (() => {
+        const primerPago = membresiaCobroLote[0]
+        const pac = primerPago.membresia?.paciente
+        const totales = totalLoteConRecargo(membresiaCobroLote, fechaHoy)
+        const esLote = membresiaCobroLote.length > 1
+        const nombrePac = pac
+          ? `${pac.nombre} ${pac.apellido1}`
+          : (membresiaCobroRespaldoUi.paciente || 'Paciente')
+        const planNombre = primerPago.membresia?.tipo?.nombre
+          || membresiaCobroRespaldoUi.plan
+          || 'Plan médico'
+        const montoMostrar = totales.total > 0
+          ? totales.total
+          : (membresiaCobroRespaldoUi.monto ?? 0)
         return (
           <Modal
-            title="Cobro de Membresía"
-            subtitle={`${membresiaPagoCobro.membresia?.numero_carnet || '—'} · Cuota #${membresiaPagoCobro.numero_cuota}`}
-            size="lg"
+            title={esLote ? 'Cobro masivo de cuotas' : 'Cobro de Membresía'}
+            subtitle={esLote
+              ? `${membresiaCobroLote.length} cuotas · ${primerPago.membresia?.numero_carnet || '—'}`
+              : `${primerPago.membresia?.numero_carnet || '—'} · Cuota #${primerPago.numero_cuota}`}
+            size="wide"
             accent="indigo"
             icon={BadgeCheck}
             onClose={cerrarModalCobroMembresia}
@@ -3451,11 +3699,11 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={procesarCobroMembresia}
-                  disabled={guardandoCobroMembresia || !sesion}
+                  disabled={guardandoCobroMembresia || !sesion || montoMostrar <= 0}
                   title={!sesion ? 'Debes abrir la caja del día para cobrar' : undefined}
                   className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {guardandoCobroMembresia ? 'Procesando…' : `Cobrar ${fmt(membresiaPagoCobro.monto)}`}
+                  {guardandoCobroMembresia ? 'Procesando…' : `Cobrar ${fmt(montoMostrar)}`}
                 </button>
               </div>
             )}
@@ -3463,14 +3711,28 @@ export default function CajaClient({
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-3">
                 <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 space-y-2 text-sm">
-                  <p className="font-semibold text-violet-900">
-                    {pac ? `${pac.nombre} ${pac.apellido1}` : 'Paciente'}
-                  </p>
-                  <p className="text-violet-700">{membresiaPagoCobro.membresia?.tipo?.nombre || 'Plan médico'}</p>
-                  <p className="text-xs text-violet-600">
-                    Vence {membresiaPagoCobro.fecha_vencimiento}
-                    {vencida && <span className="ml-1 font-semibold text-red-600">· Vencida</span>}
-                  </p>
+                  <p className="font-semibold text-violet-900">{nombrePac}</p>
+                  <p className="text-violet-700">{planNombre}</p>
+                  {esLote ? (
+                    <ul className="text-xs text-violet-800 space-y-1 max-h-36 overflow-y-auto">
+                      {membresiaCobroLote.map(p => {
+                        const det = montoCuotaConRecargo(p.monto, p.fecha_vencimiento, fechaHoy, p.estado)
+                        return (
+                          <li key={p.id} className="flex justify-between gap-2">
+                            <span>Cuota #{p.numero_cuota} · vence {p.fecha_vencimiento}</span>
+                            <span className="font-medium shrink-0">{fmt(det.total)}</span>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-violet-600">
+                      Vence {primerPago.fecha_vencimiento}
+                      {primerPago.fecha_vencimiento < fechaHoy && (
+                        <span className="ml-1 font-semibold text-red-600">· Vencida</span>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Forma de pago</label>
@@ -3490,14 +3752,24 @@ export default function CajaClient({
                 </div>
               </div>
               <div className="space-y-3">
-                <div className="rounded-xl border p-4 text-center">
+                <div className="rounded-xl border p-4 text-center space-y-1">
                   <p className="text-xs text-gray-500 uppercase tracking-wide">Monto a cobrar</p>
-                  <p className="text-3xl font-bold text-violet-700 mt-1">{fmt(membresiaPagoCobro.monto)}</p>
+                  <p className="text-3xl font-bold text-violet-700 mt-1">{fmt(montoMostrar)}</p>
+                  {totales.recargo > 0 && (
+                    <p className="text-xs text-red-600">
+                      Incluye recargo por mora: {fmt(totales.recargo)} ({membresiaCobroLote.filter(p => calcularRecargoCuota(p.monto, p.fecha_vencimiento, fechaHoy, p.estado) > 0).length} cuota(s))
+                    </p>
+                  )}
+                  {totales.montoBase > 0 && totales.recargo > 0 && (
+                    <p className="text-[10px] text-gray-400">
+                      Cuotas {fmt(totales.montoBase)} + recargo {fmt(totales.recargo)}
+                    </p>
+                  )}
                 </div>
                 {!sesion && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <span>Debes <strong>abrir la caja del día</strong> antes de cobrar esta cuota. El monto ya está cargado; abre la caja y vuelve a presionar Cobrar.</span>
+                    <span>Debes <strong>abrir la caja del día</strong> antes de cobrar. El monto ya está cargado; abre la caja y vuelve a presionar Cobrar.</span>
                   </div>
                 )}
                 {(formCobroMembresia.forma_pago === 'TARJETA' || formCobroMembresia.forma_pago === 'TRANSFERENCIA') && (
@@ -3608,6 +3880,13 @@ export default function CajaClient({
               <p className="text-[11px] text-gray-400">
                 Al cobrar se registra el ingreso en caja y se emite la factura fiscal automáticamente.
               </p>
+              {facturaTieneMedicamentos(cotCobro.items) && (
+                <CheckboxNombresMedicamentosFactura
+                  id="nombres-meds-cot"
+                  checked={formCobroCot.mostrar_nombres_meds}
+                  onChange={v => setFormCobroCot(p => ({ ...p, mostrar_nombres_meds: v }))}
+                />
+              )}
             </div>
           </div>
         </Modal>
@@ -4024,7 +4303,7 @@ export default function CajaClient({
               <button type="button" onClick={cerrarModalCobroLab} className="flex-1 px-4 py-2.5 border rounded-lg text-sm">Cerrar</button>
               <button
                 type="button"
-                onClick={imprimirFacturaCaja}
+                onClick={() => imprimirFacturaCaja(false)}
                 className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
               >
                 <Printer className="w-4 h-4" /> Imprimir Factura
@@ -4418,6 +4697,14 @@ export default function CajaClient({
               )}
             </div>
 
+            {calcularTotalConsulta(consultaCobro).meds > 0 && (
+              <CheckboxNombresMedicamentosFactura
+                id="nombres-meds-cons"
+                checked={formFactura.mostrar_nombres_meds}
+                onChange={v => setFormFactura(p => ({ ...p, mostrar_nombres_meds: v }))}
+              />
+            )}
+
             <div className="flex flex-col-reverse sm:flex-row gap-2 pt-1">
               <button onClick={() => setModalFactura(false)} className="flex-1 px-4 py-2.5 border rounded-lg text-sm">Atrás</button>
               <button
@@ -4450,11 +4737,19 @@ export default function CajaClient({
             <div className="flex flex-col sm:flex-row gap-2">
               <button onClick={cerrarModalCobro} className="flex-1 px-4 py-2.5 border rounded-lg text-sm">Cerrar</button>
               <button
-                onClick={imprimirFacturaCaja}
+                onClick={() => imprimirFacturaCaja(false)}
                 className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
               >
                 <Printer className="w-4 h-4" /> Imprimir Factura
               </button>
+              {facturaTieneMedicamentos((factImpresa as { items?: unknown }).items) && (
+                <button
+                  onClick={() => imprimirFacturaCaja(true)}
+                  className="flex-1 px-4 py-2.5 border border-green-300 bg-green-50 hover:bg-green-100 text-green-800 rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                >
+                  <Pill className="w-4 h-4" /> Con nombres de medicamentos
+                </button>
+              )}
             </div>
           </div>
         </Modal>
@@ -4504,8 +4799,8 @@ function CobroFacturaFields({
   formFactura, setFormFactura, nombreRegistrado, rtnRegistrado = '',
   esSuperAdmin, sucursalId, supabase, resetKey,
 }: {
-  formFactura: { nombre_cliente: string; rtn_cliente: string; exento: boolean }
-  setFormFactura: React.Dispatch<React.SetStateAction<{ nombre_cliente: string; rtn_cliente: string; exento: boolean }>>
+  formFactura: { nombre_cliente: string; rtn_cliente: string; exento: boolean; mostrar_nombres_meds: boolean }
+  setFormFactura: React.Dispatch<React.SetStateAction<{ nombre_cliente: string; rtn_cliente: string; exento: boolean; mostrar_nombres_meds: boolean }>>
   nombreRegistrado: string
   rtnRegistrado?: string
   esSuperAdmin: boolean

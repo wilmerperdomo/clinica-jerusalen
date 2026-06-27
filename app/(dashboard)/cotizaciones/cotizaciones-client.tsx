@@ -211,7 +211,7 @@ export default function CotizacionesClient({
       descripcion:     p.nombre,
       cantidad:        1,
       precio_unitario: p.precio_venta,
-      isv_pct:         form.exento_isv ? 0 : 15,
+      isv_pct:         0, // Medicamento exento por ley (Honduras), sin importar el toggle
       subtotal:        p.precio_venta,
       tipo:            'MEDICAMENTO',
       producto_id:     p.id,

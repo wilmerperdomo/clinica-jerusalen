@@ -10,13 +10,18 @@ import {
 import {
   FileText, Plus, Search, Printer, X, RefreshCw,
   CheckCircle, XCircle, AlertTriangle, Hash, Building2,
-  User, DollarSign, Trash2, ChevronDown, ChevronUp, Eye,
-  ShieldAlert, History, Lock, RotateCcw, KeyRound, Receipt, Copy,
+  User,   DollarSign, Trash2, ChevronDown, ChevronUp, Eye,
+  ShieldAlert, History, Lock, RotateCcw, KeyRound, Receipt, Copy, Pill,
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 import { useConfirm } from '@/components/confirm-dialog'
-import { acumularPuntosPorFactura } from '@/lib/fidelidad-puntos'
+import { acumularPuntosPorFactura, datosFidelidadParaFactura } from '@/lib/fidelidad-puntos'
 import { abrirNotaCredito } from '@/lib/nota-credito-print'
+import {
+  aplicarPrivacidadMedicamentosImpresion,
+  facturaTieneMedicamentos,
+  isvPctSeguroMedicamento,
+} from '@/lib/factura-medicamentos'
 
 /* ══════════════════ TIPOS ════════════════════════════════════ */
 interface ItemFactura {
@@ -201,7 +206,10 @@ export default function FacturacionClient({
 
   const totales = useMemo(() => {
     const subtotal   = items.reduce((s, it) => s + it.subtotal, 0)
-    const isv_monto  = form.exento_isv ? 0 : items.reduce((s, it) => s + it.subtotal * (it.isv_pct / 100), 0)
+    // Medicamento siempre exento (isv 0), aunque el toggle global sea gravado.
+    const isv_monto  = form.exento_isv
+      ? 0
+      : items.reduce((s, it) => s + it.subtotal * (isvPctSeguroMedicamento(it, it.isv_pct) / 100), 0)
     const total      = subtotal + isv_monto
     return { subtotal, isv_monto, total }
   }, [items, form.exento_isv])
@@ -240,7 +248,9 @@ export default function FacturacionClient({
         throw new Error(`El CAI de esta sucursal venció el ${sucSeleccionada.fecha_limite}. Renueva el CAI en Configuración.`)
       }
 
-      const itemsLimpios = items.filter(it => it.descripcion.trim() && it.cantidad > 0)
+      const itemsLimpios = items
+        .filter(it => it.descripcion.trim() && it.cantidad > 0)
+        .map(it => ({ ...it, isv_pct: isvPctSeguroMedicamento(it, it.isv_pct) }))
 
       const payloadBase = {
         sucursal_id:     form.sucursal_id,
@@ -546,31 +556,39 @@ export default function FacturacionClient({
   }
 
   /* ════════ IMPRIMIR FACTURA — Formato térmico oficial ═══════ */
-  function imprimirFactura(f: Factura) {
+  async function imprimirFactura(f: Factura, mostrarNombresMeds = false) {
     const items = f.items as ItemFactura[]
     const exentoIsv = items.every(it => it.isv_pct === 0)
-    abrirFacturaTermica({
-      numero: f.numero,
-      fecha: f.fecha,
-      hora: f.hora,
-      cliente_nombre: f.cliente_nombre,
-      cliente_rtn: f.cliente_rtn,
-      rtn_emisor: f.rtn_emisor,
-      correo_emisor: f.correo_emisor ?? undefined,
-      subtotal: f.subtotal,
-      descuento_monto: f.descuento_monto,
-      isv_monto: f.isv_monto,
-      total: f.total,
-      exento_isv: exentoIsv,
-      cai: f.cai,
-      rango_inicio: f.rango_inicio,
-      rango_fin: f.rango_fin,
-      fecha_limite_cai: f.fecha_limite_cai,
-      cajero_nombre: f.cajero_nombre,
-      medico_nombre: f.medico_nombre,
-      items: f.items,
-      estado: f.estado,
-    })
+    const fidelidad = f.paciente_id
+      ? await datosFidelidadParaFactura(supabase, f.paciente_id)
+      : undefined
+    const printData = aplicarPrivacidadMedicamentosImpresion(
+      {
+        numero: f.numero,
+        fecha: f.fecha,
+        hora: f.hora,
+        cliente_nombre: f.cliente_nombre,
+        cliente_rtn: f.cliente_rtn,
+        rtn_emisor: f.rtn_emisor,
+        correo_emisor: f.correo_emisor ?? undefined,
+        subtotal: f.subtotal,
+        descuento_monto: f.descuento_monto,
+        isv_monto: f.isv_monto,
+        total: f.total,
+        exento_isv: exentoIsv,
+        cai: f.cai,
+        rango_inicio: f.rango_inicio,
+        rango_fin: f.rango_fin,
+        fecha_limite_cai: f.fecha_limite_cai,
+        cajero_nombre: f.cajero_nombre,
+        medico_nombre: f.medico_nombre,
+        items: f.items,
+        estado: f.estado,
+        fidelidad,
+      },
+      mostrarNombresMeds,
+    )
+    abrirFacturaTermica(printData)
   }
 
   /* ════════════════════════════════════════════════════════════ */
@@ -1118,11 +1136,17 @@ export default function FacturacionClient({
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
             <div className="flex items-center justify-between px-6 py-4 border-b">
               <h2 className="font-bold text-gray-900">Factura {verFact.numero}</h2>
-              <div className="flex gap-2">
-                <button onClick={() => imprimirFactura(verFact)}
+              <div className="flex gap-2 flex-wrap justify-end">
+                <button onClick={() => imprimirFactura(verFact, false)}
                   className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm hover:bg-blue-700">
                   <Printer className="w-4 h-4"/> Imprimir
                 </button>
+                {facturaTieneMedicamentos(verFact.items) && (
+                  <button onClick={() => imprimirFactura(verFact, true)}
+                    className="flex items-center gap-1.5 px-4 py-2 border border-green-300 bg-green-50 text-green-800 rounded-xl text-sm hover:bg-green-100">
+                    <Pill className="w-4 h-4"/> Con nombres de medicamentos
+                  </button>
+                )}
                 <button onClick={() => setVerFact(null)} className="text-gray-400 hover:text-gray-600 p-1"><X className="w-5 h-5"/></button>
               </div>
             </div>
