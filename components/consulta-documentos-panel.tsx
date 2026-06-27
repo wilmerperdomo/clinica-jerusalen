@@ -16,6 +16,7 @@ import {
   type RecetaPrintItem,
 } from '@/lib/consulta-documentos-print'
 import { plantillaConstancia, plantillaDefuncion, plantillaReferencia } from '@/lib/consulta-plantillas-documentos'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface RecetaItem extends RecetaPrintItem {}
 
@@ -70,6 +71,7 @@ export default function ConsultaDocumentosPanel({
   fechaConsulta,
 }: Props) {
   const sb = supabase()
+  const confirmDialog = useConfirm()
   const [subTab, setSubTab] = useState<'documentos' | 'archivos'>('documentos')
   const [docs, setDocs] = useState<DocRegistro[]>([])
   const [archivos, setArchivos] = useState<ArchivoRegistro[]>([])
@@ -396,7 +398,13 @@ export default function ConsultaDocumentosPanel({
   }
 
   async function eliminarArchivo(a: ArchivoRegistro) {
-    if (!confirm(`¿Eliminar "${a.nombre}"?`)) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar archivo',
+      message: `¿Está seguro que desea eliminar "${a.nombre}"? Esta acción no se puede deshacer.`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     await sb.storage.from('consulta-archivos').remove([a.storage_path])
     await sb.from('consulta_archivos').delete().eq('id', a.id)
     await cargar()

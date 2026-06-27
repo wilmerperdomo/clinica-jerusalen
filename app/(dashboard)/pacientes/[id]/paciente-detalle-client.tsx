@@ -13,6 +13,7 @@ import { createClient } from '@/lib/supabase/client'
 import PacienteFotoCapture from '@/components/paciente-foto-capture'
 import ColoniaSelect, { type Colonia } from '@/components/colonia-select'
 import PacientePlanHistorial, { type HistorialMembresia, type HistorialPago } from '@/components/paciente-plan-historial'
+import { useConfirm } from '@/components/confirm-dialog'
 import { nombreCompletoPaciente, edadPaciente, normalizarCodigoPaciente } from '@/lib/paciente-utils'
 import { buscarPacienteDuplicado, mensajePacienteDuplicado } from '@/lib/paciente-duplicado'
 
@@ -90,6 +91,7 @@ export default function PacienteDetalleClient({
   membresia, historialMembresias = [], historialPagos = [], colonias, totalConsultas,
 }: Props) {
   const router = useRouter()
+  const confirmDialog = useConfirm()
   const [, startTransition] = useTransition()
   const [tab, setTab] = useState<Tab>('general')
   const [paciente, setPaciente] = useState(initial)
@@ -240,7 +242,18 @@ export default function PacienteDetalleClient({
 
   async function toggleActivo() {
     const nuevo = !paciente.activo
-    if (!nuevo && !confirm('¿Desactivar este paciente? No aparecerá en búsquedas activas.')) return
+    if (!nuevo) {
+      const { confirmed } = await confirmDialog({
+        title: 'Desactivar paciente',
+        message: '¿Está seguro que desea desactivar este paciente? No aparecerá en búsquedas activas.',
+        variant: 'warning',
+        confirmLabel: 'Desactivar',
+        details: [
+          { label: 'Paciente', value: `${paciente.nombre} ${paciente.apellido1 ?? ''}`.trim() },
+        ],
+      })
+      if (!confirmed) return
+    }
     const supabase = createClient()
     const { error } = await supabase.from('pacientes').update({ activo: nuevo }).eq('id', paciente.id)
     if (error) { alert(error.message); return }

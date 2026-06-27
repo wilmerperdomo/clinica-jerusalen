@@ -17,6 +17,7 @@ import {
   type EstadoLiquidacion, type LiquidacionPrint,
 } from '@/lib/planilla-print'
 import AgregarEmpleadoPlanillaModal from '@/components/planilla/agregar-empleado-modal'
+import { useConfirm } from '@/components/confirm-dialog'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost, ModuleBtnPrimary } from '@/components/module-layout'
 
 interface Sucursal { id: number; nombre: string }
@@ -91,6 +92,7 @@ export default function PlanillaClient({
   anioInicial, mesInicial, quincenaInicial,
 }: Props) {
   const supabase = createClient()
+  const confirmDialog = useConfirm()
   const [pending, startTransition] = useTransition()
   const puedeEditar = esAdmin || esSuperAdmin
 
@@ -323,6 +325,20 @@ export default function PlanillaClient({
   }
 
   async function cambiarEstadoLiq(liqId: number, estado: EstadoLiquidacion) {
+    const liq = liquidaciones.find(l => l.id === liqId)
+    if (estado === 'ANULADO') {
+      const { confirmed } = await confirmDialog({
+        title: 'Anular liquidación',
+        message: '¿Está seguro que desea anular esta liquidación?',
+        variant: 'danger',
+        confirmLabel: 'Anular',
+        details: liq ? [
+          { label: 'Empleado', value: nombreEmpleado(liq.perfil_id) },
+          { label: 'Total', value: fmtL(Number(liq.total_pagar)) },
+        ] : undefined,
+      })
+      if (!confirmed) return
+    }
     const { error } = await supabase.from('planilla_liquidaciones')
       .update({ estado, pagado_en: estado === 'PAGADO' ? new Date().toISOString() : null })
       .eq('id', liqId)
@@ -369,8 +385,26 @@ export default function PlanillaClient({
 
     const bloquea = alertas.some(a => a.tipo === 'error')
     const msg = alertas.map(a => `${a.tipo === 'error' ? '⛔' : a.tipo === 'warning' ? '⚠️' : 'ℹ️'} ${a.mensaje}`).join('\n')
-    if (!confirm(`Validación antes de cerrar:\n\n${msg}\n\n${bloquea ? 'No se puede cerrar.' : '¿Cerrar planilla ' + labelQuincena(quincena, mes, anio) + '?'}`)) return
-    if (bloquea) return
+
+    if (bloquea) {
+      await confirmDialog({
+        title: 'No se puede cerrar',
+        message: msg,
+        variant: 'danger',
+        confirmLabel: 'Entendido',
+        cancelLabel: 'Cerrar',
+      })
+      return
+    }
+
+    const { confirmed } = await confirmDialog({
+      title: 'Cerrar planilla',
+      message: `¿Está seguro que desea cerrar la planilla ${labelQuincena(quincena, mes, anio)}? Esta acción es irreversible.`,
+      variant: 'warning',
+      confirmLabel: 'Cerrar planilla',
+      details: alertas.length ? [{ label: 'Validación', value: msg.replace(/\n/g, ' · ') }] : undefined,
+    })
+    if (!confirmed) return
 
     let prodActual = produccion
     if (!prodActual.length) {

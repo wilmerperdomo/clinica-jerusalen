@@ -14,6 +14,7 @@ import {
   ShieldAlert, History, Lock, RotateCcw, KeyRound, Receipt, Copy,
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
+import { useConfirm } from '@/components/confirm-dialog'
 import { acumularPuntosPorFactura } from '@/lib/fidelidad-puntos'
 import { abrirNotaCredito } from '@/lib/nota-credito-print'
 
@@ -122,6 +123,7 @@ export default function FacturacionClient({
   devoluciones: initDevoluciones, productos,
 }: Props) {
   const supabase = createClient()
+  const confirmDialog = useConfirm()
 
   const [facturas,  setFacturas]  = useState<Factura[]>(init)
   const [corrs,     setCorrs]     = useState<Correlativo[]>(correlativos)
@@ -470,7 +472,17 @@ export default function FacturacionClient({
 
   async function anularDevolucion(d: Devolucion) {
     if (!esSuperAdmin) return alert('Solo el super administrador puede anular una nota de crédito')
-    if (!confirm(`¿Anular la nota de crédito ${d.numero}? Se revertirá el reembolso, los puntos y el stock reingresado.`)) return
+    const { confirmed } = await confirmDialog({
+      title: 'Anular nota de crédito',
+      message: `¿Está seguro que desea anular la nota de crédito ${d.numero}? Se revertirá el reembolso, los puntos y el stock reingresado.`,
+      variant: 'danger',
+      confirmLabel: 'Anular',
+      details: [
+        { label: 'Factura', value: d.factura_numero ?? '—' },
+        { label: 'Total', value: fmt(d.total) },
+      ],
+    })
+    if (!confirmed) return
     try {
       const { data, error: e } = await supabase.rpc('fn_anular_devolucion', { p_id: d.id, p_motivo: 'Anulada desde Facturación' })
       if (e) throw e

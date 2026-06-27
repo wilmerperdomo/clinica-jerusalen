@@ -7,9 +7,20 @@ import {
   Package, Plus, Search, RefreshCw, AlertTriangle, X,
   Save, Edit2, ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
   CheckCircle2, AlertCircle, Boxes, Truck, Printer,
-  Calendar, ClipboardList, History
+  Calendar, ClipboardList, History, BarChart3, PackagePlus
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost, ModuleBtnPrimary } from '@/components/module-layout'
+import InventarioEjecutivoPanel from '@/components/inventario/inventario-ejecutivo-panel'
+import InventarioAlertasPanel from '@/components/inventario/inventario-alertas-panel'
+import InventarioReposicionPanel from '@/components/inventario/inventario-reposicion-panel'
+import InventarioConteoPanel from '@/components/inventario/inventario-conteo-panel'
+import {
+  generarAlertasInventario,
+  sugerirReposicion,
+  type ProductoPro,
+  type StockPro,
+  type MovimientoInventarioPro,
+} from '@/lib/inventario-profesional'
 
 /* ─── tipos ─────────────────────────────────────────────── */
 interface Categoria { id: number; nombre: string; tabla: string }
@@ -22,19 +33,24 @@ interface Producto {
   tipo: 'Medicamento' | 'Producto' | 'Insumo'
   es_antibiotico: boolean; costo: number; precio_venta: number
   stock_minimo: number; activo: boolean
+  precio_minimo?: number; proveedor_preferido_id?: number | null; dias_reposicion?: number
+  codigo_barra?: string; principio_activo?: string; concentracion?: string
+  presentacion?: string; marca?: string; requiere_receta?: boolean
+  es_controlado?: boolean; gravado?: boolean; facturable?: boolean
 }
 
 interface StockRow {
   id: number; producto_id: number; sucursal_id: number
   lote?: string; fecha_vencimiento?: string; cantidad: number
-  producto?: { id: number; nombre: string; codigo: string; tipo: string; stock_minimo: number; unidad: string }
+  costo_unitario?: number; bloqueado?: boolean
+  producto?: { id: number; nombre: string; codigo: string; tipo: string; stock_minimo: number; unidad: string; costo?: number; precio_venta?: number; precio_minimo?: number; proveedor_preferido_id?: number | null; dias_reposicion?: number }
   sucursal?: { id: number; nombre: string }
 }
 
 interface Movimiento {
-  id: number; tipo: string; cantidad: number; motivo?: string
+  id: number; producto_id?: number; sucursal_id?: number; tipo: string; cantidad: number; motivo?: string
   lote?: string; fecha_vencimiento?: string; fecha: string; hora?: string
-  referencia_tipo?: string; nota?: string
+  referencia_tipo?: string; nota?: string; created_at?: string
   producto?: { nombre: string; codigo: string }
   sucursal?: { nombre: string }
 }
@@ -76,7 +92,7 @@ export default function InventarioClient({
 }: Props) {
   const supabase = sb()
   const confirmDialog = useConfirm()
-  const [tab, setTab]       = useState<'stock' | 'vencer' | 'kardex' | 'productos' | 'proveedores'>('stock')
+  const [tab, setTab]       = useState<'ejecutivo' | 'stock' | 'alertas' | 'reposicion' | 'conteo' | 'vencer' | 'kardex' | 'productos' | 'proveedores'>('ejecutivo')
   const [isPending, start]  = useTransition()
 
   /* filtros stock */
@@ -190,7 +206,7 @@ export default function InventarioClient({
   async function recargar() {
     const [{ data: p }, { data: i }, { data: m }, { data: pr }] = await Promise.all([
       supabase.from('productos').select('*').order('nombre'),
-      supabase.from('inventario').select('*, producto:productos(id,nombre,codigo,tipo,stock_minimo,unidad), sucursal:sucursales(id,nombre)').order('fecha_vencimiento'),
+      supabase.from('inventario').select('*, producto:productos(id,nombre,codigo,tipo,stock_minimo,unidad,costo,precio_venta,precio_minimo,proveedor_preferido_id,dias_reposicion), sucursal:sucursales(id,nombre)').order('fecha_vencimiento'),
       supabase.from('inventario_movimientos').select('*, producto:productos(nombre,codigo), sucursal:sucursales(nombre)').order('created_at', { ascending: false }).limit(100),
       supabase.from('proveedores').select('*').order('nombre'),
     ])
@@ -229,10 +245,29 @@ export default function InventarioClient({
     })
   }, [stockConsolidado, filtroSuc, busq, soloAlertas])
 
+  const [diasAlerta,   setDiasAlerta]   = useState(90)   // umbral configurable
+  const [filtroVencSuc, setFiltroVencSuc] = useState('')
+  const printVencRef = useRef<HTMLDivElement>(null)
+
   /* ── alertas ─ */
   const totalAlertas = useMemo(() =>
     stockConsolidado.filter(r => r.totalCantidad <= (r.producto?.stock_minimo ?? 5)).length
   , [stockConsolidado])
+
+  const alertasProfesionales = useMemo(() => generarAlertasInventario({
+    stock: inventario as StockPro[],
+    productos: productos as ProductoPro[],
+    movimientos: movimientos as MovimientoInventarioPro[],
+    diasVencimiento: diasAlerta,
+    diasSinMovimiento: 60,
+  }), [inventario, productos, movimientos, diasAlerta])
+
+  const reposicionSugerida = useMemo(() => sugerirReposicion({
+    stock: inventario as StockPro[],
+    productos: productos as ProductoPro[],
+    movimientos: movimientos as MovimientoInventarioPro[],
+    sucursalId: filtroSuc ? Number(filtroSuc) : null,
+  }), [inventario, productos, movimientos, filtroSuc])
 
   /* ── guardar producto ─ */
   async function guardarProducto() {
@@ -372,23 +407,28 @@ export default function InventarioClient({
 
     const { confirmed } = await confirmDialog({
       title: 'Transferir inventario',
-      message: `¿Transferir ${cant} unidades entre sucursales?`,
+      message: `¿Está seguro que desea transferir ${cant} unidades de "${prod?.nombre ?? 'este producto'}" a la sucursal ${sucDe?.nombre ?? dstId}?`,
       variant: 'warning',
       confirmLabel: 'Transferir',
       details: [
         { label: 'Producto', value: prod?.nombre ?? String(prodId) },
         { label: 'Origen', value: sucOr?.nombre ?? String(srcId) },
         { label: 'Destino', value: sucDe?.nombre ?? String(dstId) },
+        { label: 'Cantidad', value: String(cant) },
       ],
     })
     if (!confirmed) return
 
     setLoadingForm(true)
 
-    // Stock origen
-    const { data: origenRows } = await supabase
+    const loteVal = lote || null
+
+    // Stock origen (lote vacío == NULL en inventario)
+    let origenQ = supabase
       .from('inventario').select('id, cantidad, fecha_vencimiento')
-      .eq('producto_id', prodId).eq('sucursal_id', srcId).eq('lote', lote || '')
+      .eq('producto_id', prodId).eq('sucursal_id', srcId)
+    origenQ = loteVal ? origenQ.eq('lote', loteVal) : origenQ.is('lote', null)
+    const { data: origenRows } = await origenQ
 
     const origenRow = origenRows?.[0] as (StockRow & { id: number }) | undefined
     if (!origenRow || origenRow.cantidad < cant) {
@@ -400,15 +440,17 @@ export default function InventarioClient({
     await supabase.from('inventario').update({ cantidad: origenRow.cantidad - cant }).eq('id', origenRow.id)
 
     // Sumar destino
-    const { data: destRows } = await supabase
+    let destQ = supabase
       .from('inventario').select('id, cantidad')
-      .eq('producto_id', prodId).eq('sucursal_id', dstId).eq('lote', lote || '')
+      .eq('producto_id', prodId).eq('sucursal_id', dstId)
+    destQ = loteVal ? destQ.eq('lote', loteVal) : destQ.is('lote', null)
+    const { data: destRows } = await destQ
     const destRow = destRows?.[0] as (StockRow & { id: number }) | undefined
     if (destRow) {
       await supabase.from('inventario').update({ cantidad: destRow.cantidad + cant }).eq('id', destRow.id)
     } else {
       await supabase.from('inventario').insert({
-        producto_id: prodId, sucursal_id: dstId, lote: lote || '',
+        producto_id: prodId, sucursal_id: dstId, lote: loteVal,
         fecha_vencimiento: origenRow.fecha_vencimiento, cantidad: cant,
       })
     }
@@ -452,6 +494,8 @@ export default function InventarioClient({
   const cats      = categorias.filter(c => c.tabla === 'categoria')
   const unidades  = categorias.filter(c => c.tabla === 'unidad')
   const prodActivos = productos.filter(p => p.activo)
+  const nombreSucursal = (id?: number) => sucursales.find(s => s.id === id)?.nombre ?? (id ? `Sucursal #${id}` : '—')
+  const nombreProveedor = (id?: number | null) => proveedores.find(p => p.id === id)?.nombre ?? (id ? `Proveedor #${id}` : '—')
 
   const tipoColor = (tipo: string) => ({
     ENTRADA:       'bg-green-100 text-green-700',
@@ -463,10 +507,6 @@ export default function InventarioClient({
   }[tipo] || 'bg-gray-100 text-gray-600')
 
   /* ── vencimientos ─ */
-  const [diasAlerta,   setDiasAlerta]   = useState(90)   // umbral configurable
-  const [filtroVencSuc, setFiltroVencSuc] = useState('')
-  const printVencRef = useRef<HTMLDivElement>(null)
-
   const vencimientos = useMemo(() => {
     const hoyTs = new Date().getTime()
     return inventario
@@ -541,7 +581,11 @@ export default function InventarioClient({
   }
 
   const TABS = [
+    { key: 'ejecutivo',  label: 'Ejecutivo',       icon: BarChart3 },
     { key: 'stock',       label: 'Stock Actual',   icon: Boxes },
+    { key: 'alertas',     label: 'Alertas',        icon: AlertTriangle },
+    { key: 'reposicion',  label: 'Reposición',     icon: PackagePlus },
+    { key: 'conteo',      label: 'Conteo Físico',  icon: ClipboardList },
     { key: 'vencer',      label: 'Por Vencer',     icon: Calendar },
     { key: 'kardex',      label: 'Kardex',          icon: History },
     { key: 'productos',   label: 'Catálogo',        icon: ClipboardList },
@@ -604,6 +648,16 @@ export default function InventarioClient({
                   {totalAlertas}
                 </span>
               )}
+              {t.key === 'alertas' && alertasProfesionales.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 bg-red-100 text-red-700 text-xs rounded-full font-semibold">
+                  {alertasProfesionales.filter(a => a.prioridad === 'alta').length || alertasProfesionales.length}
+                </span>
+              )}
+              {t.key === 'reposicion' && reposicionSugerida.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full font-semibold">
+                  {reposicionSugerida.length}
+                </span>
+              )}
               {t.key === 'vencer' && vencimientos.length > 0 && (
                 <span className="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full font-semibold">
                   {vencimientos.length}
@@ -614,6 +668,48 @@ export default function InventarioClient({
         </div>
 
         <div className="p-5">
+
+          {/* ══ TAB EJECUTIVO ══ */}
+          {tab === 'ejecutivo' && (
+            <InventarioEjecutivoPanel
+              productos={productos as ProductoPro[]}
+              inventario={inventario as StockPro[]}
+              movimientos={movimientos as MovimientoInventarioPro[]}
+              alertas={alertasProfesionales}
+              reposicion={reposicionSugerida}
+              onIrAlertas={() => setTab('alertas')}
+              onIrReposicion={() => setTab('reposicion')}
+            />
+          )}
+
+          {/* ══ TAB ALERTAS ══ */}
+          {tab === 'alertas' && (
+            <InventarioAlertasPanel
+              alertas={alertasProfesionales}
+              onIrStockBajo={() => { setSoloAlertas(true); setTab('stock') }}
+            />
+          )}
+
+          {/* ══ TAB REPOSICIÓN ══ */}
+          {tab === 'reposicion' && (
+            <InventarioReposicionPanel
+              sugerencias={reposicionSugerida}
+              sucursalNombre={nombreSucursal}
+              proveedorNombre={nombreProveedor}
+              onRecargar={recargar}
+            />
+          )}
+
+          {/* ══ TAB CONTEO FÍSICO ══ */}
+          {tab === 'conteo' && (
+            <InventarioConteoPanel
+              inventario={inventario as StockPro[]}
+              sucursales={sucursales}
+              sucursalUsuario={sucursalUsuario}
+              userId={userId}
+              onRecargar={recargar}
+            />
+          )}
 
           {/* ══ TAB STOCK ACTUAL ══ */}
           {tab === 'stock' && (
@@ -637,6 +733,10 @@ export default function InventarioClient({
                   }`}>
                   <AlertTriangle className="w-4 h-4" />
                   Solo alertas {soloAlertas && `(${totalAlertas})`}
+                </button>
+                <button onClick={() => { setFormTransf(transfVacio); setErrorMsg(''); setModalTransf(true) }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-sm text-indigo-700 font-medium hover:bg-indigo-100">
+                  <ArrowLeftRight className="w-4 h-4" /> Trasladar
                 </button>
                 <button onClick={imprimirInventario}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm text-gray-600 hover:bg-gray-50">

@@ -44,6 +44,7 @@ import {
 } from '@/lib/caja-seguridad'
 import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
+import { useConfirm } from '@/components/confirm-dialog'
 import { Modal } from './components/caja-modal'
 import VentaRapidaModal from './components/venta-rapida-modal'
 import NombreFacturarProtegido from './components/nombre-facturar-protegido'
@@ -220,6 +221,7 @@ export default function CajaClient({
   membresiaPagoPrecarga = null,
   fidelidadConfig,
 }: Props) {
+  const confirmDialog = useConfirm()
   const [sesion,   setSesion]   = useState<Sesion | null>(initSesion)
   const [cxc,      setCxc]      = useState<CXC[]>(initCxc)
   const [tab, setTab] = useState<'movimientos' | 'cxc' | 'cobrar' | 'lab_cobrar' | 'membresias_cobrar' | 'cot_cobrar'>('movimientos')
@@ -330,17 +332,20 @@ export default function CajaClient({
   const supabase = sb()
 
   const MSG_CIERRE_SIN_FACTURA =
-    '¿Está seguro de cerrar sin emitir factura fiscal?\n\n' +
-    'El cobro ya quedó registrado en caja. Si cierra sin facturar, la venta puede quedar pendiente en el orden cronológico de facturación.\n\n' +
-    'Deberá emitir la factura después desde el módulo Facturación.\n\n' +
-    '¿Desea cerrar sin facturar?'
+    'El cobro ya quedó registrado en caja. Si cierra sin facturar, la venta puede quedar pendiente en el orden cronológico de facturación. Deberá emitir la factura después desde el módulo Facturación.'
 
-  function confirmarCierreSinFacturar(): boolean {
-    return window.confirm(MSG_CIERRE_SIN_FACTURA)
+  async function confirmarCierreSinFacturar(): Promise<boolean> {
+    const { confirmed } = await confirmDialog({
+      title: 'Cerrar sin facturar',
+      message: MSG_CIERRE_SIN_FACTURA + ' ¿Desea cerrar sin facturar?',
+      variant: 'warning',
+      confirmLabel: 'Cerrar sin facturar',
+    })
+    return confirmed
   }
 
-  function cerrarFlujoFacturaVentaRapida() {
-    if (ventaRapidaCobro && !factImpresaVentaRapida && !confirmarCierreSinFacturar()) return
+  async function cerrarFlujoFacturaVentaRapida() {
+    if (ventaRapidaCobro && !factImpresaVentaRapida && !(await confirmarCierreSinFacturar())) return
     setVentaRapidaCobro(null)
     setModalFacturaVentaRapida(false)
     setFactImpresaVentaRapida(null)
@@ -1270,8 +1275,8 @@ export default function CajaClient({
   }
 
   /* ── cerrar modal cobro limpiamente ── */
-  function cerrarModalCobro() {
-    if (cobroExitoso && !factImpresa && !confirmarCierreSinFacturar()) return
+  async function cerrarModalCobro() {
+    if (cobroExitoso && !factImpresa && !(await confirmarCierreSinFacturar())) return
     setModalCobro(false)
     setConsultaCobro(null)
     setCobroExitoso(null)
@@ -1305,8 +1310,8 @@ export default function CajaClient({
     setModalCobroLab(true)
   }
 
-  function cerrarModalCobroLab() {
-    if (labCobroExitoso && !factImpresa && !confirmarCierreSinFacturar()) return
+  async function cerrarModalCobroLab() {
+    if (labCobroExitoso && !factImpresa && !(await confirmarCierreSinFacturar())) return
     setModalCobroLab(false)
     setLabGrupoCobro(null)
     setLabCobroExitoso(null)

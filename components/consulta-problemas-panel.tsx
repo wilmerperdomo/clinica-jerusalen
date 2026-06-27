@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { HeartPulse, Plus, Trash2, X } from 'lucide-react'
+import { useConfirm } from '@/components/confirm-dialog'
 
 export interface ProblemaActivo {
   id?: number
@@ -27,6 +28,7 @@ function supabase() {
 }
 
 export default function ConsultaProblemasPanel({ pacienteId, diagnosticosActuales = [] }: Props) {
+  const confirmDialog = useConfirm()
   const [items, setItems] = useState<ProblemaActivo[]>([])
   const [nuevo, setNuevo] = useState('')
   const [cargando, setCargando] = useState(true)
@@ -69,6 +71,13 @@ export default function ConsultaProblemasPanel({ pacienteId, diagnosticosActuale
 
   async function quitar(idx: number) {
     const p = items[idx]
+    const { confirmed } = await confirmDialog({
+      title: 'Quitar problema activo',
+      message: `¿Está seguro que desea quitar "${p.etiqueta}" de los problemas activos del paciente?`,
+      variant: 'warning',
+      confirmLabel: 'Quitar',
+    })
+    if (!confirmed) return
     if (p.id) {
       await supabase().from('paciente_problema_activo').update({ activo: false }).eq('id', p.id)
     }

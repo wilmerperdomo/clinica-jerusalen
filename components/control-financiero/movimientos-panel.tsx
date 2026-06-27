@@ -7,6 +7,7 @@ import {
   fmtFin, type FinCategoria, type FinMovimiento, type FinTarjeta, type FinAmbito, type FinFormaPago,
 } from '@/lib/finanzas-personales'
 import { AMBITO_LABELS, FORMA_PAGO_LABELS } from '@/lib/finanzas-sugerencias'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface Props {
   categorias: FinCategoria[]
@@ -40,6 +41,7 @@ export default function MovimientosPanel({
   categorias, movimientos, tarjetas, sucursales, puedeEditar, onRecargar,
 }: Props) {
   const supabase = createClient()
+  const confirmDialog = useConfirm()
   const [modal, setModal] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState(vacio)
@@ -136,7 +138,19 @@ export default function MovimientosPanel({
   }
 
   async function eliminar(id: number) {
-    if (!confirm('¿Eliminar este movimiento?')) return
+    const mov = movimientos.find(m => m.id === id)
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar movimiento',
+      message: '¿Está seguro que desea eliminar este movimiento? Esta acción no se puede deshacer.',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+      details: mov ? [
+        { label: 'Tipo', value: mov.tipo },
+        { label: 'Monto', value: fmtFin(mov.monto) },
+        { label: 'Descripción', value: mov.descripcion || '—' },
+      ] : undefined,
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('finanzas_movimientos').delete().eq('id', id)
     if (error) alert(error.message)
     else onRecargar()

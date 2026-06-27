@@ -7,6 +7,7 @@ import ResponsiveModal from '@/components/responsive-modal'
 import { CANAL_CFG, esEncuesta, type Promocion } from '@/lib/promociones-utils'
 import type { PromocionPlantilla } from '@/lib/promociones-plantillas'
 import type { PromocionRegla, TipoDisparadorRegla } from '@/lib/promociones-reglas'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface Props {
   promociones: Promocion[]
@@ -47,6 +48,7 @@ export default function PromocionesAutomatizacionesPanel({
   promociones, esSuperAdmin, sucursalId, onProcesar, procesando,
 }: Props) {
   const supabase = sb()
+  const confirmDialog = useConfirm()
   const [reglas, setReglas] = useState<PromocionRegla[]>([])
   const [plantillas, setPlantillas] = useState<PromocionPlantilla[]>([])
   const [modal, setModal] = useState(false)
@@ -137,7 +139,15 @@ export default function PromocionesAutomatizacionesPanel({
   }
 
   async function eliminar(id: number) {
-    if (!confirm('¿Eliminar esta regla automática?')) return
+    const regla = reglas.find(r => r.id === id)
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar regla automática',
+      message: '¿Está seguro que desea eliminar esta regla de automatización?',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+      details: regla ? [{ label: 'Nombre', value: regla.nombre }] : undefined,
+    })
+    if (!confirmed) return
     await supabase.from('promocion_reglas').delete().eq('id', id)
     await cargar()
   }

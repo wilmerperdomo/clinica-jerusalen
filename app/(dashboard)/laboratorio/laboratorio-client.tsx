@@ -23,6 +23,7 @@ import {
   type LabRango, type LabPanelCampo, type Medico, type LabPerfil,
 } from '@/lib/lab-utils'
 import { precioLabLista } from '@/lib/membresia-utils'
+import { useConfirm } from '@/components/confirm-dialog'
 import { descontarInsumosLab, type LabInsumo } from '@/lib/lab-insumos'
 import {
   calcularCostoEstimadoInsumos, calcularMargenEstimado, claseProcesamiento,
@@ -207,6 +208,7 @@ export default function LaboratorioClient({
   const [guardandoPerfil, setGuardandoPerfil] = useState(false)
 
   const supabase = useMemo(() => sb(), [])
+  const confirmDialog = useConfirm()
   const esRolClinicoBasico = esRolEnfermeria(rolUsuario) || esRolMedico(rolUsuario)
   const puedeVerAdminLab = esSuperAdmin || !esRolClinicoBasico
   const tabsLaboratorio = useMemo(() => {
@@ -527,7 +529,13 @@ export default function LaboratorioClient({
   }
 
   async function eliminarMedico(m: Medico) {
-    if (!confirm(`¿Eliminar al médico "${m.nombre}"? Las órdenes ya guardadas conservan su nombre.`)) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar médico',
+      message: `¿Está seguro que desea eliminar al médico "${m.nombre}"? Las órdenes ya guardadas conservan su nombre.`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('medicos').delete().eq('id', m.id)
     if (error) { alert('No se pudo eliminar: ' + error.message); return }
     setMedicosState(prev => prev.filter(x => x.id !== m.id))
@@ -588,7 +596,13 @@ export default function LaboratorioClient({
   }
 
   async function eliminarPerfil(p: LabPerfil) {
-    if (!confirm(`¿Eliminar el perfil "${p.nombre}"? No afecta las órdenes ya creadas.`)) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar perfil',
+      message: `¿Está seguro que desea eliminar el perfil "${p.nombre}"? No afecta las órdenes ya creadas.`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('lab_perfiles').delete().eq('id', p.id)
     if (error) { alert('No se pudo eliminar: ' + error.message); return }
     setPerfilesState(prev => prev.filter(x => x.id !== p.id))
@@ -948,7 +962,13 @@ export default function LaboratorioClient({
   }
 
   async function eliminarArchivoMaquila(archivo: LabArchivo) {
-    if (!confirm(`¿Eliminar "${archivo.nombre_archivo}"?`)) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar archivo',
+      message: `¿Está seguro que desea eliminar "${archivo.nombre_archivo}"?`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     await supabase.storage.from(LAB_RESULTADOS_BUCKET).remove([archivo.storage_path])
     await supabase.from('lab_archivos').delete().eq('id', archivo.id)
     if (grupoActual) await cargarArchivosGrupo(grupoActual.grupoId)
@@ -1316,7 +1336,13 @@ export default function LaboratorioClient({
   }
 
   async function eliminarRango(id: number) {
-    if (!confirm('¿Eliminar este rango de referencia?')) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar rango de referencia',
+      message: '¿Está seguro que desea eliminar este rango de referencia?',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('lab_rangos').delete().eq('id', id)
     if (error) return alert('No se pudo eliminar: ' + error.message)
     setRangosState(prev => prev.filter(r => r.id !== id))
@@ -1364,7 +1390,13 @@ export default function LaboratorioClient({
   }
 
   async function eliminarCampo(id: number) {
-    if (!confirm('¿Eliminar este parámetro del panel?')) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar parámetro',
+      message: '¿Está seguro que desea eliminar este parámetro del panel?',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     const { error } = await supabase.from('lab_panel_campos').delete().eq('id', id)
     if (error) return alert('No se pudo eliminar: ' + error.message)
     setPanelCamposState(prev => prev.filter(c => c.id !== id))

@@ -16,6 +16,10 @@ interface Producto {
   categoria?: string; unidad?: string; tipo: string
   es_antibiotico: boolean; costo: number; precio_venta: number
   stock_minimo: number; activo: boolean
+  codigo_barra?: string; principio_activo?: string; concentracion?: string
+  presentacion?: string; marca?: string; requiere_receta?: boolean
+  es_controlado?: boolean; gravado?: boolean; facturable?: boolean
+  precio_minimo?: number; dias_reposicion?: number
 }
 
 const TIPOS = ['Medicamento', 'Producto', 'Insumo'] as const
@@ -32,6 +36,9 @@ const FORM_VACIO = {
   codigo: '', nombre: '', nombre_generico: '', laboratorio: '',
   categoria: 'Medicamentos', unidad: 'Unidad', tipo: 'Medicamento',
   es_antibiotico: false, costo: '', precio_venta: '', stock_minimo: '5', activo: true,
+  codigo_barra: '', principio_activo: '', concentracion: '', presentacion: '', marca: '',
+  requiere_receta: false, es_controlado: false, gravado: true, facturable: true,
+  precio_minimo: '', dias_reposicion: '7',
 }
 
 function sb() {
@@ -99,6 +106,17 @@ export default function ProductosClient({ productos: init }: { productos: Produc
       precio_venta: String(p.precio_venta),
       stock_minimo: String(p.stock_minimo),
       activo: p.activo,
+      codigo_barra: p.codigo_barra ?? '',
+      principio_activo: p.principio_activo ?? '',
+      concentracion: p.concentracion ?? '',
+      presentacion: p.presentacion ?? '',
+      marca: p.marca ?? '',
+      requiere_receta: Boolean(p.requiere_receta),
+      es_controlado: Boolean(p.es_controlado),
+      gravado: p.gravado ?? true,
+      facturable: p.facturable ?? true,
+      precio_minimo: p.precio_minimo ? String(p.precio_minimo) : '',
+      dias_reposicion: p.dias_reposicion ? String(p.dias_reposicion) : '7',
     })
     setError('')
     setModal(true)
@@ -124,6 +142,17 @@ export default function ProductosClient({ productos: init }: { productos: Produc
       precio_venta:    Number(form.precio_venta),
       stock_minimo:    Number(form.stock_minimo) || 5,
       activo:          form.activo,
+      codigo_barra:    form.codigo_barra.trim() || null,
+      principio_activo: form.principio_activo.trim() || null,
+      concentracion:   form.concentracion.trim() || null,
+      presentacion:    form.presentacion.trim() || null,
+      marca:           form.marca.trim() || null,
+      requiere_receta: form.requiere_receta,
+      es_controlado:   form.es_controlado,
+      gravado:         form.gravado,
+      facturable:      form.facturable,
+      precio_minimo:   Number(form.precio_minimo || 0),
+      dias_reposicion: Number(form.dias_reposicion || 7),
     }
 
     if (editando) {
@@ -216,6 +245,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                 <th className="text-left px-4 py-3 hidden lg:table-cell">Laboratorio</th>
                 <th className="text-right px-4 py-3">Costo</th>
                 <th className="text-right px-4 py-3">P. Venta</th>
+                <th className="text-right px-4 py-3 hidden lg:table-cell">Margen</th>
                 <th className="text-center px-4 py-3 hidden sm:table-cell">Stock mín.</th>
                 <th className="text-center px-4 py-3">Estado</th>
                 <th className="px-4 py-3"></th>
@@ -224,7 +254,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
             <tbody className="divide-y">
               {lista.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-gray-400">
+                  <td colSpan={9} className="text-center py-12 text-gray-400">
                     <Pill className="w-10 h-10 mx-auto mb-2 opacity-20" />
                     <p>No se encontraron productos</p>
                   </td>
@@ -256,6 +286,13 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                       {Number(p.precio_venta) > 0
                         ? `L ${Number(p.precio_venta).toFixed(2)}`
                         : <span className="text-red-400 text-xs">Sin precio</span>}
+                    </td>
+                    <td className={`px-4 py-3 text-right hidden lg:table-cell font-semibold ${
+                      Number(p.precio_venta) < Number(p.costo) ? 'text-red-600' : 'text-green-700'
+                    }`}>
+                      {Number(p.precio_venta) > 0
+                        ? `${(((Number(p.precio_venta) - Number(p.costo)) / Number(p.precio_venta)) * 100).toFixed(1)}%`
+                        : '—'}
                     </td>
                     <td className="px-4 py-3 text-center text-gray-500 hidden sm:table-cell">{p.stock_minimo}</td>
                     <td className="px-4 py-3 text-center">
@@ -359,6 +396,39 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                 </div>
               </div>
 
+              {/* ficha profesional */}
+              <div className="bg-slate-50 border rounded-xl p-4 space-y-3">
+                <p className="text-sm font-semibold text-slate-700">Ficha profesional</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Código de barra</label>
+                    <input value={form.codigo_barra}
+                      onChange={e => setForm(p => ({ ...p, codigo_barra: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Principio activo</label>
+                    <input value={form.principio_activo}
+                      onChange={e => setForm(p => ({ ...p, principio_activo: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Concentración</label>
+                    <input value={form.concentracion}
+                      onChange={e => setForm(p => ({ ...p, concentracion: e.target.value }))}
+                      placeholder="500mg, 10ml..."
+                      className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Presentación</label>
+                    <input value={form.presentacion}
+                      onChange={e => setForm(p => ({ ...p, presentacion: e.target.value }))}
+                      placeholder="Caja x 100, frasco..."
+                      className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                </div>
+              </div>
+
               {/* precios y stock mínimo */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -387,13 +457,55 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                 </div>
               </div>
 
-              {/* antibiótico + activo */}
-              <div className="flex items-center gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Precio mínimo autorizado</label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">L.</span>
+                    <input type="number" min="0" step="0.01" value={form.precio_minimo}
+                      onChange={e => setForm(p => ({ ...p, precio_minimo: e.target.value }))}
+                      className="w-full border rounded-lg pl-7 pr-2 py-2 text-sm focus:outline-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Días reposición</label>
+                  <input type="number" min="0" value={form.dias_reposicion}
+                    onChange={e => setForm(p => ({ ...p, dias_reposicion: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" />
+                </div>
+              </div>
+
+              {/* controles */}
+              <div className="flex items-center gap-6 flex-wrap">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={form.es_antibiotico}
                     onChange={e => setForm(p => ({ ...p, es_antibiotico: e.target.checked }))}
                     className="w-4 h-4 accent-red-500" />
                   <span className="text-sm text-gray-700">🔴 Es Antibiótico (requiere receta)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.requiere_receta}
+                    onChange={e => setForm(p => ({ ...p, requiere_receta: e.target.checked }))}
+                    className="w-4 h-4 accent-blue-500" />
+                  <span className="text-sm text-gray-700">Requiere receta</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.es_controlado}
+                    onChange={e => setForm(p => ({ ...p, es_controlado: e.target.checked }))}
+                    className="w-4 h-4 accent-red-500" />
+                  <span className="text-sm text-gray-700">Medicamento controlado</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.gravado}
+                    onChange={e => setForm(p => ({ ...p, gravado: e.target.checked }))}
+                    className="w-4 h-4 accent-green-500" />
+                  <span className="text-sm text-gray-700">Gravado ISV</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={form.facturable}
+                    onChange={e => setForm(p => ({ ...p, facturable: e.target.checked }))}
+                    className="w-4 h-4 accent-green-500" />
+                  <span className="text-sm text-gray-700">Facturable</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={form.activo}

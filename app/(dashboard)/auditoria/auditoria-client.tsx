@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 import { generarRespaldoManual, urlDescargaRespaldo, eliminarRespaldo } from './actions'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface Bitacora {
   id: number; tabla: string; registro_id?: string | null; operacion: string
@@ -49,6 +50,7 @@ function valor(v: unknown): string {
 }
 
 export default function AuditoriaClient({ bitacora: initBit, respaldos: initResp, serviceRoleDisponible }: Props) {
+  const confirmDialog = useConfirm()
   const [tab, setTab] = useState<'bitacora' | 'respaldos'>('bitacora')
   const [respaldos, setRespaldos] = useState<Respaldo[]>(initResp)
 
@@ -110,7 +112,17 @@ export default function AuditoriaClient({ bitacora: initBit, respaldos: initResp
   }
 
   async function eliminar(r: Respaldo) {
-    if (!confirm(`¿Eliminar el respaldo del ${fmtFecha(r.created_at)}? No se puede deshacer.`)) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar respaldo',
+      message: `¿Está seguro que desea eliminar el respaldo del ${fmtFecha(r.created_at)}? Esta acción no se puede deshacer.`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+      details: [
+        { label: 'Archivo', value: r.archivo },
+        { label: 'Registros', value: String(r.registros) },
+      ],
+    })
+    if (!confirmed) return
     const res = await eliminarRespaldo(r.id, r.archivo)
     if (res.ok) setRespaldos(prev => prev.filter(x => x.id !== r.id))
     else alert('Error: ' + res.error)

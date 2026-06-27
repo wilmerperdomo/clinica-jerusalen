@@ -11,7 +11,7 @@ export default async function InventarioPage() {
 
   const invQuery = supabase
     .from('inventario')
-    .select('*, producto:productos(id,nombre,codigo,tipo,stock_minimo,unidad), sucursal:sucursales(id,nombre)')
+    .select('*, producto:productos(id,nombre,codigo,tipo,stock_minimo,unidad,costo,precio_venta,precio_minimo,proveedor_preferido_id,dias_reposicion), sucursal:sucursales(id,nombre)')
     .order('fecha_vencimiento', { ascending: true })
 
   const movQuery = supabase

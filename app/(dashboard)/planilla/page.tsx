@@ -20,6 +20,7 @@ export default async function PlanillaPage() {
     .from('perfiles')
     .select('id, nombre, apellido, sucursal_id, sueldo_fijo, tipo_nomina, rol_id, activo, roles(nombre)')
     .eq('activo', true)
+    .in('tipo_nomina', ['MEDICO', 'ENFERMERA', 'ADMINISTRATIVO'])
     .order('nombre')
 
   const todosQ = supabase

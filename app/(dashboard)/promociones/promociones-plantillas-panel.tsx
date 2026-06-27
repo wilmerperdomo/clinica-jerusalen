@@ -9,6 +9,7 @@ import {
   type CategoriaServicioPromo,
 } from '@/lib/promociones-utils'
 import { VARIABLES_PLANTILLA, type PromocionPlantilla } from '@/lib/promociones-plantillas'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface Props {
   esSuperAdmin?: boolean
@@ -32,6 +33,7 @@ export default function PromocionesPlantillasPanel({
   esSuperAdmin, sucursalId, onSeleccionar, modoSeleccion,
 }: Props) {
   const supabase = sb()
+  const confirmDialog = useConfirm()
   const [plantillas, setPlantillas] = useState<PromocionPlantilla[]>([])
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<PromocionPlantilla | null>(null)
@@ -92,7 +94,15 @@ export default function PromocionesPlantillasPanel({
   }
 
   async function eliminar(id: number) {
-    if (!confirm('¿Eliminar esta plantilla?')) return
+    const plantilla = plantillas.find(p => p.id === id)
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar plantilla',
+      message: '¿Está seguro que desea eliminar esta plantilla de mensaje?',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+      details: plantilla ? [{ label: 'Nombre', value: plantilla.nombre }] : undefined,
+    })
+    if (!confirmed) return
     await supabase.from('promocion_plantillas').delete().eq('id', id)
     await cargar()
   }

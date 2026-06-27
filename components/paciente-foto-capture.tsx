@@ -5,6 +5,7 @@ import { Camera, Upload, Trash2, Loader2, User } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { subirFotoPaciente, eliminarFotoPaciente } from '@/lib/paciente-foto'
 import { createClient } from '@/lib/supabase/client'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface Props {
   pacienteId: number
@@ -20,6 +21,7 @@ export default function PacienteFotoCapture({
   pacienteId, fotoUrl, nombre, genero, tipo = 'persona',
   size = 'lg', onFotoChange,
 }: Props) {
+  const confirmDialog = useConfirm()
   const fileRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -89,7 +91,13 @@ export default function PacienteFotoCapture({
   }
 
   async function quitarFoto() {
-    if (!confirm('¿Eliminar la foto del paciente?')) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar foto',
+      message: '¿Está seguro que desea eliminar la foto del paciente?',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     setLoading(true)
     try {
       const supabase = createClient()

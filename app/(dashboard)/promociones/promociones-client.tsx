@@ -12,6 +12,7 @@ import PromocionesPlantillasPanel from './promociones-plantillas-panel'
 import PromocionesReportesPanel from './promociones-reportes-panel'
 import PromocionesAutomatizacionesPanel from './promociones-automatizaciones-panel'
 import { type PromocionPlantilla } from '@/lib/promociones-plantillas'
+import { useConfirm } from '@/components/confirm-dialog'
 import ResponsiveModal from '@/components/responsive-modal'
 import BuscarPacienteInput from '@/components/buscar-paciente-input'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost } from '@/components/module-layout'
@@ -111,6 +112,7 @@ export default function PromocionesClient({
   esSuperAdmin = false, sucursalId, sucursalNombre, stats,
 }: Props) {
   const sb = supabase()
+  const confirmDialog = useConfirm()
   const [tab, setTab] = useState<'promociones' | 'campanas' | 'contactos' | 'plantillas' | 'reportes' | 'auto'>('promociones')
   const [filtroCategoria, setFiltroCategoria] = useState<CategoriaServicioPromo | 'todas'>('todas')
   const [filtroTipo, setFiltroTipo] = useState<'todas' | 'promocion' | 'encuesta'>('todas')
@@ -370,7 +372,13 @@ export default function PromocionesClient({
   }
 
   async function eliminarContacto(id: number) {
-    if (!confirm('¿Eliminar este contacto de la agenda?')) return
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar contacto',
+      message: '¿Está seguro que desea eliminar este contacto de la agenda?',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
     const { error } = await sb.from('promocion_contactos').delete().eq('id', id)
     if (error) return alert(error.message)
     await recargar()
@@ -511,7 +519,15 @@ export default function PromocionesClient({
   }
 
   async function eliminarPromo(id: number) {
-    if (!confirm('¿Eliminar esta promoción? Las campañas asociadas también se eliminarán.')) return
+    const promo = promociones.find(p => p.id === id)
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar promoción',
+      message: '¿Está seguro que desea eliminar esta promoción? Las campañas asociadas también se eliminarán.',
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+      details: promo ? [{ label: 'Título', value: promo.titulo }] : undefined,
+    })
+    if (!confirmed) return
     const { error } = await sb.from('promociones').delete().eq('id', id)
     if (error) return alert(error.message)
     await recargar()
@@ -836,7 +852,15 @@ export default function PromocionesClient({
   }
 
   async function cancelarCampana(id: number) {
-    if (!confirm('¿Cancelar esta campaña?')) return
+    const campana = campanas.find(c => c.id === id)
+    const { confirmed } = await confirmDialog({
+      title: 'Cancelar campaña',
+      message: '¿Está seguro que desea cancelar esta campaña?',
+      variant: 'warning',
+      confirmLabel: 'Cancelar campaña',
+      details: campana ? [{ label: 'Nombre', value: campana.nombre }] : undefined,
+    })
+    if (!confirmed) return
     await sb.from('promocion_campanas').update({ estado: 'cancelada' }).eq('id', id)
     await recargar()
   }

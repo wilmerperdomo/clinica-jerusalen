@@ -1269,7 +1269,7 @@ export default function ConsultasClient({
     })
   }
 
-  function agregarMedicamento() {
+  async function agregarMedicamento() {
     if (!medForm.no_producto.trim()) return
     const adv = advertenciasMedicamento({
       medicamento: medForm.no_producto,
@@ -1278,7 +1278,13 @@ export default function ConsultasClient({
     })
     if (adv.some(a => a.severidad === 'urgent')) {
       const msg = adv.map(a => a.mensaje).join('\n')
-      if (!confirm(`⚠ Alerta clínica:\n${msg}\n\n¿Agregar de todos modos?`)) return
+      const { confirmed } = await confirmDialog({
+        title: 'Alerta clínica',
+        message: `${msg}\n\n¿Agregar el medicamento de todos modos?`,
+        variant: 'warning',
+        confirmLabel: 'Agregar de todos modos',
+      })
+      if (!confirmed) return
     }
     const indicacion = construirIndicacionReceta(medForm)
     setRecetaItems(prev => [...prev, { ...medForm, indicacion }])

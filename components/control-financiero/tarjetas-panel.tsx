@@ -8,6 +8,7 @@ import {
   type FinTarjeta, type FinAmbito,
 } from '@/lib/finanzas-personales'
 import { AMBITO_LABELS } from '@/lib/finanzas-sugerencias'
+import { useConfirm } from '@/components/confirm-dialog'
 
 interface Props {
   tarjetas: FinTarjeta[]
@@ -25,6 +26,7 @@ const vacioTarjeta = {
 
 export default function TarjetasPanel({ tarjetas, puedeEditar, onRecargar }: Props) {
   const supabase = createClient()
+  const confirmDialog = useConfirm()
   const [modalTarjeta, setModalTarjeta] = useState(false)
   const [modalPago, setModalPago] = useState<FinTarjeta | null>(null)
   const [modalCargo, setModalCargo] = useState<FinTarjeta | null>(null)
@@ -167,7 +169,18 @@ export default function TarjetasPanel({ tarjetas, puedeEditar, onRecargar }: Pro
   }
 
   async function desactivar(id: number) {
-    if (!confirm('¿Desactivar esta tarjeta?')) return
+    const tarjeta = tarjetas.find(t => t.id === id)
+    const { confirmed } = await confirmDialog({
+      title: 'Desactivar tarjeta',
+      message: '¿Está seguro que desea desactivar esta tarjeta de crédito?',
+      variant: 'warning',
+      confirmLabel: 'Desactivar',
+      details: tarjeta ? [
+        { label: 'Tarjeta', value: tarjeta.alias },
+        { label: 'Banco', value: tarjeta.banco || '—' },
+      ] : undefined,
+    })
+    if (!confirmed) return
     await supabase.from('finanzas_tarjetas').update({ activo: false }).eq('id', id)
     onRecargar()
   }
