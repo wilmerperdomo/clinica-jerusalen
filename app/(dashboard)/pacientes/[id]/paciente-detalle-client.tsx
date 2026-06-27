@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import PacienteFotoCapture from '@/components/paciente-foto-capture'
 import ColoniaSelect, { type Colonia } from '@/components/colonia-select'
+import PacientePlanHistorial, { type HistorialMembresia, type HistorialPago } from '@/components/paciente-plan-historial'
 import { nombreCompletoPaciente, edadPaciente, normalizarCodigoPaciente } from '@/lib/paciente-utils'
 import { buscarPacienteDuplicado, mensajePacienteDuplicado } from '@/lib/paciente-duplicado'
 
@@ -73,18 +74,20 @@ interface Props {
   antecedentes: Antecedentes | null
   antecedentesGo: AntecedentesGo | null
   membresia: { id: number; tipo_nombre?: string | null; fecha_fin?: string; numero_carnet?: string | null } | null
+  historialMembresias?: HistorialMembresia[]
+  historialPagos?: HistorialPago[]
   colonias: Colonia[]
   totalConsultas: number
 }
 
-type Tab = 'general' | 'antecedentes' | 'gineco'
+type Tab = 'general' | 'antecedentes' | 'gineco' | 'plan'
 
 const inputCls = 'w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const labelCls = 'block text-xs font-medium text-slate-600 mb-1'
 
 export default function PacienteDetalleClient({
   paciente: initial, listas, antecedentes: antInitial, antecedentesGo: goInitial,
-  membresia, colonias, totalConsultas,
+  membresia, historialMembresias = [], historialPagos = [], colonias, totalConsultas,
 }: Props) {
   const router = useRouter()
   const [, startTransition] = useTransition()
@@ -247,6 +250,7 @@ export default function PacienteDetalleClient({
 
   const tabs: { id: Tab; label: string; icon: typeof User; show?: boolean }[] = [
     { id: 'general', label: 'Datos generales', icon: User },
+    { id: 'plan', label: 'Plan médico', icon: CreditCard },
     { id: 'antecedentes', label: 'Antecedentes', icon: Heart },
     { id: 'gineco', label: 'Gineco-obstétricos', icon: Baby, show: esFemenino },
   ]
@@ -463,6 +467,17 @@ export default function PacienteDetalleClient({
             <Save className="w-4 h-4" /> {saving ? 'Guardando...' : 'Guardar cambios'}
           </button>
         </form>
+      )}
+
+      {/* Tab: Plan médico */}
+      {tab === 'plan' && (
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+          <h2 className="text-sm font-semibold text-slate-800 mb-4">Historial del plan médico</h2>
+          <PacientePlanHistorial
+            membresias={historialMembresias}
+            pagos={historialPagos}
+          />
+        </div>
       )}
 
       {/* Tab: Antecedentes */}

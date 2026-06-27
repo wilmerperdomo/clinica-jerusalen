@@ -6,7 +6,7 @@ export const metadata = { title: 'Planes Médicos' }
 
 export default async function MembresiasPage() {
   const supabase = await createClient()
-  const { esSuperAdmin } = await getPerfilSucursal()
+  const { esSuperAdmin, esAdmin } = await getPerfilSucursal()
   const hoy      = new Date().toISOString().split('T')[0]
 
   const [
@@ -76,6 +76,7 @@ export default async function MembresiasPage() {
       sucursalDefault={perfil?.sucursal_id || null}
       hoy={hoy}
       esSuperAdmin={esSuperAdmin}
+      esAdmin={esAdmin || esSuperAdmin}
     />
   )
 }

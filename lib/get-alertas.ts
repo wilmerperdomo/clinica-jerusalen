@@ -37,6 +37,8 @@ export async function getAlertas(): Promise<Alerta[]> {
     { data: cxcLista },
     { data: planesVencer },
     { data: cuotasVencidas },
+    { data: planesVencidosSinRenovar },
+    { data: pacientesFrecuentesSinPlan },
     { data: labPendientes },
     { data: cxpVencidas },
     { data: consultasCobrar },
@@ -88,6 +90,45 @@ export async function getAlertas(): Promise<Alerta[]> {
       .in('estado', ['vencido', 'pendiente'])
       .lte('fecha_vencimiento', hoy)
       .limit(15),
+
+    supabase
+      .from('membresias')
+      .select('id, fecha_fin, paciente:pacientes(nombre, apellido1)')
+      .eq('estado', 'activo')
+      .lt('fecha_fin', hoy)
+      .order('fecha_fin')
+      .limit(10),
+
+    (async () => {
+      const { data: topPacientes } = await supabase
+        .from('consultas')
+        .select('paciente_id, paciente:pacientes(nombre, apellido1)')
+        .gte('fecha', new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0])
+      const counts = new Map<number, { nombre: string; count: number }>()
+      for (const c of topPacientes ?? []) {
+        const pid = c.paciente_id as number
+        if (!pid) continue
+        const pac = c.paciente as { nombre: string; apellido1: string } | null
+        const cur = counts.get(pid) ?? { nombre: `${pac?.nombre ?? ''} ${pac?.apellido1 ?? ''}`.trim(), count: 0 }
+        cur.count++
+        counts.set(pid, cur)
+      }
+      const candidatos = [...counts.entries()].filter(([, v]) => v.count >= 4).slice(0, 8)
+      if (!candidatos.length) return { data: [] as { paciente_id: number; nombre: string; consultas: number }[] }
+      const ids = candidatos.map(([id]) => id)
+      const { data: conPlan } = await supabase
+        .from('membresias')
+        .select('paciente_id')
+        .in('paciente_id', ids)
+        .eq('estado', 'activo')
+        .gte('fecha_fin', hoy)
+      const conPlanSet = new Set((conPlan ?? []).map(m => m.paciente_id))
+      return {
+        data: candidatos
+          .filter(([id]) => !conPlanSet.has(id))
+          .map(([id, v]) => ({ paciente_id: id, nombre: v.nombre, consultas: v.count })),
+      }
+    })(),
 
     supabase
       .from('consulta_analisis')
@@ -264,8 +305,34 @@ export async function getAlertas(): Promise<Alerta[]> {
       categoria: 'Planes Médicos',
       titulo: 'Cuota vencida',
       mensaje: `${pac?.nombre ?? ''} ${pac?.apellido1 ?? ''} — ${fmt(cu.monto)} venció ${cu.fecha_vencimiento}`,
-      href: '/membresias',
+      href: `/ventas?membresia_pago=${cu.id}`,
       fecha: cu.fecha_vencimiento,
+    })
+  }
+
+  // ── Planes vencidos sin renovar ──────────────────────────────
+  for (const p of planesVencidosSinRenovar ?? []) {
+    const pac = p.paciente as { nombre: string; apellido1: string } | null
+    alertas.push({
+      id: `plan-venc-${p.id}`,
+      tipo: 'danger',
+      categoria: 'Planes Médicos',
+      titulo: 'Plan vencido sin renovar',
+      mensaje: `${pac?.nombre ?? ''} ${pac?.apellido1 ?? ''} — venció ${p.fecha_fin}`,
+      href: '/membresias',
+      fecha: p.fecha_fin,
+    })
+  }
+
+  // ── Pacientes frecuentes sin plan sugerido ───────────────────
+  for (const p of pacientesFrecuentesSinPlan ?? []) {
+    alertas.push({
+      id: `sin-plan-${p.paciente_id}`,
+      tipo: 'info',
+      categoria: 'Planes Médicos',
+      titulo: 'Paciente frecuente sin plan',
+      mensaje: `${p.nombre} — ${p.consultas} consultas en 90 días. Considere ofrecer plan médico.`,
+      href: '/membresias',
     })
   }
 

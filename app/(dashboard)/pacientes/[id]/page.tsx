@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import PacienteDetalleClient from './paciente-detalle-client'
+import type { HistorialMembresia, HistorialPago } from '@/components/paciente-plan-historial'
 
 export const metadata = { title: 'Ficha del Paciente' }
 
@@ -22,6 +23,7 @@ export default async function PacienteDetallePage({
     { data: antecedentes },
     { data: antecedentesGo },
     { data: membresia },
+    { data: historialMembresias },
     { data: colonias },
     { count: totalConsultas },
   ] = await Promise.all([
@@ -58,6 +60,16 @@ export default async function PacienteDetallePage({
       .maybeSingle(),
 
     supabase
+      .from('membresias')
+      .select(`
+        id, tipo_id, fecha_inicio, fecha_fin, estado, numero_carnet, comentarios, created_at,
+        tipo:membresia_tipos(nombre, precio, duracion_dias),
+        beneficiarios:membresia_beneficiarios(nombre, parentesco, activo)
+      `)
+      .eq('paciente_id', pacienteId)
+      .order('created_at', { ascending: false }),
+
+    supabase
       .from('colonias')
       .select('id, nombre, activo')
       .order('nombre'),
@@ -70,6 +82,17 @@ export default async function PacienteDetallePage({
 
   if (!paciente) notFound()
 
+  const memIds = (historialMembresias ?? []).map(m => m.id)
+  let historialPagos: HistorialPago[] = []
+  if (memIds.length > 0) {
+    const { data: pagosData } = await supabase
+      .from('membresia_pagos')
+      .select('id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago')
+      .in('membresia_id', memIds)
+      .order('fecha_vencimiento')
+    historialPagos = (pagosData ?? []) as HistorialPago[]
+  }
+
   const tipoMembresia = membresia?.tipo
     ? (Array.isArray(membresia.tipo) ? membresia.tipo[0]?.nombre : (membresia.tipo as { nombre: string }).nombre)
     : null
@@ -81,6 +104,8 @@ export default async function PacienteDetallePage({
         antecedentes={antecedentes}
         antecedentesGo={antecedentesGo}
         membresia={membresia ? { ...membresia, tipo_nombre: tipoMembresia } : null}
+        historialMembresias={(historialMembresias ?? []) as HistorialMembresia[]}
+        historialPagos={historialPagos}
         colonias={colonias ?? []}
         totalConsultas={totalConsultas ?? 0}
     />

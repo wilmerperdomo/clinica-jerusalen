@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useMemo, useEffect, useCallback } from 'react'
+import { useState, useTransition, useMemo, useEffect, useCallback, useRef } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { generarLineasProduccion } from '@/lib/planilla-utils'
 import {
@@ -196,6 +196,7 @@ interface Props {
   membresiasMap:           MembresiasMap
   cotizacionesPorCobrar:   CotizacionPorCobrar[]
   correlativos:            Correlativo[]
+  membresiaPagoPrecarga?:  number | null
 }
 
 function sb() {
@@ -215,6 +216,7 @@ export default function CajaClient({
   membresiasMap,
   cotizacionesPorCobrar: initCotizacionesPorCobrar,
   correlativos: initCorrelativos,
+  membresiaPagoPrecarga = null,
 }: Props) {
   const [sesion,   setSesion]   = useState<Sesion | null>(initSesion)
   const [cxc,      setCxc]      = useState<CXC[]>(initCxc)
@@ -239,6 +241,7 @@ export default function CajaClient({
   const [formCobroMembresia, setFormCobroMembresia] = useState({
     forma_pago: 'EFECTIVO', referencia: '', nota: '',
   })
+  const precargaMembresiaRef = useRef(false)
   const [labGrupoCobro, setLabGrupoCobro] = useState<LabGrupoCobro | null>(null)
   const [labCobroExitoso, setLabCobroExitoso] = useState<{
     total: number; pacNombre: string; formaPago: string; puntosCanjeados?: number
@@ -420,7 +423,18 @@ export default function CajaClient({
       .in('estado', ['pendiente', 'vencido'])
       .order('fecha_vencimiento')
       .limit(100)
-    if (mp) setMembresiaPorCobrar(mp as MembresiaPagoCobro[])
+    if (mp) {
+      let lista = mp as MembresiaPagoCobro[]
+      // Misma regla que la carga inicial: cada sucursal cobra sus cuotas y
+      // las "General" (sin sucursal) se ven en todas las cajas.
+      if (!esSuperAdmin && perfil?.sucursal_id) {
+        lista = lista.filter(p => {
+          const suc = (p.membresia as { sucursal_id?: number | null } | null)?.sucursal_id
+          return suc == null || suc === perfil.sucursal_id
+        })
+      }
+      setMembresiaPorCobrar(lista)
+    }
 
     const cotQuery = supabase
       .from('cotizaciones')
@@ -1528,6 +1542,48 @@ export default function CajaClient({
     setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
     setModalCobroMembresia(true)
   }
+
+  // Precarga desde Planes Médicos: /ventas?membresia_pago=ID
+  useEffect(() => {
+    if (!membresiaPagoPrecarga) return
+    setTab('membresias_cobrar')
+    if (!sesion || precargaMembresiaRef.current) return
+
+    const abrir = (pago: MembresiaPagoCobro) => {
+      precargaMembresiaRef.current = true
+      setMembresiaPagoCobro(pago)
+      setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+      setModalCobroMembresia(true)
+    }
+
+    const enLista = initMembresiaPagosPorCobrar?.find(p => p.id === membresiaPagoPrecarga)
+      ?? membresiaPorCobrar.find(p => p.id === membresiaPagoPrecarga)
+    if (enLista) {
+      abrir(enLista)
+      return
+    }
+
+    void (async () => {
+      const { data } = await supabase
+        .from('membresia_pagos')
+        .select(`
+          id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado,
+          membresia:membresias(
+            numero_carnet, paciente_id, sucursal_id,
+            tipo:membresia_tipos(nombre),
+            paciente:pacientes(id, codigo, nombre, apellido1, apellido2, telefono, celular, correo)
+          )
+        `)
+        .eq('id', membresiaPagoPrecarga)
+        .maybeSingle()
+      if (data && data.estado !== 'pagado') {
+        const pago = data as MembresiaPagoCobro
+        setMembresiaPorCobrar(prev => prev.some(p => p.id === pago.id) ? prev : [...prev, pago])
+        abrir(pago)
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [membresiaPagoPrecarga, sesion])
 
   function cerrarModalCobroMembresia() {
     setModalCobroMembresia(false)
@@ -4135,7 +4191,7 @@ export default function CajaClient({
                       {membInfo.estructurados.pctMedicamentos > 0 && <li>• {membInfo.estructurados.pctMedicamentos}% en medicamentos</li>}
                       {membInfo.estructurados.pctServicios > 0 && <li>• {membInfo.estructurados.pctServicios}% en servicios</li>}
                     </ul>
-                    <p className="text-[11px] text-emerald-700/80 mt-2">Beneficios aplicados automáticamente al total.</p>
+                    <p className="text-[11px] text-emerald-700/80 mt-2">Descuento aplicado por Plan Médico — beneficios al total.</p>
                   </div>
                 )}
                 <div className={`rounded-xl border p-4 ${

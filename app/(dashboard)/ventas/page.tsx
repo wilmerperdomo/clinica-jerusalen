@@ -9,7 +9,15 @@ import CajaClient from './caja-client'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Caja / Ventas' }
 
-export default async function VentasPage() {
+export default async function VentasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ membresia_pago?: string }>
+}) {
+  const params = await searchParams
+  const membresiaPagoPrecarga = params.membresia_pago
+    ? parseInt(params.membresia_pago, 10) || null
+    : null
   const supabase = await createClient()
   const perfilAuth = await getPerfilSucursal()
   const { userId: uid, esSuperAdmin, esAdmin, nombre } = perfilAuth
@@ -186,9 +194,13 @@ export default async function VentasPage() {
 
   let membresiaPagosPorCobrar = membresiaPagosRaw ?? []
   if (!esSuperAdmin && sucursalId) {
-    membresiaPagosPorCobrar = membresiaPagosPorCobrar.filter(
-      p => (p.membresia as { sucursal_id?: number } | null)?.sucursal_id === sucursalId,
-    )
+    // Cada sucursal cobra sus cuotas. Las cuotas sin sucursal asignada
+    // ("General") se muestran en todas las cajas para que NUNCA queden
+    // sin cobrar: todo lo enviado a caja debe cobrarse sí o sí.
+    membresiaPagosPorCobrar = membresiaPagosPorCobrar.filter(p => {
+      const suc = (p.membresia as { sucursal_id?: number | null } | null)?.sucursal_id
+      return suc == null || suc === sucursalId
+    })
   }
 
   // Mapa de membresías activas por paciente, con beneficios estructurados
@@ -231,6 +243,7 @@ export default async function VentasPage() {
       membresiasMap={membresiasMap}
       cotizacionesPorCobrar={cotizacionesPorCobrarRaw || []}
       correlativos={correlativos || []}
+      membresiaPagoPrecarga={membresiaPagoPrecarga}
     />
   )
 }

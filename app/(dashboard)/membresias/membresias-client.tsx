@@ -8,11 +8,13 @@ import {
   ChevronDown, ChevronUp, Printer, CheckCircle, XCircle,
   AlertTriangle, Edit3, Trash2, UserPlus, X, BadgeCheck,
   Camera, IdCard, TrendingUp, DollarSign, Clock, CalendarDays,
-  Wallet, BarChart3, ArrowRight, Hash,
+  Wallet, BarChart3, ArrowRight, Hash, FileText,
 } from 'lucide-react'
 import CarnetMembresia from './CarnetMembresia'
 import { useConfirm } from '@/components/confirm-dialog'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary } from '@/components/module-layout'
+import { estadoVisualPlan, etiquetaEstadoPlan, claseEstadoPlan, diasRestantesPlan, numCuotasPlan } from '@/lib/membresia-estado'
+import { imprimirContratoMembresia } from '@/lib/membresia-contrato-print'
 
 /* ══════════════════ TIPOS ════════════════════════════════════ */
 interface Beneficio   { id: number; descripcion: string; activo: boolean }
@@ -58,6 +60,7 @@ interface Props {
   sucursalDefault: number | null
   hoy:             string
   esSuperAdmin?:   boolean
+  esAdmin?:        boolean
 }
 
 /* ══════════════════ HELPERS ══════════════════════════════════ */
@@ -66,15 +69,36 @@ const hoyStr     = () => new Date().toISOString().split('T')[0]
 const semanaStr  = () => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0] }
 
 function diasRestantes(fechaFin: string) {
-  const fin = new Date(fechaFin); const hoyD = new Date(); hoyD.setHours(0,0,0,0)
-  return Math.ceil((fin.getTime() - hoyD.getTime()) / 86400000)
+  return diasRestantesPlan(fechaFin)
 }
-function estadoBadge(m: Membresia) {
-  if (m.estado === 'inactivo') return { label: 'Inactivo', color: 'bg-gray-100 text-gray-600' }
-  const d = diasRestantes(m.fecha_fin)
-  if (d < 0)   return { label: 'Vencido',      color: 'bg-red-100   text-red-700'   }
-  if (d <= 10) return { label: `Vence en ${d}d`,color: 'bg-amber-100 text-amber-700' }
-  return               { label: 'Activo',       color: 'bg-green-100 text-green-700' }
+function cuotasVencidasMem(membresiaId: number, pagosList: Pago[]) {
+  const h = hoyStr()
+  return pagosList.filter(p => p.membresia_id === membresiaId && p.estado !== 'pagado' && p.fecha_vencimiento < h).length
+}
+function estadoBadge(m: Membresia, pagosList: Pago[] = []) {
+  const ev = estadoVisualPlan({
+    estado: m.estado,
+    fecha_fin: m.fecha_fin,
+    cuotas_vencidas: cuotasVencidasMem(m.id, pagosList),
+  })
+  const dias = diasRestantesPlan(m.fecha_fin)
+  let label = etiquetaEstadoPlan(ev)
+  if (ev === 'por_vencer') label = `Por vencer (${dias}d)`
+  return { label, color: claseEstadoPlan(ev), ev }
+}
+function proximaCuotaPendiente(membresiaId: number, pagosList: Pago[]) {
+  return pagosList
+    .filter(p => p.membresia_id === membresiaId && p.estado !== 'pagado')
+    .sort((a, b) => a.fecha_vencimiento.localeCompare(b.fecha_vencimiento))[0]
+}
+function descuentosPlanTipo(t: Tipo) {
+  const chips: { label: string; cls: string }[] = []
+  if (t.consulta_gratis) chips.push({ label: 'Consulta gratis', cls: 'bg-emerald-100 text-emerald-800' })
+  if ((t.pct_consulta ?? 0) > 0) chips.push({ label: `${t.pct_consulta}% consulta`, cls: 'bg-blue-100 text-blue-800' })
+  if ((t.pct_laboratorio ?? 0) > 0) chips.push({ label: `${t.pct_laboratorio}% laboratorio`, cls: 'bg-violet-100 text-violet-800' })
+  if ((t.pct_medicamentos ?? 0) > 0) chips.push({ label: `${t.pct_medicamentos}% medicamentos`, cls: 'bg-amber-100 text-amber-800' })
+  if ((t.pct_servicios ?? 0) > 0) chips.push({ label: `${t.pct_servicios}% servicios`, cls: 'bg-teal-100 text-teal-800' })
+  return chips
 }
 function recalcFin(inicio: string, dias: number) {
   if (!inicio || !dias) return ''
@@ -111,7 +135,7 @@ function mensajeError(err: unknown) {
 /* ════════════════════════════════════════════════════════════ */
 export default function MembresiasClient({
   tipos, membresias: init, pacientes, sucursales,
-  pagos: initPagos, sucursalDefault, hoy, esSuperAdmin = false,
+  pagos: initPagos, sucursalDefault, hoy, esSuperAdmin = false, esAdmin = false,
 }: Props) {
   const supabase  = createClient()
   const confirmDialog = useConfirm()
@@ -168,29 +192,36 @@ export default function MembresiasClient({
   /* ── loading genérico ── */
   const [loading, setLoading] = useState(false)
 
+  /* ── duplicado / renovación inteligente ── */
+  const [planDuplicado, setPlanDuplicado] = useState<Membresia | null>(null)
+  const [renovarTarget, setRenovarTarget] = useState<Membresia | null>(null)
+
   /* ════════ CÁLCULOS MEMOIZADOS ════════════════════════════ */
   const tipoSel = tiposList.find(t => t.id === formMem.tipo_id)
 
   const stats = useMemo(() => {
-    const activas    = membresias.filter(m => estadoBadge(m).label === 'Activo').length
-    const vencidas   = membresias.filter(m => estadoBadge(m).label === 'Vencido').length
-    const porVencer  = membresias.filter(m => estadoBadge(m).label.startsWith('Vence')).length
-    // ingresos: suma de cuotas pagadas
+    const activas    = membresias.filter(m => estadoBadge(m, pagos).ev === 'activo').length
+    const vencidas   = membresias.filter(m => estadoBadge(m, pagos).ev === 'vencido').length
+    const porVencer  = membresias.filter(m => estadoBadge(m, pagos).ev === 'por_vencer').length
+    const enMora     = membresias.filter(m => estadoBadge(m, pagos).ev === 'mora').length
     const cobrado    = pagos.filter(p => p.estado === 'pagado').reduce((s, p) => s + p.monto, 0)
     const porCobrar  = pagos.filter(p => p.estado !== 'pagado').reduce((s, p) => s + p.monto, 0)
-    const vencPagos  = pagos.filter(p => p.estado === 'vencido').length
-    // este mes
+    const vencPagos  = pagos.filter(p => p.estado !== 'pagado' && p.fecha_vencimiento < hoy).length
     const mesActual  = hoy.slice(0, 7)
     const vendidasMes= membresias.filter(m => m.created_at.slice(0, 7) === mesActual).length
-    return { activas, vencidas, porVencer, total: membresias.length, cobrado, porCobrar, vencPagos, vendidasMes }
+    const renovMes   = membresias.filter(m => m.created_at.slice(0, 7) === mesActual && (m.comentarios || '').includes('Renovación')).length
+    const ingresosMes= pagos.filter(p => p.estado === 'pagado' && (p.fecha_pago || '').slice(0, 7) === mesActual).reduce((s, p) => s + p.monto, 0)
+    return { activas, vencidas, porVencer, enMora, total: membresias.length, cobrado, porCobrar, vencPagos, vendidasMes, renovMes, ingresosMes }
   }, [membresias, pagos, hoy])
 
   const memFiltradas = useMemo(() => {
     return membresias.filter(m => {
       const nombre = `${m.paciente?.nombre || ''} ${m.paciente?.apellido1 || ''}`.toLowerCase()
       const passQ  = !buscar || nombre.includes(buscar.toLowerCase()) || (m.tipo?.nombre || '').toLowerCase().includes(buscar.toLowerCase()) || (m.numero_carnet || '').toLowerCase().includes(buscar.toLowerCase())
-      const badge  = estadoBadge(m)
-      const passE  = !filtroEstado || badge.label.toLowerCase().startsWith(filtroEstado)
+      const badge  = estadoBadge(m, pagos)
+      const passE  = !filtroEstado
+        || badge.ev === filtroEstado
+        || (filtroEstado === 'vence' && badge.ev === 'por_vencer')
       return passQ && passE
     })
   }, [membresias, buscar, filtroEstado])
@@ -269,9 +300,37 @@ export default function MembresiasClient({
 
   async function eliminarMembresia(m: Membresia) {
     const nombrePac = `${m.paciente?.nombre ?? ''} ${m.paciente?.apellido1 ?? ''}`.trim()
+
+    // Regla de caja: todo lo enviado a cobro se cobra sí o sí.
+    // No se puede borrar un plan con cuotas cobradas (registro financiero)
+    // ni con cuotas pendientes/vencidas (ya están en caja para cobrar).
+    const { data: cuotasDb, error: eCheck } = await supabase
+      .from('membresia_pagos')
+      .select('estado')
+      .eq('membresia_id', m.id)
+    if (eCheck) { alert('No se pudo verificar cuotas: ' + mensajeError(eCheck)); return }
+
+    const pagadas    = (cuotasDb ?? []).filter(c => c.estado === 'pagado').length
+    const pendientes = (cuotasDb ?? []).filter(c => c.estado !== 'pagado').length
+
+    if (pagadas > 0) {
+      alert(
+        `No se puede eliminar: este plan tiene ${pagadas} cuota(s) ya cobrada(s) en caja.\n\n` +
+        `Los cobros registrados no se pueden borrar. Si el plan ya no aplica, cámbielo a estado "Cancelado".`
+      )
+      return
+    }
+    if (pendientes > 0) {
+      alert(
+        `No se puede eliminar: este plan tiene ${pendientes} cuota(s) pendiente(s) enviada(s) a caja.\n\n` +
+        `Todo lo enviado a caja debe cobrarse. Cobre las cuotas en Caja o, si el plan ya no aplica, cámbielo a estado "Cancelado".`
+      )
+      return
+    }
+
     const { confirmed } = await confirmDialog({
       title: 'Eliminar plan médico',
-      message: `¿Eliminar el plan de ${nombrePac}? Se borrarán también sus cuotas y beneficiarios.`,
+      message: `¿Eliminar el plan de ${nombrePac}? Este plan no tiene cuotas y se borrarán sus beneficiarios.`,
       variant: 'danger',
       confirmLabel: 'Eliminar',
       details: [
@@ -320,12 +379,32 @@ export default function MembresiasClient({
     }
   }
 
-  async function guardarMembresia() {
+  async function guardarMembresia(reemplazarId?: number) {
     if (!formMem.paciente_id) return setErrorMem('Selecciona un paciente')
     if (!formMem.tipo_id)     return setErrorMem('Selecciona un plan')
     if (!formMem.fecha_inicio || !formMem.fecha_fin) return setErrorMem('Completa las fechas')
+
+    const idReemplazo = reemplazarId
+
+    if (!editMemId && !idReemplazo) {
+      const activo = membresias.find(m =>
+        m.paciente_id === formMem.paciente_id &&
+        m.estado === 'activo' &&
+        m.fecha_fin >= hoyStr()
+      )
+      if (activo) {
+        setPlanDuplicado(activo)
+        return
+      }
+    }
+
     setLoadingMem(true); setErrorMem('')
     try {
+      if (idReemplazo) {
+        await supabase.from('membresias').update({ estado: 'inactivo' }).eq('id', idReemplazo)
+        setMembresias(prev => prev.map(x => x.id === idReemplazo ? { ...x, estado: 'inactivo' } : x))
+      }
+
       const tipoActual = tiposList.find(t => t.id === formMem.tipo_id)
       const pacienteActual = pacientes.find(p => p.id === formMem.paciente_id)
         ?? membresias.find(m => m.id === editMemId)?.paciente
@@ -432,21 +511,24 @@ export default function MembresiasClient({
           }
         }
       }
+      setPlanDuplicado(null)
       cerrarModalMem()
     } catch (err: unknown) { setErrorMem(mensajeError(err)) }
     finally { setLoadingMem(false) }
   }
 
-  async function renovar(m: Membresia) {
-    const nombrePac = `${m.paciente?.nombre ?? ''} ${m.paciente?.apellido1 ?? ''}`.trim()
-    const { confirmed } = await confirmDialog({
-      title: 'Renovar membresía',
-      message: `¿Renovar la membresía de ${nombrePac}? Se creará una nueva y se inactivará la actual.`,
-      variant: 'info',
-      confirmLabel: 'Renovar',
-      details: m.numero_carnet ? [{ label: 'Carnet', value: m.numero_carnet }] : undefined,
-    })
-    if (!confirmed) return
+  function abrirRenovar(m: Membresia) {
+    if (!esAdmin) {
+      alert('Solo administradores pueden renovar planes médicos.')
+      return
+    }
+    setRenovarTarget(m)
+  }
+
+  async function confirmarRenovar() {
+    const m = renovarTarget
+    if (!m) return
+    setRenovarTarget(null)
     setLoading(true)
     try {
       const dias = m.tipo?.duracion_dias || 30
@@ -468,8 +550,52 @@ export default function MembresiasClient({
       if (benAct.length && newM?.id)
         await supabase.from('membresia_beneficiarios').insert(benAct.map(b => ({ membresia_id: newM.id, nombre: b.nombre, parentesco: b.parentesco, activo: true })))
       setMembresias(prev => prev.map(x => x.paciente_id === m.paciente_id && x.estado === 'activo' ? { ...x, estado: 'inactivo' } : x).concat(newM ? [newM as unknown as Membresia] : []))
+      const { data: np } = await supabase.from('membresia_pagos')
+        .select('id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago, forma_pago, cajero_nombre, notas')
+        .eq('membresia_id', newM?.id)
+      if (np && newM) {
+        setPagos(prev => [...prev, ...(np as Pago[]).map(p => ({
+          ...p,
+          membresia: {
+            numero_carnet: newM.numero_carnet,
+            tipo: m.tipo ? { nombre: m.tipo.nombre } : null,
+            paciente: m.paciente ? { nombre: m.paciente.nombre, apellido1: m.paciente.apellido1, telefono: m.paciente.telefono, foto_url: m.paciente.foto_url } : null,
+          },
+        }))])
+      }
     } catch (err) { alert('Error al renovar: ' + (err instanceof Error ? err.message : err)) }
     finally { setLoading(false) }
+  }
+
+  function imprimirContrato(m: Membresia) {
+    const tipoFull = tiposList.find(t => t.id === m.tipo_id)
+    imprimirContratoMembresia({
+      paciente: {
+        nombre: m.paciente?.nombre || '',
+        apellido1: m.paciente?.apellido1 || '',
+        apellido2: m.paciente?.apellido2,
+        telefono: m.paciente?.telefono,
+      },
+      membresia: {
+        numero_carnet: m.numero_carnet,
+        fecha_inicio: m.fecha_inicio,
+        fecha_fin: m.fecha_fin,
+        comentarios: m.comentarios,
+        tipo: tipoFull ? {
+          nombre: tipoFull.nombre,
+          precio: tipoFull.precio,
+          duracion_dias: tipoFull.duracion_dias,
+          descripcion: tipoFull.descripcion,
+          consulta_gratis: tipoFull.consulta_gratis,
+          pct_consulta: tipoFull.pct_consulta,
+          pct_laboratorio: tipoFull.pct_laboratorio,
+          pct_medicamentos: tipoFull.pct_medicamentos,
+          pct_servicios: tipoFull.pct_servicios,
+        } : m.tipo ? { nombre: m.tipo.nombre, precio: m.tipo.precio, duracion_dias: m.tipo.duracion_dias } : undefined,
+        beneficiarios: (m.beneficiarios || []).filter(b => b.activo).map(b => ({ nombre: b.nombre, parentesco: b.parentesco })),
+        sucursal: m.sucursal,
+      },
+    })
   }
 
   async function guardarTipo() {
@@ -623,8 +749,9 @@ export default function MembresiasClient({
           { label: 'Por vencer', value: stats.porVencer, icon: AlertTriangle },
           { label: 'Vencidos', value: stats.vencidas, icon: XCircle },
           { label: 'Vendidos / mes', value: stats.vendidasMes, icon: TrendingUp },
-          { label: 'Cobrado', value: fmt(stats.cobrado), icon: DollarSign },
-          { label: 'Por cobrar', value: fmt(stats.porCobrar), icon: Wallet },
+          { label: 'Cuotas vencidas', value: stats.vencPagos, icon: AlertTriangle },
+          { label: 'Ingresos / mes', value: fmt(stats.ingresosMes), icon: DollarSign },
+          { label: 'Renovaciones / mes', value: stats.renovMes, icon: RefreshCw },
         ]}
         actions={
           <ModuleBtnPrimary onClick={abrirNuevaMembresia}>
@@ -663,9 +790,11 @@ export default function MembresiasClient({
               className="border rounded-lg px-3 py-2 text-sm text-gray-700">
               <option value="">Todos los estados</option>
               <option value="activo">Activos</option>
-              <option value="vence">Por vencer</option>
+              <option value="por_vencer">Por vencer</option>
               <option value="vencido">Vencidos</option>
+              <option value="mora">Suspendido por mora</option>
               <option value="inactivo">Inactivos</option>
+              <option value="cancelado">Cancelados</option>
             </select>
             <button onClick={imprimirLista}
               className="flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">
@@ -696,9 +825,10 @@ export default function MembresiasClient({
                   </td></tr>
                 )}
                 {memFiltradas.map(m => {
-                  const badge = estadoBadge(m)
+                  const badge = estadoBadge(m, pagos)
                   const dias  = diasRestantes(m.fecha_fin)
                   const open  = expandido === m.id
+                  const cuota = proximaCuotaPendiente(m.id, pagos)
                   return (
                     <Fragment key={m.id}>
                       <tr className="hover:bg-gray-50">
@@ -733,6 +863,15 @@ export default function MembresiasClient({
                         </td>
                         <td className="px-3 py-3 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${badge.color}`}>{badge.label}</span>
+                          {cuota && (
+                            <div className="mt-1.5">
+                              <p className="text-[10px] text-gray-500">Cuota #{cuota.numero_cuota} · {fmt(cuota.monto)}</p>
+                              <Link href={`/ventas?membresia_pago=${cuota.id}`}
+                                className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-violet-700 hover:underline mt-0.5">
+                                <Wallet className="w-3 h-3" /> Cobrar ahora
+                              </Link>
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-center">
                           {(m.beneficiarios || []).filter(b => b.activo).length > 0
@@ -757,8 +896,12 @@ export default function MembresiasClient({
                                   ? <CheckCircle className="w-3.5 h-3.5"/>
                                   : <Camera className="w-3.5 h-3.5"/>}
                             </button>
-                            <button onClick={() => renovar(m)} title="Renovar"
-                              className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100"><RefreshCw className="w-3.5 h-3.5"/></button>
+                            <button onClick={() => imprimirContrato(m)} title="Contrato / comprobante"
+                              className="p-1.5 rounded-lg bg-slate-50 text-slate-600 hover:bg-slate-100"><FileText className="w-3.5 h-3.5"/></button>
+                            {esAdmin && (
+                              <button onClick={() => abrirRenovar(m)} title="Renovar"
+                                className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100"><RefreshCw className="w-3.5 h-3.5"/></button>
+                            )}
                             {esSuperAdmin && (
                               <>
                                 <button onClick={() => abrirEditarMembresia(m)} title="Editar"
@@ -804,7 +947,7 @@ export default function MembresiasClient({
                     <td>{m.tipo?.nombre}</td>
                     <td>{m.fecha_inicio}</td>
                     <td>{m.fecha_fin}</td>
-                    <td>{estadoBadge(m).label}</td>
+                    <td>{estadoBadge(m, pagos).label}</td>
                   </tr>
                 ))}
               </tbody>
@@ -906,10 +1049,10 @@ export default function MembresiasClient({
                     {/* acción */}
                     {p.estado !== 'pagado' && (
                       <Link
-                        href="/ventas"
+                        href={`/ventas?membresia_pago=${p.id}`}
                         className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-xl text-sm font-medium hover:bg-violet-700 transition"
                       >
-                        <Wallet className="w-4 h-4" /> Cobrar en Caja <ArrowRight className="w-3.5 h-3.5 ml-auto"/>
+                        <Wallet className="w-4 h-4" /> Cobrar ahora <ArrowRight className="w-3.5 h-3.5 ml-auto"/>
                       </Link>
                     )}
                     {p.estado === 'pagado' && (
@@ -928,6 +1071,19 @@ export default function MembresiasClient({
       {/* ══════════════ TAB: ANALYTICS ═══════════════════════ */}
       {tab === 'analytics' && (
         <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: 'Ingresos planes (mes)', valor: fmt(stats.ingresosMes), cls: 'bg-green-50 border-green-200 text-green-800' },
+              { label: 'Cuotas vencidas', valor: String(stats.vencPagos), cls: 'bg-red-50 border-red-200 text-red-800' },
+              { label: 'Planes nuevos (mes)', valor: String(stats.vendidasMes), cls: 'bg-blue-50 border-blue-200 text-blue-800' },
+              { label: 'Renovaciones (mes)', valor: String(stats.renovMes), cls: 'bg-violet-50 border-violet-200 text-violet-800' },
+            ].map(k => (
+              <div key={k.label} className={`rounded-xl border p-4 ${k.cls}`}>
+                <p className="text-xs font-medium opacity-80">{k.label}</p>
+                <p className="text-2xl font-bold mt-1">{k.valor}</p>
+              </div>
+            ))}
+          </div>
           <div className="grid md:grid-cols-2 gap-4">
 
             {/* ranking de planes */}
@@ -1052,9 +1208,16 @@ export default function MembresiasClient({
                       </div>
                       <div className="text-right">
                         <p className="text-xl font-bold text-blue-700">{fmt(t.precio)}</p>
-                        <p className="text-xs text-gray-400">{t.duracion_dias} días</p>
+                        <p className="text-xs text-gray-400">{t.duracion_dias} días · {numCuotasPlan(t.duracion_dias)} cuota{numCuotasPlan(t.duracion_dias) !== 1 ? 's' : ''}</p>
                       </div>
                     </div>
+                    {descuentosPlanTipo(t).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {descuentosPlanTipo(t).map(c => (
+                          <span key={c.label} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${c.cls}`}>{c.label}</span>
+                        ))}
+                      </div>
+                    )}
                     {(t.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
                       <ul className="space-y-1">
                         {(t.membresia_beneficios ?? []).filter(b => b.activo).map(b => (
@@ -1166,7 +1329,7 @@ export default function MembresiasClient({
                 </select>
                 {!editMemId && tipoSel && (tipoSel.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
                   <div className="mt-2 p-3 bg-blue-50 rounded-lg">
-                    <p className="text-xs font-semibold text-blue-700 mb-1">Cuotas que se generarán: {Math.round(tipoSel.duracion_dias <= 31 ? 1 : tipoSel.duracion_dias <= 93 ? 3 : tipoSel.duracion_dias <= 186 ? 6 : 12)}</p>
+                    <p className="text-xs font-semibold text-blue-700 mb-1">Cuotas que se generarán: {tipoSel ? numCuotasPlan(tipoSel.duracion_dias) : 1}</p>
                     {(tipoSel.membresia_beneficios ?? []).filter(b => b.activo).map(b => (
                       <p key={b.id} className="text-xs text-blue-700 flex items-center gap-1"><BadgeCheck className="w-3 h-3"/>{b.descripcion}</p>
                     ))}
@@ -1213,6 +1376,7 @@ export default function MembresiasClient({
                     <option value="activo">Activo</option>
                     <option value="inactivo">Inactivo</option>
                     <option value="vencido">Vencido</option>
+                    <option value="cancelado">Cancelado</option>
                   </select>
                 </div>
               )}
@@ -1366,6 +1530,97 @@ export default function MembresiasClient({
           </div>
         </div>
       )}
+
+      {/* ── MODAL: plan activo duplicado ── */}
+      {planDuplicado && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+            <h3 className="font-bold text-gray-900 text-lg flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600" /> Plan activo existente
+            </h3>
+            <p className="text-sm text-gray-600">
+              Este paciente ya tiene <strong>{planDuplicado.tipo?.nombre}</strong> activo hasta{' '}
+              <strong>{planDuplicado.fecha_fin}</strong> (carnet {planDuplicado.numero_carnet || '—'}).
+            </p>
+            <p className="text-sm text-gray-500">¿Qué desea hacer?</p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  const m = planDuplicado
+                  setPlanDuplicado(null)
+                  cerrarModalMem()
+                  abrirRenovar(m)
+                }}
+                className="w-full px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700"
+              >
+                Renovar plan actual
+              </button>
+              <button
+                onClick={() => {
+                  const id = planDuplicado.id
+                  setPlanDuplicado(null)
+                  void guardarMembresia(id)
+                }}
+                className="w-full px-4 py-2.5 bg-amber-600 text-white rounded-xl text-sm font-medium hover:bg-amber-700"
+              >
+                Reemplazar (inactivar el anterior)
+              </button>
+              <button
+                onClick={() => setPlanDuplicado(null)}
+                className="w-full px-4 py-2.5 border rounded-xl text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: renovación inteligente ── */}
+      {renovarTarget && (() => {
+        const m = renovarTarget
+        const dias = m.tipo?.duracion_dias || 30
+        const hoyD = hoyStr()
+        const inicioC = new Date(m.fecha_fin); inicioC.setDate(inicioC.getDate() + 1)
+        const inicio = inicioC.toISOString().split('T')[0] > hoyD ? inicioC.toISOString().split('T')[0] : hoyD
+        const finD = new Date(inicio); finD.setDate(finD.getDate() + dias)
+        const fin = finD.toISOString().split('T')[0]
+        const cuotas = numCuotasPlan(dias)
+        const montoCuota = (m.tipo?.precio || 0) / cuotas
+        const benAct = (m.beneficiarios || []).filter(b => b.activo)
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
+              <h3 className="font-bold text-gray-900 text-lg">Renovación inteligente</h3>
+              <p className="text-sm text-gray-600">
+                {m.paciente?.nombre} {m.paciente?.apellido1} · {m.tipo?.nombre}
+              </p>
+              <div className="rounded-xl border bg-gray-50 p-4 text-sm space-y-2">
+                <p><span className="text-gray-500">Plan sugerido:</span> <strong>{m.tipo?.nombre}</strong> (mismo plan)</p>
+                <p><span className="text-gray-500">Nueva vigencia:</span> <strong>{inicio}</strong> → <strong>{fin}</strong></p>
+                <p><span className="text-gray-500">Costo total:</span> <strong>{fmt(m.tipo?.precio || 0)}</strong></p>
+                <p><span className="text-gray-500">Cuotas nuevas:</span> <strong>{cuotas} × {fmt(montoCuota)}</strong></p>
+                {benAct.length > 0 && (
+                  <div>
+                    <p className="text-gray-500 mb-1">Beneficiarios a conservar:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {benAct.map((b, i) => (
+                        <span key={i} className="text-xs px-2 py-0.5 bg-white border rounded-full">{b.nombre}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button onClick={() => setRenovarTarget(null)} className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
+                <button onClick={() => void confirmarRenovar()} className="px-5 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700">
+                  Confirmar renovación
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {loading && (
         <div className="fixed inset-0 bg-black/20 z-40 flex items-center justify-center">
