@@ -54,6 +54,8 @@ interface Consulta {
   consulta_diagnosticos?: DiagnosticoConsulta[]
 }
 interface LabResultado {
+  id?: number
+  nombre_prueba?: string
   valor_resultado?: string; unidad?: string; rango_texto?: string
   observacion?: string; anormal?: boolean; fecha?: string
 }

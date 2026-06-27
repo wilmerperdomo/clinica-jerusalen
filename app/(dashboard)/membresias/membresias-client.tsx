@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, Fragment } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -520,8 +520,8 @@ export default function MembresiasClient({
                   const dias  = diasRestantes(m.fecha_fin)
                   const open  = expandido === m.id
                   return (
-                    <>
-                      <tr key={m.id} className="hover:bg-gray-50">
+                    <Fragment key={m.id}>
+                      <tr className="hover:bg-gray-50">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2.5">
                             {m.paciente?.foto_url ? (
@@ -583,7 +583,7 @@ export default function MembresiasClient({
                         </td>
                       </tr>
                       {open && (
-                        <tr key={`b-${m.id}`} className="bg-blue-50">
+                        <tr className="bg-blue-50">
                           <td colSpan={7} className="px-8 py-3">
                             <p className="font-semibold text-xs text-blue-700 mb-1.5 uppercase">Beneficiarios</p>
                             <div className="flex flex-wrap gap-2">
@@ -597,7 +597,7 @@ export default function MembresiasClient({
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -774,16 +774,16 @@ export default function MembresiasClient({
               </h3>
               <div className="space-y-3">
                 {[
-                  { label: 'Cobrado', valor: pagos.filter(p => p.estado === 'pagado').reduce((s,p) => s+p.monto, 0), count: pagos.filter(p => p.estado === 'pagado').length, color: 'green' },
-                  { label: 'Por cobrar', valor: pagos.filter(p => p.estado === 'pendiente').reduce((s,p) => s+p.monto, 0), count: pagos.filter(p => p.estado === 'pendiente').length, color: 'blue' },
-                  { label: 'Vencido sin pagar', valor: pagos.filter(p => p.estado === 'vencido').reduce((s,p) => s+p.monto, 0), count: pagos.filter(p => p.estado === 'vencido').length, color: 'red' },
+                  { label: 'Cobrado', valor: pagos.filter(p => p.estado === 'pagado').reduce((s,p) => s+p.monto, 0), count: pagos.filter(p => p.estado === 'pagado').length, box: 'bg-green-50 border-green-100', text: 'text-green-700' },
+                  { label: 'Por cobrar', valor: pagos.filter(p => p.estado === 'pendiente').reduce((s,p) => s+p.monto, 0), count: pagos.filter(p => p.estado === 'pendiente').length, box: 'bg-blue-50 border-blue-100', text: 'text-blue-700' },
+                  { label: 'Vencido sin pagar', valor: pagos.filter(p => p.estado === 'vencido').reduce((s,p) => s+p.monto, 0), count: pagos.filter(p => p.estado === 'vencido').length, box: 'bg-red-50 border-red-100', text: 'text-red-700' },
                 ].map(r => (
-                  <div key={r.label} className={`flex items-center justify-between p-3 bg-${r.color}-50 rounded-xl border border-${r.color}-100`}>
+                  <div key={r.label} className={`flex items-center justify-between p-3 rounded-xl border ${r.box}`}>
                     <div>
-                      <p className={`text-sm font-semibold text-${r.color}-700`}>{r.label}</p>
+                      <p className={`text-sm font-semibold ${r.text}`}>{r.label}</p>
                       <p className="text-xs text-gray-400">{r.count} cuota{r.count !== 1 ? 's' : ''}</p>
                     </div>
-                    <p className={`text-lg font-bold text-${r.color}-700`}>{fmt(r.valor)}</p>
+                    <p className={`text-lg font-bold ${r.text}`}>{fmt(r.valor)}</p>
                   </div>
                 ))}
               </div>
@@ -865,9 +865,9 @@ export default function MembresiasClient({
                         <p className="text-xs text-gray-400">{t.duracion_dias} días</p>
                       </div>
                     </div>
-                    {t.membresia_beneficios.filter(b => b.activo).length > 0 && (
+                    {(t.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
                       <ul className="space-y-1">
-                        {t.membresia_beneficios.filter(b => b.activo).map(b => (
+                        {(t.membresia_beneficios ?? []).filter(b => b.activo).map(b => (
                           <li key={b.id} className="flex items-start gap-1.5 text-xs text-gray-600">
                             <BadgeCheck className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0"/> {b.descripcion}
                           </li>
@@ -892,7 +892,7 @@ export default function MembresiasClient({
                           pct_medicamentos: t.pct_medicamentos ?? 0,
                           pct_servicios: t.pct_servicios ?? 0,
                         })
-                        setBensTipo(t.membresia_beneficios.filter(b => b.activo).map(b => b.descripcion))
+                        setBensTipo((t.membresia_beneficios ?? []).filter(b => b.activo).map(b => b.descripcion))
                         setModalTipo(true); setErrorTipo('')
                       }} className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
                         <Edit3 className="w-3.5 h-3.5"/> Editar
@@ -954,10 +954,10 @@ export default function MembresiasClient({
                     <option key={t.id} value={t.id}>{t.nombre} — {fmt(t.precio)} / {t.duracion_dias}d</option>
                   ))}
                 </select>
-                {tipoSel && tipoSel.membresia_beneficios.filter(b => b.activo).length > 0 && (
+                {tipoSel && (tipoSel.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
                   <div className="mt-2 p-3 bg-blue-50 rounded-lg">
                     <p className="text-xs font-semibold text-blue-700 mb-1">Cuotas que se generarán: {Math.round(tipoSel.duracion_dias <= 31 ? 1 : tipoSel.duracion_dias <= 93 ? 3 : tipoSel.duracion_dias <= 186 ? 6 : 12)}</p>
-                    {tipoSel.membresia_beneficios.filter(b => b.activo).map(b => (
+                    {(tipoSel.membresia_beneficios ?? []).filter(b => b.activo).map(b => (
                       <p key={b.id} className="text-xs text-blue-700 flex items-center gap-1"><BadgeCheck className="w-3 h-3"/>{b.descripcion}</p>
                     ))}
                   </div>

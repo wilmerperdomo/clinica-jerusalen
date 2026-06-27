@@ -14,6 +14,16 @@ export const metadata = { title: 'Inicio — Clínica Jerusalén' }
 const fmt = (n: number) =>
   `L. ${n.toLocaleString('es-HN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+const KPI_ICON_COLORS: Record<string, string> = {
+  green:  'bg-green-100 text-green-600',
+  blue:   'bg-blue-100 text-blue-600',
+  red:    'bg-red-100 text-red-600',
+  purple: 'bg-purple-100 text-purple-600',
+  teal:   'bg-teal-100 text-teal-600',
+  amber:  'bg-amber-100 text-amber-600',
+  orange: 'bg-orange-100 text-orange-600',
+}
+
 function saludo() {
   const h = new Date().getHours()
   return h < 12 ? 'Buenos días' : h < 18 ? 'Buenas tardes' : 'Buenas noches'
@@ -262,7 +272,7 @@ export default async function DashboardPage() {
         ].map(k => (
           <Link key={k.label} href={k.href}
             className="bg-white border rounded-2xl p-4 hover:shadow-md transition group">
-            <div className={`w-9 h-9 rounded-xl bg-${k.color}-100 text-${k.color}-600 flex items-center justify-center mb-2`}>
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-2 ${KPI_ICON_COLORS[k.color] ?? KPI_ICON_COLORS.blue}`}>
               {k.icon}
             </div>
             <p className="text-xl font-bold text-gray-900 leading-tight truncate">{k.value}</p>

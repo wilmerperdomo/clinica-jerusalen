@@ -97,7 +97,7 @@ export default function PlanillaClient({
       row.produccion += Number(p.monto_neto)
       row.lineas.push(p)
     }
-    return [...map.entries()].map(([id, v]) => ({ id, ...v })).filter(r => r.lineas.length > 0 || medicos.find(m => m.id === id))
+    return [...map.entries()].map(([id, v]) => ({ id, ...v })).filter(r => r.lineas.length > 0)
   }, [produccion, medicos])
 
   const totalComisiones = resumenMedicos.reduce((s, r) => s + r.comision, 0)
