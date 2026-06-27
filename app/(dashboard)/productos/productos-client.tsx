@@ -1,30 +1,27 @@
 'use client'
 
-import { useState, useMemo, useTransition } from 'react'
+import { useState, useMemo, useRef } from 'react'
+import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 import { useConfirm } from '@/components/confirm-dialog'
 import {
   Pill, Plus, Search, Edit2, X, Save, ToggleLeft, ToggleRight,
-  Package, Beaker, AlertCircle, CheckCircle2, Filter,
+  Package, Beaker, AlertCircle, CheckCircle2, Eye, Download, Upload,
+  Wand2, Warehouse,
 } from 'lucide-react'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary } from '@/components/module-layout'
+import {
+  type Producto, type ProveedorMin, type StockProducto,
+  ISV_OPCIONES, margenVenta, validarProducto, productosACsv,
+} from '@/lib/productos-utils'
+import ProductoDetalleModal from '@/components/productos/producto-detalle-modal'
+import { siguienteCodigoProducto, importarProductos, type ImportProductoRow } from './actions'
 
-/* ─── tipos ─────────────────────────────────────────────── */
-interface Producto {
-  id: number; codigo: string; nombre: string
-  nombre_generico?: string; laboratorio?: string
-  categoria?: string; unidad?: string; tipo: string
-  es_antibiotico: boolean; costo: number; precio_venta: number
-  stock_minimo: number; activo: boolean
-  codigo_barra?: string; principio_activo?: string; concentracion?: string
-  presentacion?: string; marca?: string; requiere_receta?: boolean
-  es_controlado?: boolean; gravado?: boolean; facturable?: boolean
-  precio_minimo?: number; dias_reposicion?: number
-}
+interface CategoriaRow { id: number; nombre: string; tabla: string; activo: boolean }
 
 const TIPOS = ['Medicamento', 'Producto', 'Insumo'] as const
-const CATEGORIAS = ['Medicamentos', 'Antibióticos', 'Vitaminas', 'Suplementos', 'Insumos Médicos', 'Productos de Limpieza', 'Otros']
-const UNIDADES = ['Unidad', 'Caja', 'Frasco', 'Ampolla', 'Sobre', 'Tubo', 'Rollo', 'Par', 'Kit']
+const UNIDADES_FALLBACK = ['Unidad', 'Caja', 'Frasco', 'Ampolla', 'Sobre', 'Tubo', 'Rollo', 'Par', 'Kit']
+const CATEGORIAS_FALLBACK = ['Medicamentos', 'Insumos Médicos', 'Reactivos Lab', 'Productos OTC', 'Otros']
 
 const TIPO_CFG: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   'Medicamento': { color: 'text-blue-700',   bg: 'bg-blue-50 border-blue-200',   icon: Pill    },
@@ -38,7 +35,7 @@ const FORM_VACIO = {
   es_antibiotico: false, costo: '', precio_venta: '', stock_minimo: '5', activo: true,
   codigo_barra: '', principio_activo: '', concentracion: '', presentacion: '', marca: '',
   requiere_receta: false, es_controlado: false, gravado: true, facturable: true,
-  precio_minimo: '', dias_reposicion: '7',
+  precio_minimo: '', dias_reposicion: '7', isv_porcentaje: '15', proveedor_preferido_id: '',
 }
 
 function sb() {
@@ -48,11 +45,22 @@ function sb() {
   )
 }
 
+interface Props {
+  productos: Producto[]
+  proveedores: ProveedorMin[]
+  categorias: CategoriaRow[]
+  stock: StockProducto[]
+  esSuperAdmin: boolean
+}
+
 /* ═══════════════════════════════════════════════════════════ */
-export default function ProductosClient({ productos: init }: { productos: Producto[] }) {
+export default function ProductosClient({
+  productos: init, proveedores, categorias, stock, esSuperAdmin,
+}: Props) {
   const supabase = sb()
   const confirmDialog = useConfirm()
-  const [, startTransition] = useTransition()
+  const fileRef = useRef<HTMLInputElement>(null)
+
   const [productos,  setProductos]  = useState<Producto[]>(init)
   const [buscar,     setBuscar]     = useState('')
   const [filtroTipo, setFiltroTipo] = useState('')
@@ -62,6 +70,31 @@ export default function ProductosClient({ productos: init }: { productos: Produc
   const [form,       setForm]       = useState<typeof FORM_VACIO>({ ...FORM_VACIO })
   const [guardando,  setGuardando]  = useState(false)
   const [error,      setError]      = useState('')
+  const [advertencias, setAdvertencias] = useState<string[]>([])
+  const [detalle,    setDetalle]    = useState<Producto | null>(null)
+  const [importando, setImportando] = useState(false)
+
+  /* categorías y unidades dinámicas */
+  const catList = useMemo(() => {
+    const c = categorias.filter(x => x.tabla === 'categoria' && x.activo).map(x => x.nombre)
+    return c.length ? c : CATEGORIAS_FALLBACK
+  }, [categorias])
+  const uniList = useMemo(() => {
+    const u = categorias.filter(x => x.tabla === 'unidad' && x.activo).map(x => x.nombre)
+    return u.length ? u : UNIDADES_FALLBACK
+  }, [categorias])
+
+  const stockMap = useMemo(() => {
+    const m = new Map<number, StockProducto>()
+    stock.forEach(s => m.set(s.producto_id, s))
+    return m
+  }, [stock])
+
+  const provMap = useMemo(() => {
+    const m = new Map<number, string>()
+    proveedores.forEach(p => m.set(p.id, p.nombre))
+    return m
+  }, [proveedores])
 
   /* ── filtros ── */
   const lista = useMemo(() => {
@@ -71,7 +104,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
       if (filtroActivo === 'activo'   && !p.activo)  return false
       if (filtroActivo === 'inactivo' &&  p.activo)  return false
       if (!q) return true
-      return `${p.nombre} ${p.nombre_generico ?? ''} ${p.codigo} ${p.laboratorio ?? ''}`.toLowerCase().includes(q)
+      return `${p.nombre} ${p.nombre_generico ?? ''} ${p.codigo} ${p.codigo_barra ?? ''} ${p.laboratorio ?? ''}`.toLowerCase().includes(q)
     })
   }, [productos, buscar, filtroTipo, filtroActivo])
 
@@ -87,8 +120,8 @@ export default function ProductosClient({ productos: init }: { productos: Produc
   /* ── abrir modal ── */
   function abrirNuevo() {
     setEditando(null)
-    setForm({ ...FORM_VACIO })
-    setError('')
+    setForm({ ...FORM_VACIO, categoria: catList[0] ?? 'Otros', unidad: uniList[0] ?? 'Unidad' })
+    setError(''); setAdvertencias([])
     setModal(true)
   }
 
@@ -98,7 +131,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
       codigo: p.codigo, nombre: p.nombre,
       nombre_generico: p.nombre_generico ?? '',
       laboratorio: p.laboratorio ?? '',
-      categoria: p.categoria ?? 'Medicamentos',
+      categoria: p.categoria ?? (catList[0] ?? 'Otros'),
       unidad: p.unidad ?? 'Unidad',
       tipo: p.tipo,
       es_antibiotico: p.es_antibiotico,
@@ -117,16 +150,42 @@ export default function ProductosClient({ productos: init }: { productos: Produc
       facturable: p.facturable ?? true,
       precio_minimo: p.precio_minimo ? String(p.precio_minimo) : '',
       dias_reposicion: p.dias_reposicion ? String(p.dias_reposicion) : '7',
+      isv_porcentaje: p.isv_porcentaje != null ? String(p.isv_porcentaje) : '15',
+      proveedor_preferido_id: p.proveedor_preferido_id ? String(p.proveedor_preferido_id) : '',
     })
-    setError('')
+    setError(''); setAdvertencias([])
     setModal(true)
   }
 
+  function abrirEditarDesdeDetalle() {
+    if (!detalle) return
+    const p = detalle
+    setDetalle(null)
+    abrirEditar(p)
+  }
+
+  async function generarCodigo() {
+    const r = await siguienteCodigoProducto('PRD')
+    if (r.ok && r.codigo) setForm(p => ({ ...p, codigo: r.codigo }))
+  }
+
   /* ── guardar ── */
-  async function guardar() {
-    if (!form.codigo.trim()) { setError('El código es obligatorio'); return }
-    if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
-    if (!form.precio_venta || Number(form.precio_venta) <= 0) { setError('El precio de venta es obligatorio'); return }
+  async function guardar(forzar = false) {
+    const validacion = validarProducto(form, productos, editando?.id ?? null)
+    if (!validacion.ok) { setError(validacion.errores.join(' · ')); setAdvertencias([]); return }
+
+    if (validacion.advertencias.length && !forzar) {
+      setAdvertencias(validacion.advertencias)
+      const { confirmed } = await confirmDialog({
+        title: 'Confirmar precio',
+        message: 'El producto tiene advertencias de precio. ¿Desea guardar de todas formas?',
+        variant: 'warning',
+        confirmLabel: 'Guardar igual',
+        details: validacion.advertencias.map((a, i) => ({ label: `Aviso ${i + 1}`, value: a })),
+      })
+      if (!confirmed) return
+    }
+
     setGuardando(true); setError('')
 
     const payload = {
@@ -153,6 +212,8 @@ export default function ProductosClient({ productos: init }: { productos: Produc
       facturable:      form.facturable,
       precio_minimo:   Number(form.precio_minimo || 0),
       dias_reposicion: Number(form.dias_reposicion || 7),
+      isv_porcentaje:  Number(form.isv_porcentaje || 0),
+      proveedor_preferido_id: form.proveedor_preferido_id ? Number(form.proveedor_preferido_id) : null,
     }
 
     if (editando) {
@@ -162,9 +223,9 @@ export default function ProductosClient({ productos: init }: { productos: Produc
     } else {
       const { data, error: e } = await supabase.from('productos').insert(payload).select().single()
       if (e) { setError(e.message); setGuardando(false); return }
-      setProductos(prev => [...prev, data].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+      setProductos(prev => [...prev, data as Producto].sort((a, b) => a.nombre.localeCompare(b.nombre)))
     }
-    setGuardando(false); setModal(false)
+    setGuardando(false); setModal(false); setAdvertencias([])
   }
 
   /* ── toggle activo ── */
@@ -181,6 +242,72 @@ export default function ProductosClient({ productos: init }: { productos: Produc
     const { error } = await supabase.from('productos').update({ activo: !p.activo }).eq('id', p.id)
     if (error) return alert('Error: ' + error.message)
     setProductos(prev => prev.map(x => x.id === p.id ? { ...x, activo: !x.activo } : x))
+  }
+
+  /* ── exportar CSV ── */
+  function exportarCsv() {
+    const csv = productosACsv(lista)
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `productos_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /* ── importar CSV ── */
+  async function manejarArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const texto = await file.text()
+    if (fileRef.current) fileRef.current.value = ''
+
+    const lineas = texto.split(/\r?\n/).filter(l => l.trim())
+    if (lineas.length < 2) { alert('El archivo no tiene datos'); return }
+
+    const headers = lineas[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase())
+    const idx = (n: string) => headers.indexOf(n)
+    const filas: ImportProductoRow[] = lineas.slice(1).map(linea => {
+      const cells = linea.split(',').map(c => c.trim().replace(/^"|"$/g, ''))
+      const get = (n: string) => { const i = idx(n); return i >= 0 ? cells[i] : '' }
+      return {
+        codigo: get('codigo'),
+        nombre: get('nombre'),
+        tipo: get('tipo') || undefined,
+        categoria: get('categoria') || undefined,
+        unidad: get('unidad') || undefined,
+        costo: Number(get('costo')) || 0,
+        precio_venta: Number(get('precio_venta')) || 0,
+        precio_minimo: Number(get('precio_minimo')) || 0,
+        stock_minimo: Number(get('stock_minimo')) || 5,
+        codigo_barra: get('codigo_barra') || undefined,
+        laboratorio: get('laboratorio') || undefined,
+        isv_porcentaje: get('isv_porcentaje') ? Number(get('isv_porcentaje')) : undefined,
+      }
+    }).filter(f => f.codigo && f.nombre)
+
+    const { confirmed } = await confirmDialog({
+      title: 'Importar productos',
+      message: `Se procesarán ${filas.length} fila(s). Los códigos existentes se actualizarán y los nuevos se crearán.`,
+      variant: 'info',
+      confirmLabel: 'Importar',
+    })
+    if (!confirmed) return
+
+    setImportando(true)
+    const r = await importarProductos(filas)
+    setImportando(false)
+    if (!r.ok) { alert('Error: ' + r.error); return }
+    await confirmDialog({
+      title: 'Importación completada',
+      message: `Creados: ${r.creados} · Actualizados: ${r.actualizados}${r.errores.length ? ` · Errores: ${r.errores.length}` : ''}`,
+      variant: r.errores.length ? 'warning' : 'success',
+      confirmLabel: 'Entendido',
+      cancelLabel: 'Cerrar',
+      details: r.errores.slice(0, 8).map((er, i) => ({ label: `Error ${i + 1}`, value: er })),
+    })
+    if (r.creados || r.actualizados) location.reload()
   }
 
   /* ══════════════════════════════════════════════════════════ */
@@ -212,7 +339,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-blue-300 outline-none bg-white"
-            placeholder="Buscar por nombre, código, laboratorio..."
+            placeholder="Buscar por nombre, código, barra, laboratorio..."
             value={buscar} onChange={e => setBuscar(e.target.value)}
           />
         </div>
@@ -229,6 +356,19 @@ export default function ProductosClient({ productos: init }: { productos: Produc
             </button>
           ))}
         </div>
+        <button onClick={exportarCsv}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm text-gray-600 hover:bg-gray-50 bg-white">
+          <Download className="w-4 h-4" /> Exportar
+        </button>
+        {esSuperAdmin && (
+          <>
+            <button onClick={() => fileRef.current?.click()} disabled={importando}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm text-gray-600 hover:bg-gray-50 bg-white disabled:opacity-50">
+              <Upload className="w-4 h-4" /> {importando ? 'Importando…' : 'Importar'}
+            </button>
+            <input ref={fileRef} type="file" accept=".csv" onChange={manejarArchivo} className="hidden" />
+          </>
+        )}
       </div>
 
       {/* ── TABLA ── */}
@@ -242,7 +382,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
               <tr className="border-b text-xs text-gray-500 uppercase tracking-wide">
                 <th className="text-left px-4 py-3">Producto</th>
                 <th className="text-left px-4 py-3 hidden md:table-cell">Tipo</th>
-                <th className="text-left px-4 py-3 hidden lg:table-cell">Laboratorio</th>
+                <th className="text-center px-4 py-3">Stock</th>
                 <th className="text-right px-4 py-3">Costo</th>
                 <th className="text-right px-4 py-3">P. Venta</th>
                 <th className="text-right px-4 py-3 hidden lg:table-cell">Margen</th>
@@ -262,13 +402,19 @@ export default function ProductosClient({ productos: init }: { productos: Produc
               ) : lista.map(p => {
                 const cfg = TIPO_CFG[p.tipo] ?? TIPO_CFG['Producto']
                 const Icon = cfg.icon
+                const st = stockMap.get(p.id)
+                const totalStock = st?.total ?? 0
+                const stockBajo = totalStock <= p.stock_minimo
+                const margen = margenVenta(p.costo, p.precio_venta)
                 return (
                   <tr key={p.id} className={`hover:bg-gray-50 transition ${!p.activo ? 'opacity-50' : ''}`}>
                     <td className="px-4 py-3">
                       <div className="flex items-start gap-2">
                         <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${cfg.color}`} />
                         <div>
-                          <p className="font-medium text-gray-900">{p.nombre}</p>
+                          <button onClick={() => setDetalle(p)} className="font-medium text-gray-900 hover:text-sky-600 text-left">
+                            {p.nombre}
+                          </button>
                           {p.nombre_generico && <p className="text-xs text-gray-400">{p.nombre_generico}</p>}
                           <p className="text-xs text-gray-400 font-mono">{p.codigo}</p>
                         </div>
@@ -280,7 +426,15 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                         {p.es_antibiotico && ' 🔴'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-500 hidden lg:table-cell text-xs">{p.laboratorio || '—'}</td>
+                    <td className="px-4 py-3 text-center">
+                      <Link href="/inventario" title="Ver en inventario"
+                        className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
+                          totalStock === 0 ? 'bg-gray-100 text-gray-500'
+                            : stockBajo ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                        }`}>
+                        <Warehouse className="w-3 h-3" /> {totalStock}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 text-right text-gray-600">L {Number(p.costo).toFixed(2)}</td>
                     <td className="px-4 py-3 text-right font-semibold text-gray-900">
                       {Number(p.precio_venta) > 0
@@ -288,11 +442,9 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                         : <span className="text-red-400 text-xs">Sin precio</span>}
                     </td>
                     <td className={`px-4 py-3 text-right hidden lg:table-cell font-semibold ${
-                      Number(p.precio_venta) < Number(p.costo) ? 'text-red-600' : 'text-green-700'
+                      margen != null && margen < 0 ? 'text-red-600' : 'text-green-700'
                     }`}>
-                      {Number(p.precio_venta) > 0
-                        ? `${(((Number(p.precio_venta) - Number(p.costo)) / Number(p.precio_venta)) * 100).toFixed(1)}%`
-                        : '—'}
+                      {margen != null ? `${margen.toFixed(1)}%` : '—'}
                     </td>
                     <td className="px-4 py-3 text-center text-gray-500 hidden sm:table-cell">{p.stock_minimo}</td>
                     <td className="px-4 py-3 text-center">
@@ -303,10 +455,16 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                       </button>
                     </td>
                     <td className="px-4 py-3">
-                      <button onClick={() => abrirEditar(p)}
-                        className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 transition">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setDetalle(p)} title="Ver detalle"
+                          className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition">
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => abrirEditar(p)} title="Editar"
+                          className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 transition">
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -315,6 +473,17 @@ export default function ProductosClient({ productos: init }: { productos: Produc
           </table>
         </div>
       </div>
+
+      {/* ══ DETALLE ══ */}
+      {detalle && (
+        <ProductoDetalleModal
+          producto={detalle}
+          stock={stockMap.get(detalle.id)}
+          proveedorNombre={detalle.proveedor_preferido_id ? provMap.get(detalle.proveedor_preferido_id) : undefined}
+          onClose={() => setDetalle(null)}
+          onEditar={abrirEditarDesdeDetalle}
+        />
+      )}
 
       {/* ══ MODAL NUEVO / EDITAR ══ */}
       {modal && (
@@ -334,10 +503,18 @@ export default function ProductosClient({ productos: init }: { productos: Produc
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Código <span className="text-red-500">*</span></label>
-                  <input value={form.codigo}
-                    onChange={e => setForm(p => ({ ...p, codigo: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm uppercase focus:ring-2 focus:ring-blue-300 outline-none"
-                    placeholder="MED-001" />
+                  <div className="flex gap-1">
+                    <input value={form.codigo}
+                      onChange={e => setForm(p => ({ ...p, codigo: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm uppercase focus:ring-2 focus:ring-blue-300 outline-none"
+                      placeholder="MED-001" />
+                    {!editando && (
+                      <button type="button" onClick={generarCodigo} title="Generar código automático"
+                        className="px-2 border rounded-lg text-gray-500 hover:bg-gray-50 flex-shrink-0">
+                        <Wand2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
@@ -383,7 +560,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                   <select value={form.categoria}
                     onChange={e => setForm(p => ({ ...p, categoria: e.target.value }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none">
-                    {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                    {catList.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
@@ -391,7 +568,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                   <select value={form.unidad}
                     onChange={e => setForm(p => ({ ...p, unidad: e.target.value }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none">
-                    {UNIDADES.map(u => <option key={u} value={u}>{u}</option>)}
+                    {uniList.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
@@ -426,6 +603,21 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                       placeholder="Caja x 100, frasco..."
                       className="w-full border rounded-lg px-3 py-2 text-sm" />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Marca</label>
+                    <input value={form.marca}
+                      onChange={e => setForm(p => ({ ...p, marca: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Proveedor preferido</label>
+                    <select value={form.proveedor_preferido_id}
+                      onChange={e => setForm(p => ({ ...p, proveedor_preferido_id: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none">
+                      <option value="">— Ninguno —</option>
+                      {proveedores.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -457,7 +649,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Precio mínimo autorizado</label>
                   <div className="relative">
@@ -466,6 +658,14 @@ export default function ProductosClient({ productos: init }: { productos: Produc
                       onChange={e => setForm(p => ({ ...p, precio_minimo: e.target.value }))}
                       className="w-full border rounded-lg pl-7 pr-2 py-2 text-sm focus:outline-none" />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ISV</label>
+                  <select value={form.isv_porcentaje}
+                    onChange={e => setForm(p => ({ ...p, isv_porcentaje: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none">
+                    {ISV_OPCIONES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Días reposición</label>
@@ -517,12 +717,22 @@ export default function ProductosClient({ productos: init }: { productos: Produc
 
               {/* margen automático */}
               {Number(form.costo) > 0 && Number(form.precio_venta) > 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-2.5 flex items-center justify-between text-sm">
-                  <span className="text-green-700">Margen de ganancia</span>
-                  <span className="font-bold text-green-800">
+                <div className={`border rounded-xl px-4 py-2.5 flex items-center justify-between text-sm ${
+                  Number(form.precio_venta) < Number(form.costo) ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'
+                }`}>
+                  <span className={Number(form.precio_venta) < Number(form.costo) ? 'text-red-700' : 'text-green-700'}>
+                    Margen de ganancia
+                  </span>
+                  <span className={`font-bold ${Number(form.precio_venta) < Number(form.costo) ? 'text-red-800' : 'text-green-800'}`}>
                     {(((Number(form.precio_venta) - Number(form.costo)) / Number(form.costo)) * 100).toFixed(1)}%
                     &nbsp;(L {(Number(form.precio_venta) - Number(form.costo)).toFixed(2)} por unidad)
                   </span>
+                </div>
+              )}
+
+              {advertencias.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800 space-y-1">
+                  {advertencias.map((a, i) => <p key={i}>⚠️ {a}</p>)}
                 </div>
               )}
 
@@ -531,7 +741,7 @@ export default function ProductosClient({ productos: init }: { productos: Produc
 
             <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 px-4 sm:px-6 py-4 border-t">
               <button onClick={() => setModal(false)} className="px-4 py-2.5 border rounded-lg text-sm">Cancelar</button>
-              <button onClick={guardar} disabled={guardando}
+              <button onClick={() => guardar(false)} disabled={guardando}
                 className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50 hover:bg-blue-700">
                 <Save className="w-4 h-4" /> {guardando ? 'Guardando...' : editando ? 'Actualizar' : 'Guardar Producto'}
               </button>
