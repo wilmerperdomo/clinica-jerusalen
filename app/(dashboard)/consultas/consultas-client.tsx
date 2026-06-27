@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useMemo, useCallback, useEffect } from 'react'
+import { useState, useTransition, useMemo, useCallback, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 import {
@@ -302,6 +302,7 @@ export default function ConsultasClient({
   const [consultaNotaCobro,  setConsultaNotaCobro]  = useState('')
   const [ultimoAutoguardado, setUltimoAutoguardado] = useState<Date | null>(null)
   const [guardandoBorrador,  setGuardandoBorrador]  = useState(false)
+  const guardandoRef = useRef(false)
   const [cambiandoConsulta,  setCambiandoConsulta]  = useState(false)
   const [medicoNombre, setMedicoNombre] = useState('')
   const [formSeguimiento, setFormSeguimiento] = useState<FormSeguimiento>(() => formSeguimientoInicial(fechaHoy))
@@ -716,24 +717,30 @@ export default function ConsultasClient({
     return true
   }
 
-  /** Guarda el borrador de la consulta abierta antes de cambiar o cerrar. */
+  /** Guarda el borrador de la consulta abierta antes de cambiar o cerrar.
+   *  silencioso=true: autoguardado en segundo plano, sin overlay (evita parpadeo). */
   async function guardarBorradorSiHayConsulta(silencioso = true) {
-    if (!consultaActual || guardandoBorrador) return
-    setGuardandoBorrador(true)
-    const ok = await persistirExamenMedico(false, silencioso)
-    if (ok) setUltimoAutoguardado(new Date())
-    setGuardandoBorrador(false)
+    if (!consultaActual || guardandoRef.current) return
+    guardandoRef.current = true
+    if (!silencioso) setGuardandoBorrador(true)
+    try {
+      const ok = await persistirExamenMedico(false, silencioso)
+      if (ok) setUltimoAutoguardado(new Date())
+    } finally {
+      guardandoRef.current = false
+      if (!silencioso) setGuardandoBorrador(false)
+    }
   }
 
   /** Cambia a otra consulta en curso sin perder el borrador de la actual. */
   async function cambiarConsultaEnModal(id: number) {
     if (!consultaActual || consultaActual.id === id || cambiandoConsulta) return
     setCambiandoConsulta(true)
-    if (!guardandoBorrador) {
-      setGuardandoBorrador(true)
+    if (!guardandoRef.current) {
+      guardandoRef.current = true
       const ok = await persistirExamenMedico(false, true)
       if (ok) setUltimoAutoguardado(new Date())
-      setGuardandoBorrador(false)
+      guardandoRef.current = false
     }
     await cargarExamenConsulta(id)
     setCambiandoConsulta(false)

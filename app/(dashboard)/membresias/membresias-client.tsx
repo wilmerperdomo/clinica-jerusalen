@@ -95,6 +95,18 @@ function badgePago(estado: string, vence: string) {
   return                           { label: 'Pendiente', cls: 'bg-blue-100  text-blue-700'  }
 }
 
+function mensajeError(err: unknown) {
+  if (err instanceof Error) return err.message
+  if (err && typeof err === 'object') {
+    const e = err as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+    return [e.message, e.details, e.hint, e.code ? `Código: ${e.code}` : null]
+      .filter(Boolean)
+      .map(String)
+      .join(' · ') || 'Error inesperado al guardar'
+  }
+  return String(err || 'Error inesperado al guardar')
+}
+
 /* ════════════════════════════════════════════════════════════ */
 export default function MembresiasClient({
   tipos, membresias: init, pacientes, sucursales,
@@ -220,6 +232,10 @@ export default function MembresiasClient({
     if (!formMem.fecha_inicio || !formMem.fecha_fin) return setErrorMem('Completa las fechas')
     setLoadingMem(true); setErrorMem('')
     try {
+      const tipoActual = tiposList.find(t => t.id === formMem.tipo_id)
+      const pacienteActual = pacientes.find(p => p.id === formMem.paciente_id)
+      const sucursalActual = sucursales.find(s => s.id === formMem.sucursal_id)
+
       const { data: newM, error: e } = await supabase
         .from('membresias')
         .insert({
@@ -229,31 +245,58 @@ export default function MembresiasClient({
           comentarios: formMem.comentarios || null,
           sucursal_id: formMem.sucursal_id || null,
         })
-        .select(`id, paciente_id, tipo_id, fecha_inicio, fecha_fin, cuotas_pagadas,
-          estado, comentarios, numero_carnet, sucursal_id, created_at,
-          tipo:membresia_tipos(nombre, precio, duracion_dias),
-          paciente:pacientes(id, nombre, apellido1, apellido2, telefono, foto_url),
-          beneficiarios:membresia_beneficiarios(id, nombre, parentesco, activo),
-          sucursal:sucursales(nombre)`)
+        .select('id, paciente_id, tipo_id, fecha_inicio, fecha_fin, cuotas_pagadas, estado, comentarios, numero_carnet, sucursal_id, created_at')
         .single()
       if (e) throw e
+
       const benefs = beneficiarios.filter(b => b.nombre.trim())
+      let benefRows: Beneficiario[] = []
       if (benefs.length && newM?.id) {
-        await supabase.from('membresia_beneficiarios').insert(
+        const { data: insertedBenefs, error: eBenefs } = await supabase.from('membresia_beneficiarios').insert(
           benefs.map(b => ({ membresia_id: newM.id, nombre: b.nombre, parentesco: b.parentesco, activo: true }))
-        )
+        ).select('id, nombre, parentesco, activo')
+        if (eBenefs) throw eBenefs
+        benefRows = (insertedBenefs ?? []) as Beneficiario[]
       }
       if (newM) {
-        setMembresias(prev => [newM as unknown as Membresia, ...prev])
+        const nuevaMembresia: Membresia = {
+          ...(newM as unknown as Membresia),
+          tipo: tipoActual
+            ? { nombre: tipoActual.nombre, precio: tipoActual.precio, duracion_dias: tipoActual.duracion_dias }
+            : undefined,
+          paciente: pacienteActual,
+          beneficiarios: benefRows,
+          sucursal: sucursalActual ? { nombre: sucursalActual.nombre } : undefined,
+        }
+        setMembresias(prev => [nuevaMembresia, ...prev])
+
         // recargar pagos generados por trigger
-        const { data: np } = await supabase.from('membresia_pagos')
-          .select(`id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago, forma_pago, cajero_nombre, notas,
-            membresia:membresias(numero_carnet, tipo_id, paciente_id, tipo:membresia_tipos(nombre), paciente:pacientes(nombre, apellido1, telefono, foto_url))`)
+        const { data: np, error: ePagos } = await supabase.from('membresia_pagos')
+          .select('id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago, forma_pago, cajero_nombre, notas')
           .eq('membresia_id', newM.id)
-        if (np) setPagos(prev => [...prev, ...(np as unknown as Pago[])])
+        if (ePagos) throw ePagos
+        if (np) {
+          const pagosNuevos = (np as unknown as Pago[]).map(p => ({
+            ...p,
+            membresia: {
+              numero_carnet: nuevaMembresia.numero_carnet,
+              tipo_id: nuevaMembresia.tipo_id,
+              tipo: tipoActual ? { nombre: tipoActual.nombre } : null,
+              paciente: pacienteActual
+                ? {
+                    nombre: pacienteActual.nombre,
+                    apellido1: pacienteActual.apellido1,
+                    telefono: pacienteActual.telefono,
+                    foto_url: pacienteActual.foto_url,
+                  }
+                : null,
+            },
+          }))
+          setPagos(prev => [...prev, ...pagosNuevos])
+        }
       }
       setModalMem(false); setFormMem(memVacia); setBeneficiarios([])
-    } catch (err: unknown) { setErrorMem(err instanceof Error ? err.message : 'Error') }
+    } catch (err: unknown) { setErrorMem(mensajeError(err)) }
     finally { setLoadingMem(false) }
   }
 
