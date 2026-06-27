@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { exportarCSV, fmtReporte, imprimirReporte } from '@/lib/reporte-utils'
 import { ModuleShell, ModuleHero, ModuleContent } from '@/components/module-layout'
+import ReportesEjecutivo from '@/components/reportes/reportes-ejecutivo'
 
 /* ─── tipos ─────────────────────────────────────────────── */
 interface Movimiento {
@@ -168,8 +169,10 @@ export default function ReportesClient({
   /* ingresos por forma de pago */
   const porForma = Object.keys(FORMAS).map(fp => ({
     forma: fp,
+    label: FORMAS[fp].label,
     total: ingresos.filter(m => m.forma_pago === fp).reduce((s, m) => s + m.monto, 0),
   }))
+  const cxcSaldoTotal = cxc.reduce((s, c) => s + c.saldo, 0)
 
   /* ingresos por concepto (top 10) */
   const porConcepto = Object.entries(
@@ -288,9 +291,9 @@ export default function ReportesClient({
   return (
     <ModuleShell tint="sky">
       <ModuleHero
-        title="Reportes"
-        subtitle="Análisis de operaciones del período"
-        badge="Inteligencia operativa"
+        title="Reportes Pro"
+        subtitle="Panel ejecutivo con gráficas y análisis del período"
+        badge="Panel ejecutivo"
         icon={BarChart3}
       />
       <ModuleContent>
@@ -382,31 +385,63 @@ export default function ReportesClient({
         ))}
       </div>
 
-      {/* ══════════ RESUMEN ══════════ */}
+      {/* ══════════ RESUMEN EJECUTIVO ══════════ */}
       {tabActivo === 'resumen' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[
-            { tab: 'caja' as TabId,       icon: DollarSign,    title: 'Caja',         desc: `${movimientos.length} movimientos · Neto ${fmt(neto)}` },
-            { tab: 'fiscal' as TabId,     icon: Scale,         title: 'Fiscal',       desc: `${factEmitidas.length} facturas · ISV ${fmt(fiscalISV)}` },
-            { tab: 'consultas' as TabId,  icon: Stethoscope,   title: 'Consultas',    desc: `${citas.length} citas · ${citasAtendidas} atendidas` },
-            { tab: 'lab' as TabId,        icon: FlaskConical,  title: 'Laboratorio',  desc: `${labTotal} órdenes · ${labPendiente} pendientes` },
-            { tab: 'cxc' as TabId,        icon: CreditCard,    title: 'CXC',          desc: `${cxc.length} pendientes · Saldo ${fmt(cxc.reduce((s,c)=>s+c.saldo,0))}` },
-            { tab: 'cxp' as TabId,        icon: Receipt,       title: 'CXP',          desc: `${cxpPendientes.length} pendientes · Saldo ${fmt(cxpSaldoTotal)}` },
-            { tab: 'compras' as TabId,   icon: ShoppingCart,  title: 'Compras',      desc: `${compras.length} compras · Total ${fmt(comprasTotal)}` },
-            { tab: 'inventario' as TabId, icon: TrendingUp,   title: 'Inventario',   desc: `${rankingMeds.length} productos movidos` },
-            { tab: 'pacientes' as TabId,  icon: Users,         title: 'Pacientes',    desc: `${nuevosPacientes.length} nuevos registros` },
-          ].map(card => (
-            <button key={card.tab} onClick={() => cambiarTab(card.tab)}
-              className="bg-white border rounded-2xl p-5 text-left hover:border-blue-300 hover:shadow-sm transition-all group">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center group-hover:bg-blue-100">
-                  <card.icon className="w-5 h-5 text-blue-600" />
-                </div>
-                <h3 className="font-bold text-gray-800">{card.title}</h3>
-              </div>
-              <p className="text-sm text-gray-500">{card.desc}</p>
-            </button>
-          ))}
+        <div className="space-y-5">
+          <ReportesEjecutivo
+            movimientos={movimientos}
+            desde={desde}
+            hasta={hasta}
+            periodo={subtitulo}
+            totalIng={totalIng}
+            totalEgr={totalEgr}
+            neto={neto}
+            totalDesc={totalDesc}
+            porForma={porForma}
+            porConcepto={porConcepto}
+            citasTotal={citas.length}
+            citasAtendidas={citasAtendidas}
+            citasNoAsistio={citasNoAsistio}
+            labTotal={labTotal}
+            labPendiente={labPendiente}
+            cxcSaldo={cxcSaldoTotal}
+            cxpSaldo={cxpSaldoTotal}
+            factEmitidas={factEmitidas.length}
+            factAnuladas={factAnuladas.length}
+            fiscalSubtotal={fiscalSubtotal}
+            fiscalISV={fiscalISV}
+            fiscalTotal={fiscalTotal}
+            nuevosPacientes={nuevosPacientes.length}
+            comprasTotal={comprasTotal}
+          />
+
+          <div>
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Acceso rápido a reportes</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[
+                { tab: 'caja' as TabId,       icon: DollarSign,    title: 'Caja',         desc: `${movimientos.length} movimientos · Neto ${fmt(neto)}` },
+                { tab: 'fiscal' as TabId,     icon: Scale,         title: 'Fiscal',       desc: `${factEmitidas.length} facturas · ISV ${fmt(fiscalISV)}` },
+                { tab: 'consultas' as TabId,  icon: Stethoscope,   title: 'Consultas',    desc: `${citas.length} citas · ${citasAtendidas} atendidas` },
+                { tab: 'lab' as TabId,        icon: FlaskConical,  title: 'Laboratorio',  desc: `${labTotal} órdenes · ${labPendiente} pendientes` },
+                { tab: 'cxc' as TabId,        icon: CreditCard,    title: 'CXC',          desc: `${cxc.length} pendientes · Saldo ${fmt(cxcSaldoTotal)}` },
+                { tab: 'cxp' as TabId,        icon: Receipt,       title: 'CXP',          desc: `${cxpPendientes.length} pendientes · Saldo ${fmt(cxpSaldoTotal)}` },
+                { tab: 'compras' as TabId,   icon: ShoppingCart,  title: 'Compras',      desc: `${compras.length} compras · Total ${fmt(comprasTotal)}` },
+                { tab: 'inventario' as TabId, icon: TrendingUp,   title: 'Inventario',   desc: `${rankingMeds.length} productos movidos` },
+                { tab: 'pacientes' as TabId,  icon: Users,         title: 'Pacientes',    desc: `${nuevosPacientes.length} nuevos registros` },
+              ].map(card => (
+                <button key={card.tab} onClick={() => cambiarTab(card.tab)}
+                  className="bg-white border rounded-2xl p-5 text-left hover:border-blue-300 hover:shadow-sm transition-all group">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center group-hover:bg-blue-100">
+                      <card.icon className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <h3 className="font-bold text-gray-800">{card.title}</h3>
+                  </div>
+                  <p className="text-sm text-gray-500">{card.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
