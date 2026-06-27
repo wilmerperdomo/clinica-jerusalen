@@ -6,6 +6,8 @@ import {
   PieChart, TrendingUp, TrendingDown, Building2,
   Stethoscope, Pill, FlaskConical, Briefcase, ShoppingCart,
   RefreshCw, Printer, Download, FileSpreadsheet,
+  Wallet, Landmark, BarChart3, Layers, CreditCard, Lightbulb, Home,
+  Target, Calendar, FileText,
 } from 'lucide-react'
 import { imprimirReporte } from '@/lib/reporte-utils'
 import {
@@ -14,6 +16,26 @@ import {
   exportarControlFinanciero, exportarMovimientosCaja,
   type DatosExportFinanciero,
 } from '@/lib/control-financiero-utils'
+import {
+  calcularResumenPersonal, calcularGananciaReal, calcularResumenDeudas, fmtFin,
+  exportarMovimientosPersonalesCSV,
+  type FinCategoria, type FinMovimiento, type FinPrestamo, type FinTarjeta, type FinDeuda,
+} from '@/lib/finanzas-personales'
+import { generarSugerencias } from '@/lib/finanzas-sugerencias'
+import MovimientosPanel from '@/components/control-financiero/movimientos-panel'
+import TarjetasPanel from '@/components/control-financiero/tarjetas-panel'
+import DeudasPanel from '@/components/control-financiero/deudas-panel'
+import IdeasPanel from '@/components/control-financiero/ideas-panel'
+import PresupuestosPanel from '@/components/control-financiero/presupuestos-panel'
+import CajasPanel from '@/components/control-financiero/cajas-panel'
+import FlujoPanel from '@/components/control-financiero/flujo-panel'
+import EjecutivoPanel from '@/components/control-financiero/ejecutivo-panel'
+import {
+  calcularUsoPresupuestos, calcularRankingGastos, calcularComparacionMes,
+  generarCalendarioPagos, calcularFlujoProyectado, recomendarOrdenPagos,
+  calcularEstadoPatrimonio, generarReporteEjecutivo, mesAnterior,
+  type FinPresupuesto, type FinCuenta, type FinPagoProgramado,
+} from '@/lib/finanzas-analisis'
 import type { LabCostoOrden } from '@/lib/lab-costos'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost, ModuleBtnPrimary } from '@/components/module-layout'
 
@@ -27,17 +49,36 @@ interface Props {
   sucursales: Sucursal[]
   sucursalDefault: number | null
   esSuperAdmin: boolean
+  esAdmin: boolean
   anioInicial: number
   mesInicial: number
+  categoriasInicial: FinCategoria[]
+  movimientosPersonalInicial: FinMovimiento[]
+  prestamosInicial: FinPrestamo[]
+  tarjetasInicial: FinTarjeta[]
+  deudasInicial: FinDeuda[]
+  presupuestosInicial: FinPresupuesto[]
+  cuentasInicial: FinCuenta[]
+  programadosInicial: FinPagoProgramado[]
+  planillaReferenciaInicial: number
 }
+
+type TabId = 'resumen' | 'ejecutivo' | 'presupuesto' | 'flujo' | 'cajas' | 'ideas' | 'movimientos' | 'tarjetas' | 'deudas' | 'clinica'
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
 
 export default function ControlFinancieroClient({
-  sucursales, sucursalDefault, esSuperAdmin, anioInicial, mesInicial,
+  sucursales, sucursalDefault, esSuperAdmin, esAdmin,
+  anioInicial, mesInicial,
+  categoriasInicial, movimientosPersonalInicial, prestamosInicial,
+  tarjetasInicial, deudasInicial,
+  presupuestosInicial, cuentasInicial, programadosInicial,
+  planillaReferenciaInicial,
 }: Props) {
   const supabase = createClient()
   const [pending, startTransition] = useTransition()
+  const puedeEditar = esAdmin || esSuperAdmin
+  const [tab, setTab] = useState<TabId>('resumen')
 
   const [anio, setAnio] = useState(anioInicial)
   const [mes, setMes]     = useState(mesInicial)
@@ -48,6 +89,18 @@ export default function ControlFinancieroClient({
   const [labCostos, setLabCostos] = useState<LabCostoFinanciero[]>([])
   const [cxcPendiente, setCxc]    = useState(0)
   const [cxpPendiente, setCxp]    = useState(0)
+
+  const [categoriasFin, setCategoriasFin] = useState(categoriasInicial)
+  const [movPersonal, setMovPersonal] = useState(movimientosPersonalInicial)
+  const [prestamos, setPrestamos] = useState(prestamosInicial)
+  const [tarjetas, setTarjetas] = useState(tarjetasInicial)
+  const [deudas, setDeudas] = useState(deudasInicial)
+  const [presupuestos, setPresupuestos] = useState(presupuestosInicial)
+  const [cuentas, setCuentas] = useState(cuentasInicial)
+  const [programados, setProgramados] = useState(programadosInicial)
+  const [movAnterior, setMovAnterior] = useState<FinMovimiento[]>([])
+  const [resumenClinicaAnterior, setResumenClinicaAnterior] = useState({ ingresos: 0, egresos: 0, utilidad: 0 })
+  const [planillaRef, setPlanillaRef] = useState(planillaReferenciaInicial)
 
   const { inicio: mesInicio, fin: mesFin } = rangoMes(anio, mes)
 
@@ -143,6 +196,68 @@ export default function ControlFinancieroClient({
     })
   }
 
+  function cargarPersonal() {
+    startTransition(async () => {
+      const { inicio, fin } = rangoMes(anio, mes)
+      const prev = mesAnterior(anio, mes)
+      const { inicio: inicioPrev, fin: finPrev } = rangoMes(prev.anio, prev.mes)
+
+      const [movRes, prestRes, tarjRes, deudRes, planRes, presRes, cuentRes, progRes, movPrevRes, movsClinPrev, compsPrev] = await Promise.all([
+        supabase.from('finanzas_movimientos')
+          .select('*, categoria:finanzas_categorias(id, tipo, clave, nombre, icono, orden, activo)')
+          .gte('fecha', inicio).lte('fecha', fin)
+          .order('fecha', { ascending: false }),
+        supabase.from('finanzas_prestamos').select('*').order('activo', { ascending: false }).order('nombre'),
+        supabase.from('finanzas_tarjetas').select('*').order('activo', { ascending: false }).order('alias'),
+        supabase.from('finanzas_deudas').select('*').order('activo', { ascending: false }).order('nombre'),
+        supabase.from('planilla_liquidaciones')
+          .select('total_pagar, estado, periodo:planilla_periodos(fecha_inicio, fecha_fin)')
+          .in('estado', ['PAGADO', 'APROBADO', 'PENDIENTE']),
+        supabase.from('finanzas_presupuestos').select('*').eq('anio', anio).eq('mes', mes).eq('activo', true),
+        supabase.from('finanzas_cuentas').select('*').eq('activo', true).order('nombre'),
+        supabase.from('finanzas_pagos_programados').select('*').eq('activo', true).order('dia_mes'),
+        supabase.from('finanzas_movimientos')
+          .select('*, categoria:finanzas_categorias(id, tipo, clave, nombre, icono, orden, activo)')
+          .gte('fecha', inicioPrev).lte('fecha', finPrev),
+        supabase.from('caja_movimientos')
+          .select('tipo, monto, fecha').gte('fecha', inicioPrev).lte('fecha', finPrev).eq('anulado', false),
+        supabase.from('compras').select('total, fecha, estado').gte('fecha', inicioPrev).lte('fecha', finPrev).neq('estado', 'anulada'),
+      ])
+      setMovPersonal(movRes.error ? [] : (movRes.data ?? []))
+      setPrestamos(prestRes.error ? [] : (prestRes.data ?? []))
+      setTarjetas(tarjRes.error ? [] : (tarjRes.data ?? []))
+      setDeudas(deudRes.error ? [] : (deudRes.data ?? []))
+      setPresupuestos(presRes.error ? [] : (presRes.data ?? []))
+      setCuentas(cuentRes.error ? [] : (cuentRes.data ?? []))
+      setProgramados(progRes.error ? [] : (progRes.data ?? []))
+      setMovAnterior(movPrevRes.error ? [] : (movPrevRes.data ?? []))
+
+      const movsPrev = (movsClinPrev.data ?? []) as { tipo: string; monto: number }[]
+      const compsPrevTotal = ((compsPrev.data ?? []) as { total: number }[]).reduce((s, c) => s + Number(c.total), 0)
+      const resPrev = calcularResumen(
+        movsPrev.map((m, i) => ({ id: i, tipo: m.tipo, concepto: '', monto: Number(m.monto), fecha: '' })),
+        compsPrevTotal,
+      )
+      setResumenClinicaAnterior({ ingresos: resPrev.ingresos_total, egresos: resPrev.egresos_total, utilidad: resPrev.utilidad })
+
+      let planilla = 0
+      if (!planRes.error && planRes.data) {
+        for (const l of planRes.data) {
+          const per = l.periodo as { fecha_inicio?: string; fecha_fin?: string } | null
+          if (per?.fecha_inicio && per.fecha_inicio >= inicio && per?.fecha_fin && per.fecha_fin <= fin) {
+            planilla += Number(l.total_pagar || 0)
+          }
+        }
+      }
+      setPlanillaRef(planilla)
+    })
+  }
+
+  function recargarTodo() {
+    cargarDatos()
+    cargarPersonal()
+  }
+
   function nombreSuc(id?: number) {
     if (!id) return '—'
     return sucursales.find(s => s.id === id)?.nombre ?? `Sucursal #${id}`
@@ -167,7 +282,7 @@ export default function ControlFinancieroClient({
       periodo: mesLabel(anio, mes),
       sucursalLabel,
       resumen,
-      categorias: categorias.map(c => ({ label: c.label, monto: c.val, pct: pct(c.val) })),
+      categorias: catsIngreso.map(c => ({ label: c.label, monto: c.val, pct: pct(c.val) })),
       porSucursal: porSucursal.map(s => ({
         nombre: s.nombre,
         ingresos_total: s.ingresos_total,
@@ -202,26 +317,42 @@ export default function ControlFinancieroClient({
     exportarMovimientosCaja(mesLabel(anio, mes), armarExport().movimientos)
   }
 
+  function exportarPersonal() {
+    exportarMovimientosPersonalesCSV(movPersonal, mesLabel(anio, mes))
+  }
+
   function imprimir() {
-    const filasCat = categorias.map(c =>
+    const filasCat = catsIngreso.map(c =>
       `<tr><td>${c.label}</td><td class="right">${fmtL(c.val)}</td><td class="right">${pct(c.val)}</td></tr>`,
     ).join('')
+    const filasPersIng = Object.entries(resumenPersonal.porCategoria)
+      .filter(([, v]) => v > 0)
+      .map(([k, v]) => `<tr><td>${k}</td><td class="right success">${fmtFin(v)}</td></tr>`)
+      .join('')
+    const filasPersEgr = Object.entries(resumenPersonal.porCategoria)
+      .filter(([, v]) => v < 0)
+      .map(([k, v]) => `<tr><td>${k}</td><td class="right danger">${fmtFin(Math.abs(v))}</td></tr>`)
+      .join('')
     const filasSuc = porSucursal.map(s =>
       `<tr><td>${s.nombre}</td><td class="right success">${fmtL(s.ingresos_total)}</td><td class="right danger">${fmtL(s.egresos_total)}</td><td class="right bold">${fmtL(s.utilidad)}</td></tr>`,
     ).join('')
 
     imprimirReporte({
-      titulo: 'Control Financiero',
+      titulo: 'Control Financiero Total',
       subtitulo: `${mesLabel(anio, mes)} · ${sucursalLabel}`,
       contenidoHtml: `
         <div class="kpi-grid">
-          <div class="kpi"><div class="kpi-lbl">Ingresos</div><div class="kpi-val success">${fmtL(resumen.ingresos_total)}</div></div>
-          <div class="kpi"><div class="kpi-lbl">Gastos</div><div class="kpi-val danger">${fmtL(resumen.egresos_total)}</div></div>
-          <div class="kpi"><div class="kpi-lbl">Utilidad</div><div class="kpi-val">${fmtL(resumen.utilidad)}</div></div>
-          <div class="kpi"><div class="kpi-lbl">Comisiones (ref.)</div><div class="kpi-val">${fmtL(totalComisiones)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Ganancia real</div><div class="kpi-val bold">${fmtFin(resumenTotal.gananciaReal)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Utilidad clínica</div><div class="kpi-val">${fmtL(resumen.utilidad)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Utilidad personal</div><div class="kpi-val">${fmtFin(resumenPersonal.utilidad)}</div></div>
+          <div class="kpi"><div class="kpi-lbl">Planilla (ref.)</div><div class="kpi-val danger">${fmtFin(planillaRef)}</div></div>
         </div>
-        <h2>Ingresos por categoría</h2>
+        <h2>Clínica — ingresos por categoría</h2>
         <table><thead><tr><th>Categoría</th><th class="right">Monto</th><th class="right">%</th></tr></thead><tbody>${filasCat}</tbody></table>
+        <h2>Finanzas personales — ingresos</h2>
+        <table><thead><tr><th>Categoría</th><th class="right">Monto</th></tr></thead><tbody>${filasPersIng || '<tr><td colspan="2">Sin ingresos</td></tr>'}</tbody></table>
+        <h2>Finanzas personales — gastos</h2>
+        <table><thead><tr><th>Categoría</th><th class="right">Monto</th></tr></thead><tbody>${filasPersEgr || '<tr><td colspan="2">Sin gastos</td></tr>'}</tbody></table>
         ${porSucursal.length > 0 ? `<h2>Comparativo por sucursal</h2><table><thead><tr><th>Sucursal</th><th class="right">Ingresos</th><th class="right">Gastos</th><th class="right">Utilidad</th></tr></thead><tbody>${filasSuc}</tbody></table>` : ''}
         <h2>Gastos del mes</h2>
         <table><tbody>
@@ -236,12 +367,86 @@ export default function ControlFinancieroClient({
   }
 
   useEffect(() => {
-    cargarDatos()
+    recargarTodo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anio, mes, sucursalId])
 
   const comprasTotal = compras.reduce((s, c) => s + Number(c.total || 0), 0)
   const resumen = calcularResumen(movimientos, comprasTotal)
+  const resumenPersonal = useMemo(() => calcularResumenPersonal(movPersonal), [movPersonal])
+  const resumenDeudas = useMemo(() => calcularResumenDeudas({
+    prestamos, tarjetas, deudas, cxpSistema: cxpPendiente,
+  }), [prestamos, tarjetas, deudas, cxpPendiente])
+  const resumenTotal = useMemo(() => calcularGananciaReal({
+    clinicaUtilidad: resumen.utilidad,
+    clinicaIngresos: resumen.ingresos_total,
+    clinicaEgresos: resumen.egresos_total,
+    personal: resumenPersonal,
+    planillaReferencia: planillaRef,
+    deudas: resumenDeudas,
+  }), [resumen, resumenPersonal, planillaRef, resumenDeudas])
+
+  const sugerencias = useMemo(() => generarSugerencias({
+    movimientos: movPersonal,
+    categorias: categoriasFin,
+    tarjetas,
+    prestamos,
+    deudas,
+    cxcPendiente,
+    cxpPendiente,
+    planillaMes: planillaRef,
+    comprasMes: comprasTotal,
+    anio,
+    mes,
+  }), [movPersonal, categoriasFin, tarjetas, prestamos, deudas, cxcPendiente, cxpPendiente, planillaRef, comprasTotal, anio, mes])
+
+  const presupuestosUso = useMemo(() => calcularUsoPresupuestos(presupuestos, movPersonal, { planilla: planillaRef }), [presupuestos, movPersonal, planillaRef])
+  const topGastos = useMemo(() => calcularRankingGastos(movPersonal, 10), [movPersonal])
+  const calendario = useMemo(() => generarCalendarioPagos({
+    anio, mes, tarjetas, prestamos, deudas, programados, planillaMonto: planillaRef,
+  }), [anio, mes, tarjetas, prestamos, deudas, programados, planillaRef])
+  const flujo = useMemo(() => calcularFlujoProyectado({
+    anio, mes,
+    ingresosClinicaMes: resumen.ingresos_total,
+    ingresosPersonalMes: resumenPersonal.ingresos,
+    egresosPersonalMes: resumenPersonal.egresos,
+    egresosClinicaSistema: resumen.egresos_total,
+    calendario, cuentas,
+  }), [anio, mes, resumen, resumenPersonal, calendario, cuentas])
+  const deudasPrioridad = useMemo(() => recomendarOrdenPagos(prestamos, tarjetas, deudas), [prestamos, tarjetas, deudas])
+  const patrimonio = useMemo(() => calcularEstadoPatrimonio({
+    cuentas, cxc: cxcPendiente,
+    tarjetas: resumenDeudas.tarjetas, prestamos: resumenDeudas.prestamos,
+    deudas: resumenDeudas.deudas, cxp: cxpPendiente,
+  }), [cuentas, cxcPendiente, resumenDeudas, cxpPendiente])
+  const comparacion = useMemo(() => calcularComparacionMes({
+    utilidadClinicaActual: resumen.utilidad,
+    utilidadClinicaAnterior: resumenClinicaAnterior.utilidad,
+    ingresosClinicaActual: resumen.ingresos_total,
+    ingresosClinicaAnterior: resumenClinicaAnterior.ingresos,
+    egresosClinicaActual: resumen.egresos_total,
+    egresosClinicaAnterior: resumenClinicaAnterior.egresos,
+    movActual: movPersonal,
+    movAnterior,
+    deudaActual: resumenDeudas.total,
+    deudaAnterior: resumenDeudas.total,
+  }), [resumen, resumenClinicaAnterior, movPersonal, movAnterior, resumenDeudas.total])
+  const reporteEjecutivo = useMemo(() => generarReporteEjecutivo({
+    periodo: mesLabel(anio, mes),
+    gananciaReal: resumenTotal.gananciaReal,
+    utilidadClinica: resumen.utilidad,
+    gastosCasa: resumenPersonal.porAmbito.CASA.egresos,
+    gastosClinicaManual: resumenPersonal.porAmbito.CLINICA.egresos,
+    pasivoTotal: resumenDeudas.total,
+    patrimonio,
+    flujo,
+    topGastos,
+    presupuestos: presupuestosUso,
+    comparacion,
+    calendario,
+    deudasPrioridad,
+  }), [anio, mes, resumenTotal, resumen, resumenPersonal, resumenDeudas, patrimonio, flujo, topGastos, presupuestosUso, comparacion, calendario, deudasPrioridad])
+
   const margenLab = useMemo(() => resumirMargenLab(labCostos), [labCostos])
 
   const prodPorCat = useMemo(() => {
@@ -259,7 +464,7 @@ export default function ControlFinancieroClient({
     return resumenPorSucursal(movimientos, compras, sucursales)
   }, [movimientos, compras, sucursales, sucursalId])
 
-  const categorias = [
+  const catsIngreso = [
     { key: 'consultas', label: 'Consultas', val: resumen.por_categoria.consultas, icon: Stethoscope, color: 'bg-blue-500' },
     { key: 'medicamentos', label: 'Medicamentos', val: resumen.por_categoria.medicamentos, icon: Pill, color: 'bg-green-500' },
     { key: 'servicios', label: 'Servicios', val: resumen.por_categoria.servicios, icon: Briefcase, color: 'bg-purple-500' },
@@ -276,26 +481,26 @@ export default function ControlFinancieroClient({
       <div className="print:hidden">
         <ModuleHero
           title="Control Financiero"
-          subtitle="Cuánto se ganó, cuánto se gastó y utilidad del mes — ambas sucursales"
+          subtitle="Clínica + casa + tarjetas + deudas — control total y ganancia real"
           badge="Dirección financiera"
           icon={PieChart}
           gradient="emerald"
           kpis={[
-            { label: 'Ingresos', value: fmtL(resumen.ingresos_total), icon: TrendingUp },
-            { label: 'Gastos', value: fmtL(resumen.egresos_total), icon: TrendingDown },
-            { label: 'Utilidad neta', value: fmtL(resumen.utilidad), icon: PieChart },
-            { label: 'Comisiones (ref.)', value: fmtL(totalComisiones), icon: Stethoscope },
+            { label: 'Ganancia real', value: fmtFin(resumenTotal.gananciaReal), icon: BarChart3 },
+            { label: 'Pasivo total', value: fmtFin(resumenDeudas.total), icon: Landmark },
+            { label: 'Gastos casa', value: fmtFin(resumenPersonal.porAmbito.CASA.egresos), icon: Home },
+            { label: 'Saldo tarjetas', value: fmtFin(resumenDeudas.tarjetas), icon: CreditCard },
           ]}
           actions={
             <>
-              <ModuleBtnGhost onClick={cargarDatos} disabled={pending}>
+              <ModuleBtnGhost onClick={recargarTodo} disabled={pending}>
                 <RefreshCw className={`w-4 h-4 ${pending ? 'animate-spin' : ''}`} /> Actualizar
               </ModuleBtnGhost>
               <ModuleBtnGhost onClick={exportarExcel}>
-                <FileSpreadsheet className="w-4 h-4" /> Excel
+                <FileSpreadsheet className="w-4 h-4" /> Excel clínica
               </ModuleBtnGhost>
-              <ModuleBtnGhost onClick={exportarMovs}>
-                <Download className="w-4 h-4" /> CSV
+              <ModuleBtnGhost onClick={exportarPersonal}>
+                <Download className="w-4 h-4" /> CSV personal
               </ModuleBtnGhost>
               <ModuleBtnPrimary onClick={imprimir}>
                 <Printer className="w-4 h-4" /> Imprimir
@@ -326,11 +531,222 @@ export default function ControlFinancieroClient({
         </span>
       </div>
 
+      <div className="flex flex-wrap gap-2 print:hidden">
+        {([
+          { id: 'resumen' as const, label: 'Resumen', icon: Layers },
+          { id: 'ejecutivo' as const, label: 'Ejecutivo', icon: FileText },
+          { id: 'presupuesto' as const, label: 'Presupuesto', icon: Target, badge: presupuestosUso.filter(p => p.excedido).length },
+          { id: 'flujo' as const, label: 'Flujo', icon: Calendar, badge: flujo.alertaFaltaDinero ? 1 : 0 },
+          { id: 'cajas' as const, label: 'Cajas', icon: Wallet },
+          { id: 'ideas' as const, label: 'Ideas', icon: Lightbulb, badge: sugerencias.filter(s => s.prioridad === 'alta').length },
+          { id: 'movimientos' as const, label: 'Movimientos', icon: BarChart3 },
+          { id: 'tarjetas' as const, label: 'Tarjetas', icon: CreditCard },
+          { id: 'deudas' as const, label: 'Deudas', icon: Landmark },
+          { id: 'clinica' as const, label: 'Clínica', icon: Building2 },
+        ]).map(t => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+              tab === t.id
+                ? 'bg-emerald-600 text-white border-emerald-600'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <t.icon className="w-4 h-4" /> {t.label}
+            {'badge' in t && t.badge > 0 && (
+              <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{t.badge}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'resumen' && (
+        <div className="space-y-4">
+          <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-xl p-6 text-white shadow-lg">
+            <p className="text-sm opacity-90">Ganancia real del mes</p>
+            <p className="text-4xl font-bold mt-1">{fmtFin(resumenTotal.gananciaReal)}</p>
+            <p className="text-xs opacity-75 mt-2">
+              Utilidad clínica ({fmtL(resumen.utilidad)}) + personal ({fmtFin(resumenPersonal.utilidad)})
+              {planillaRef > 0 ? ` − planilla (${fmtFin(planillaRef)})` : ''}
+            </p>
+            <p className="text-sm mt-3 opacity-90">
+              Posición estimada (ganancia − deudas): <strong>{fmtFin(resumenTotal.patrimonioEstimado)}</strong>
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white rounded-xl border shadow-sm p-5">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-600" /> Clínica (caja + compras)
+              </h3>
+              <ul className="space-y-2 text-sm">
+                <li className="flex justify-between"><span>Ingresos</span><strong className="text-green-700">{fmtL(resumen.ingresos_total)}</strong></li>
+                <li className="flex justify-between"><span>Gastos</span><strong className="text-red-600">{fmtL(resumen.egresos_total)}</strong></li>
+                <li className="flex justify-between border-t pt-2"><span>Utilidad</span><strong>{fmtL(resumen.utilidad)}</strong></li>
+              </ul>
+            </div>
+            <div className="bg-white rounded-xl border shadow-sm p-5">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-emerald-600" /> Finanzas personales
+              </h3>
+              <ul className="space-y-2 text-sm">
+                <li className="flex justify-between"><span>Ingresos extra</span><strong className="text-green-700">{fmtFin(resumenPersonal.ingresos)}</strong></li>
+                <li className="flex justify-between"><span>Gastos personales</span><strong className="text-red-600">{fmtFin(resumenPersonal.egresos)}</strong></li>
+                <li className="flex justify-between border-t pt-2"><span>Utilidad</span><strong>{fmtFin(resumenPersonal.utilidad)}</strong></li>
+              </ul>
+              <p className="text-xs text-slate-400 mt-3">{movPersonal.length} movimiento(s) este mes</p>
+            </div>
+            <div className="bg-white rounded-xl border shadow-sm p-5">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <Home className="w-5 h-5 text-orange-600" /> Casa
+              </h3>
+              <ul className="space-y-2 text-sm">
+                <li className="flex justify-between"><span>Gastos casa</span><strong className="text-red-600">{fmtFin(resumenPersonal.porAmbito.CASA.egresos)}</strong></li>
+                <li className="flex justify-between"><span>Ingresos casa</span><strong className="text-green-700">{fmtFin(resumenPersonal.porAmbito.CASA.ingresos)}</strong></li>
+              </ul>
+            </div>
+            <div className="bg-white rounded-xl border shadow-sm p-5">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-red-600" /> Pasivo total
+              </h3>
+              <ul className="space-y-2 text-sm">
+                <li className="flex justify-between"><span>Préstamos</span><strong>{fmtFin(resumenDeudas.prestamos)}</strong></li>
+                <li className="flex justify-between"><span>Tarjetas</span><strong>{fmtFin(resumenDeudas.tarjetas)}</strong></li>
+                <li className="flex justify-between"><span>Otras deudas</span><strong>{fmtFin(resumenDeudas.deudas)}</strong></li>
+                <li className="flex justify-between"><span>CXP sistema</span><strong>{fmtFin(resumenDeudas.cxpSistema)}</strong></li>
+                <li className="flex justify-between border-t pt-2 font-bold"><span>Total</span><strong className="text-red-700">{fmtFin(resumenDeudas.total)}</strong></li>
+              </ul>
+            </div>
+          </div>
+
+          {sugerencias.length > 0 && (
+            <button type="button" onClick={() => setTab('ideas')}
+              className="w-full bg-amber-50 border border-amber-200 rounded-xl p-4 text-left hover:bg-amber-100 transition-colors">
+              <p className="font-bold text-amber-900 flex items-center gap-2">
+                <Lightbulb className="w-5 h-5" />
+                {sugerencias.length} sugerencia(s) — {sugerencias.filter(s => s.prioridad === 'alta').length} urgentes
+              </p>
+              <p className="text-sm text-amber-800 mt-1">{sugerencias[0].titulo}</p>
+            </button>
+          )}
+
+          {Object.keys(resumenPersonal.porCategoria).length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl border shadow-sm p-5">
+                <h3 className="font-bold text-slate-800 mb-3">Ingresos personales por categoría</h3>
+                <ul className="space-y-2 text-sm">
+                  {Object.entries(resumenPersonal.porCategoria).filter(([, v]) => v > 0).map(([k, v]) => (
+                    <li key={k} className="flex justify-between"><span>{k}</span><strong className="text-green-700">{fmtFin(v)}</strong></li>
+                  ))}
+                </ul>
+              </div>
+              <div className="bg-white rounded-xl border shadow-sm p-5">
+                <h3 className="font-bold text-slate-800 mb-3">Gastos personales por categoría</h3>
+                <ul className="space-y-2 text-sm">
+                  {Object.entries(resumenPersonal.porCategoria).filter(([, v]) => v < 0).map(([k, v]) => (
+                    <li key={k} className="flex justify-between"><span>{k}</span><strong className="text-red-600">{fmtFin(Math.abs(v))}</strong></li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'ejecutivo' && (
+        <EjecutivoPanel reporte={reporteEjecutivo} comparacion={comparacion} />
+      )}
+
+      {tab === 'presupuesto' && (
+        <PresupuestosPanel
+          presupuestos={presupuestos}
+          movimientos={movPersonal}
+          anio={anio}
+          mes={mes}
+          planillaRef={planillaRef}
+          puedeEditar={puedeEditar}
+          onRecargar={cargarPersonal}
+        />
+      )}
+
+      {tab === 'flujo' && (
+        <FlujoPanel
+          anio={anio}
+          mes={mes}
+          tarjetas={tarjetas}
+          prestamos={prestamos}
+          deudas={deudas}
+          programados={programados}
+          cuentas={cuentas}
+          planillaRef={planillaRef}
+          ingresosClinica={resumen.ingresos_total}
+          ingresosPersonal={resumenPersonal.ingresos}
+          egresosPersonal={resumenPersonal.egresos}
+          egresosClinicaSistema={resumen.egresos_total}
+          puedeEditar={puedeEditar}
+          onRecargar={cargarPersonal}
+        />
+      )}
+
+      {tab === 'cajas' && (
+        <CajasPanel
+          cuentas={cuentas}
+          cxc={cxcPendiente}
+          pasivo={{
+            tarjetas: resumenDeudas.tarjetas,
+            prestamos: resumenDeudas.prestamos,
+            deudas: resumenDeudas.deudas,
+            cxp: cxpPendiente,
+          }}
+          puedeEditar={puedeEditar}
+          onRecargar={cargarPersonal}
+        />
+      )}
+
+      {tab === 'ideas' && (
+        <IdeasPanel sugerencias={sugerencias} onIrATab={(t) => setTab(t as TabId)} />
+      )}
+
+      {tab === 'movimientos' && (
+        <MovimientosPanel
+          categorias={categoriasFin}
+          movimientos={movPersonal}
+          tarjetas={tarjetas}
+          sucursales={sucursales}
+          puedeEditar={puedeEditar}
+          onRecargar={cargarPersonal}
+        />
+      )}
+
+      {tab === 'tarjetas' && (
+        <TarjetasPanel
+          tarjetas={tarjetas}
+          puedeEditar={puedeEditar}
+          onRecargar={cargarPersonal}
+        />
+      )}
+
+      {tab === 'deudas' && (
+        <DeudasPanel
+          prestamos={prestamos}
+          tarjetas={tarjetas}
+          deudas={deudas}
+          cxpSistema={cxpPendiente}
+          cxcSistema={cxcPendiente}
+          puedeEditar={puedeEditar}
+          onRecargar={recargarTodo}
+        />
+      )}
+
+      {tab === 'clinica' && (
+      <>
       {/* Ingresos por categoría */}
       <div className="bg-white rounded-xl border shadow-sm p-5">
         <h2 className="font-bold text-slate-800 mb-4">¿Cuánto se ganó por categoría?</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {categorias.map(c => (
+          {catsIngreso.map(c => (
             <div key={c.key} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border">
               <div className={`w-10 h-10 rounded-lg ${c.color} flex items-center justify-center shrink-0`}>
                 <c.icon className="w-5 h-5 text-white" />
@@ -468,6 +884,8 @@ export default function ControlFinancieroClient({
       <p className="text-xs text-slate-400 print:hidden">
         Fuente: movimientos de caja + compras. Las comisiones médicas son informativas (planilla) y no afectan la utilidad de caja.
       </p>
+      </>
+      )}
       </ModuleContent>
     </ModuleShell>
   )

@@ -16,7 +16,6 @@ interface Perfil {
   id: string; nombre?: string; apellido?: string
   cedula?: string; telefono?: string; activo: boolean
   sucursal_id?: number; rol_id?: number
-  sueldo_fijo?: number; tipo_nomina?: string
   created_at: string; rol?: Rol
 }
 interface Sucursal {

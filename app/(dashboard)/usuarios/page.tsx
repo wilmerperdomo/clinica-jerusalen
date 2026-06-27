@@ -16,8 +16,6 @@ type PerfilRow = {
   rol_id: number | null
   activo: boolean
   created_at: string
-  sueldo_fijo?: number | null
-  tipo_nomina?: string | null
   email?: string | null
   rol?: { id: number; nombre: string; color: string; es_admin: boolean } | null
 }
@@ -44,8 +42,6 @@ export default async function UsuariosPage() {
       rol_id:      p.rol_id as number | null,
       activo:      Boolean(p.activo),
       created_at:  (p.created_at as string) ?? '',
-      sueldo_fijo: p.sueldo_fijo as number | null,
-      tipo_nomina: p.tipo_nomina as string | null,
       email:       p.email as string | null,
       rol: p.rol_nombre ? {
         id:       Number(p.rol_id),

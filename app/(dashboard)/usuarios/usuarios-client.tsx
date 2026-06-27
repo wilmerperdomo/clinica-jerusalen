@@ -16,7 +16,6 @@ interface Perfil {
   id: string; nombre?: string | null; apellido?: string | null
   cedula?: string | null; telefono?: string | null; activo: boolean
   sucursal_id?: number | null; rol_id?: number | null
-  sueldo_fijo?: number | null; tipo_nomina?: string | null
   created_at: string; rol?: Rol | null
 }
 interface Sucursal { id: number; nombre: string; activo: boolean }
@@ -81,21 +80,11 @@ export default function UsuariosClient({
   const [formUsuario, setFormUsuario] = useState({
     nombre: '', apellido: '', cedula: '', telefono: '',
     rol_id: '', sucursal_id: '', activo: true,
-    sueldo_fijo: '', tipo_nomina: 'NINGUNO',
   })
   const [formNuevo, setFormNuevo] = useState({
     email: '', password: '', nombre: '', apellido: '',
     cedula: '', telefono: '', rol_id: '', sucursal_id: '',
   })
-
-  function inferirTipoNomina(rolId: string): string {
-    const rol = roles.find(r => r.id === Number(rolId))
-    if (!rol) return 'NINGUNO'
-    if (rol.nombre === 'Médico') return 'MEDICO'
-    if (rol.nombre === 'Enfermera') return 'ENFERMERA'
-    if (['Administrador', 'Cajero', 'Farmacéutico'].includes(rol.nombre)) return 'ADMINISTRATIVO'
-    return 'NINGUNO'
-  }
 
   /* ── recargar ─ */
   async function recargar() {
@@ -156,8 +145,6 @@ export default function UsuariosClient({
       rol_id:      String(perfil.rol_id      || ''),
       sucursal_id: String(perfil.sucursal_id || ''),
       activo:      perfil.activo,
-      sueldo_fijo: String(perfil.sueldo_fijo ?? ''),
-      tipo_nomina: perfil.tipo_nomina || inferirTipoNomina(String(perfil.rol_id || '')),
     })
     setModalUsuario(true)
   }
@@ -176,8 +163,6 @@ export default function UsuariosClient({
       telefono:    formUsuario.telefono    || null,
       sucursal_id: formUsuario.sucursal_id ? Number(formUsuario.sucursal_id) : null,
       activo:      formUsuario.activo,
-      sueldo_fijo: formUsuario.sueldo_fijo ? Number(formUsuario.sueldo_fijo) : 0,
-      tipo_nomina: formUsuario.tipo_nomina || 'NINGUNO',
     }
     // Solo el super administrador puede cambiar el rol
     if (esSuperAdmin) {
@@ -410,32 +395,11 @@ export default function UsuariosClient({
                   className="w-full border rounded-lg px-3 py-2 text-sm" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo nómina</label>
-                <select value={formUsuario.tipo_nomina} onChange={e => setFormUsuario(p => ({ ...p, tipo_nomina: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm">
-                  <option value="NINGUNO">Ninguno</option>
-                  <option value="MEDICO">Médico (comisiones)</option>
-                  <option value="ENFERMERA">Enfermera (sueldo fijo)</option>
-                  <option value="ADMINISTRATIVO">Administrativo (sueldo fijo)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Sueldo mensual (L.)</label>
-                <input type="number" min="0" step="0.01" value={formUsuario.sueldo_fijo}
-                  onChange={e => setFormUsuario(p => ({ ...p, sueldo_fijo: e.target.value }))} placeholder="0.00"
-                  className="w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
-            </div>
             {esSuperAdmin ? (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Rol *</label>
                 <select value={formUsuario.rol_id}
-                  onChange={e => {
-                    const rolId = e.target.value
-                    setFormUsuario(p => ({ ...p, rol_id: rolId, tipo_nomina: p.tipo_nomina === 'NINGUNO' ? inferirTipoNomina(rolId) : p.tipo_nomina }))
-                  }}
+                  onChange={e => setFormUsuario(p => ({ ...p, rol_id: e.target.value }))}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
                   <option value="">— Sin rol —</option>
                   {roles.map(r => (
