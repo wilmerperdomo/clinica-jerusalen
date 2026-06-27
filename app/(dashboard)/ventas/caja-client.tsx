@@ -511,6 +511,23 @@ export default function CajaClient({
     setLoadingAp(true)
     const nombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
+    // Reanudar sesión abierta existente del día (evita choque con idx_sesion_unica).
+    const sesionAbierta = await supabase
+      .from('caja_sesiones')
+      .select('*, movimientos:caja_movimientos(*)')
+      .eq('cajero_id', userId)
+      .eq('fecha', fechaHoy)
+      .eq('estado', 'ABIERTA')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (sesionAbierta.data) {
+      setLoadingAp(false)
+      setSesion(sesionAbierta.data)
+      return
+    }
+
     const { data, error } = await supabase.from('caja_sesiones').insert({
       sucursal_id:   sucursalFinal,
       cajero_id:     userId,
@@ -520,11 +537,33 @@ export default function CajaClient({
       estado:        'ABIERTA',
     }).select('*, movimientos:caja_movimientos(*)').single()
 
-    setLoadingAp(false)
     if (error) {
+      // 23505 = unique_violation. Hay una sesión que la carga inicial no detectó.
+      const esDuplicado = error.code === '23505' || /idx_sesion_unica|duplicate key/i.test(error.message)
+      if (esDuplicado) {
+        const existente = await supabase
+          .from('caja_sesiones')
+          .select('*, movimientos:caja_movimientos(*)')
+          .eq('cajero_id', userId)
+          .eq('fecha', fechaHoy)
+          .order('id', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        setLoadingAp(false)
+        if (existente.data?.estado === 'ABIERTA') {
+          setSesion(existente.data)
+          return
+        }
+        setErrorAp('Ya cerraste la caja hoy con este usuario. No se puede abrir otra sesión el mismo día; conserva el reporte de cierre impreso.')
+        return
+      }
+      setLoadingAp(false)
       setErrorAp(error.message)
     } else if (data) {
+      setLoadingAp(false)
       setSesion(data)
+    } else {
+      setLoadingAp(false)
     }
   }
 
