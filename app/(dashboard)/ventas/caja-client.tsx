@@ -8,7 +8,8 @@ import {
   RefreshCw, CreditCard, Banknote, ArrowRightLeft, Clock,
   CheckCircle2, AlertCircle, Receipt, Users, ChevronDown,
   LockKeyhole, Unlock, Wallet, FileText, Printer, FlaskConical,
-  Stethoscope, Pill, ClipboardList, BadgeCheck, Gift, Tags, Pencil, Power, type LucideIcon,
+  Stethoscope, Pill, ClipboardList, BadgeCheck, Gift, Tags, Pencil, Power,
+  AlertTriangle, type LucideIcon,
 } from 'lucide-react'
 import {
   calcularDescuentoEdad,
@@ -1561,10 +1562,12 @@ export default function CajaClient({
   }
 
   // Precarga desde Planes Médicos: /ventas?membresia_pago=ID
+  // Se abre el modal con el monto SIEMPRE (haya o no caja abierta);
+  // si la caja está cerrada el botón "Cobrar" queda deshabilitado con aviso.
   useEffect(() => {
     if (!membresiaPagoPrecarga) return
     setTab('membresias_cobrar')
-    if (!sesion || precargaMembresiaRef.current) return
+    if (precargaMembresiaRef.current) return
 
     const abrir = (pago: MembresiaPagoCobro) => {
       precargaMembresiaRef.current = true
@@ -3448,8 +3451,9 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={procesarCobroMembresia}
-                  disabled={guardandoCobroMembresia}
-                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+                  disabled={guardandoCobroMembresia || !sesion}
+                  title={!sesion ? 'Debes abrir la caja del día para cobrar' : undefined}
+                  className="px-5 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {guardandoCobroMembresia ? 'Procesando…' : `Cobrar ${fmt(membresiaPagoCobro.monto)}`}
                 </button>
@@ -3490,6 +3494,12 @@ export default function CajaClient({
                   <p className="text-xs text-gray-500 uppercase tracking-wide">Monto a cobrar</p>
                   <p className="text-3xl font-bold text-violet-700 mt-1">{fmt(membresiaPagoCobro.monto)}</p>
                 </div>
+                {!sesion && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <span>Debes <strong>abrir la caja del día</strong> antes de cobrar esta cuota. El monto ya está cargado; abre la caja y vuelve a presionar Cobrar.</span>
+                  </div>
+                )}
                 {(formCobroMembresia.forma_pago === 'TARJETA' || formCobroMembresia.forma_pago === 'TRANSFERENCIA') && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Referencia</label>
