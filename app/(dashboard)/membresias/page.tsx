@@ -1,10 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
+import { getPerfilSucursal } from '@/lib/get-sucursal'
 import MembresiasClient from './membresias-client'
 
 export const metadata = { title: 'Planes Médicos' }
 
 export default async function MembresiasPage() {
   const supabase = await createClient()
+  const { esSuperAdmin } = await getPerfilSucursal()
   const hoy      = new Date().toISOString().split('T')[0]
 
   const [
@@ -73,6 +75,7 @@ export default async function MembresiasPage() {
       pagos={pagos || []}
       sucursalDefault={perfil?.sucursal_id || null}
       hoy={hoy}
+      esSuperAdmin={esSuperAdmin}
     />
   )
 }

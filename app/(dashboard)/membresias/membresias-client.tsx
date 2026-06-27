@@ -57,6 +57,7 @@ interface Props {
   pagos:           Pago[]
   sucursalDefault: number | null
   hoy:             string
+  esSuperAdmin?:   boolean
 }
 
 /* ══════════════════ HELPERS ══════════════════════════════════ */
@@ -110,7 +111,7 @@ function mensajeError(err: unknown) {
 /* ════════════════════════════════════════════════════════════ */
 export default function MembresiasClient({
   tipos, membresias: init, pacientes, sucursales,
-  pagos: initPagos, sucursalDefault, hoy,
+  pagos: initPagos, sucursalDefault, hoy, esSuperAdmin = false,
 }: Props) {
   const supabase  = createClient()
   const confirmDialog = useConfirm()
@@ -137,6 +138,7 @@ export default function MembresiasClient({
     comentarios: '', sucursal_id: sucursalDefault || 0,
   }
   const [modalMem,   setModalMem]   = useState(false)
+  const [editMemId,  setEditMemId]  = useState<number | null>(null)
   const [formMem,    setFormMem]    = useState(memVacia)
   const [beneficiarios, setBeneficiarios] = useState<Beneficiario[]>([])
   const [buscarPac,  setBuscarPac]  = useState('')
@@ -226,6 +228,98 @@ export default function MembresiasClient({
 
   /* ════════ ACCIONES ════════════════════════════════════════ */
 
+  function abrirNuevaMembresia() {
+    setEditMemId(null)
+    setFormMem(memVacia)
+    setBeneficiarios([])
+    setBuscarPac('')
+    setErrorMem('')
+    setModalMem(true)
+  }
+
+  function abrirEditarMembresia(m: Membresia) {
+    setEditMemId(m.id)
+    setFormMem({
+      paciente_id: m.paciente_id,
+      tipo_id: m.tipo_id,
+      fecha_inicio: m.fecha_inicio,
+      fecha_fin: m.fecha_fin,
+      cuotas_pagadas: m.cuotas_pagadas,
+      estado: m.estado,
+      comentarios: m.comentarios || '',
+      sucursal_id: m.sucursal_id || 0,
+    })
+    setBeneficiarios((m.beneficiarios || []).map(b => ({
+      nombre: b.nombre,
+      parentesco: b.parentesco,
+      activo: b.activo,
+    })))
+    setBuscarPac('')
+    setErrorMem('')
+    setModalMem(true)
+  }
+
+  function cerrarModalMem() {
+    setModalMem(false)
+    setEditMemId(null)
+    setFormMem(memVacia)
+    setBeneficiarios([])
+    setErrorMem('')
+  }
+
+  async function eliminarMembresia(m: Membresia) {
+    const nombrePac = `${m.paciente?.nombre ?? ''} ${m.paciente?.apellido1 ?? ''}`.trim()
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar plan médico',
+      message: `¿Eliminar el plan de ${nombrePac}? Se borrarán también sus cuotas y beneficiarios.`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+      details: [
+        ...(m.numero_carnet ? [{ label: 'Carnet', value: m.numero_carnet }] : []),
+        { label: 'Plan', value: m.tipo?.nombre || '—' },
+      ],
+    })
+    if (!confirmed) return
+    setLoading(true)
+    try {
+      const { error } = await supabase.from('membresias').delete().eq('id', m.id)
+      if (error) throw error
+      setMembresias(prev => prev.filter(x => x.id !== m.id))
+      setPagos(prev => prev.filter(p => p.membresia_id !== m.id))
+      if (expandido === m.id) setExpandido(null)
+      if (carnetMem?.id === m.id) setCarnetMem(null)
+    } catch (err) {
+      alert('No se pudo eliminar: ' + mensajeError(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function eliminarTipo(t: Tipo) {
+    const vendidas = membresias.filter(m => m.tipo_id === t.id).length
+    if (vendidas > 0) {
+      alert(`No se puede eliminar: hay ${vendidas} plan${vendidas !== 1 ? 'es' : ''} registrado${vendidas !== 1 ? 's' : ''} con este tipo. Desactívalo en su lugar.`)
+      return
+    }
+    const { confirmed } = await confirmDialog({
+      title: 'Eliminar tipo de plan',
+      message: `¿Eliminar permanentemente el plan "${t.nombre}"?`,
+      variant: 'danger',
+      confirmLabel: 'Eliminar',
+    })
+    if (!confirmed) return
+    setLoading(true)
+    try {
+      const { error } = await supabase.from('membresia_tipos').delete().eq('id', t.id)
+      if (error) throw error
+      setTiposList(prev => prev.filter(x => x.id !== t.id))
+    } catch (err) {
+      alert('No se pudo eliminar: ' + mensajeError(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function guardarMembresia() {
     if (!formMem.paciente_id) return setErrorMem('Selecciona un paciente')
     if (!formMem.tipo_id)     return setErrorMem('Selecciona un plan')
@@ -234,68 +328,111 @@ export default function MembresiasClient({
     try {
       const tipoActual = tiposList.find(t => t.id === formMem.tipo_id)
       const pacienteActual = pacientes.find(p => p.id === formMem.paciente_id)
+        ?? membresias.find(m => m.id === editMemId)?.paciente
       const sucursalActual = sucursales.find(s => s.id === formMem.sucursal_id)
-
-      const { data: newM, error: e } = await supabase
-        .from('membresias')
-        .insert({
-          paciente_id: formMem.paciente_id, tipo_id: formMem.tipo_id,
-          fecha_inicio: formMem.fecha_inicio, fecha_fin: formMem.fecha_fin,
-          cuotas_pagadas: formMem.cuotas_pagadas, estado: formMem.estado,
-          comentarios: formMem.comentarios || null,
-          sucursal_id: formMem.sucursal_id || null,
-        })
-        .select('id, paciente_id, tipo_id, fecha_inicio, fecha_fin, cuotas_pagadas, estado, comentarios, numero_carnet, sucursal_id, created_at')
-        .single()
-      if (e) throw e
-
-      const benefs = beneficiarios.filter(b => b.nombre.trim())
-      let benefRows: Beneficiario[] = []
-      if (benefs.length && newM?.id) {
-        const { data: insertedBenefs, error: eBenefs } = await supabase.from('membresia_beneficiarios').insert(
-          benefs.map(b => ({ membresia_id: newM.id, nombre: b.nombre, parentesco: b.parentesco, activo: true }))
-        ).select('id, nombre, parentesco, activo')
-        if (eBenefs) throw eBenefs
-        benefRows = (insertedBenefs ?? []) as Beneficiario[]
+      const payload = {
+        tipo_id: formMem.tipo_id,
+        fecha_inicio: formMem.fecha_inicio,
+        fecha_fin: formMem.fecha_fin,
+        cuotas_pagadas: formMem.cuotas_pagadas,
+        estado: formMem.estado,
+        comentarios: formMem.comentarios || null,
+        sucursal_id: formMem.sucursal_id || null,
       }
-      if (newM) {
-        const nuevaMembresia: Membresia = {
-          ...(newM as unknown as Membresia),
+
+      let savedM: Membresia | null = null
+
+      if (editMemId) {
+        const prev = membresias.find(m => m.id === editMemId)
+        const { data: updated, error: e } = await supabase
+          .from('membresias')
+          .update(payload)
+          .eq('id', editMemId)
+          .select('id, paciente_id, tipo_id, fecha_inicio, fecha_fin, cuotas_pagadas, estado, comentarios, numero_carnet, sucursal_id, created_at')
+          .single()
+        if (e) throw e
+
+        const { error: eDelBen } = await supabase.from('membresia_beneficiarios').delete().eq('membresia_id', editMemId)
+        if (eDelBen) throw eDelBen
+
+        const benefs = beneficiarios.filter(b => b.nombre.trim())
+        let benefRows: Beneficiario[] = []
+        if (benefs.length) {
+          const { data: insertedBenefs, error: eBenefs } = await supabase.from('membresia_beneficiarios').insert(
+            benefs.map(b => ({ membresia_id: editMemId, nombre: b.nombre, parentesco: b.parentesco, activo: true }))
+          ).select('id, nombre, parentesco, activo')
+          if (eBenefs) throw eBenefs
+          benefRows = (insertedBenefs ?? []) as Beneficiario[]
+        }
+
+        savedM = {
+          ...(updated as unknown as Membresia),
           tipo: tipoActual
             ? { nombre: tipoActual.nombre, precio: tipoActual.precio, duracion_dias: tipoActual.duracion_dias }
-            : undefined,
+            : prev?.tipo,
           paciente: pacienteActual,
           beneficiarios: benefRows,
-          sucursal: sucursalActual ? { nombre: sucursalActual.nombre } : undefined,
+          sucursal: sucursalActual ? { nombre: sucursalActual.nombre } : prev?.sucursal,
         }
-        setMembresias(prev => [nuevaMembresia, ...prev])
+        setMembresias(prev => prev.map(m => m.id === editMemId ? savedM! : m))
+      } else {
+        const { data: newM, error: e } = await supabase
+          .from('membresias')
+          .insert({
+            paciente_id: formMem.paciente_id,
+            ...payload,
+          })
+          .select('id, paciente_id, tipo_id, fecha_inicio, fecha_fin, cuotas_pagadas, estado, comentarios, numero_carnet, sucursal_id, created_at')
+          .single()
+        if (e) throw e
 
-        // recargar pagos generados por trigger
-        const { data: np, error: ePagos } = await supabase.from('membresia_pagos')
-          .select('id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago, forma_pago, cajero_nombre, notas')
-          .eq('membresia_id', newM.id)
-        if (ePagos) throw ePagos
-        if (np) {
-          const pagosNuevos = (np as unknown as Pago[]).map(p => ({
-            ...p,
-            membresia: {
-              numero_carnet: nuevaMembresia.numero_carnet,
-              tipo_id: nuevaMembresia.tipo_id,
-              tipo: tipoActual ? { nombre: tipoActual.nombre } : null,
-              paciente: pacienteActual
-                ? {
-                    nombre: pacienteActual.nombre,
-                    apellido1: pacienteActual.apellido1,
-                    telefono: pacienteActual.telefono,
-                    foto_url: pacienteActual.foto_url,
-                  }
-                : null,
-            },
-          }))
-          setPagos(prev => [...prev, ...pagosNuevos])
+        const benefs = beneficiarios.filter(b => b.nombre.trim())
+        let benefRows: Beneficiario[] = []
+        if (benefs.length && newM?.id) {
+          const { data: insertedBenefs, error: eBenefs } = await supabase.from('membresia_beneficiarios').insert(
+            benefs.map(b => ({ membresia_id: newM.id, nombre: b.nombre, parentesco: b.parentesco, activo: true }))
+          ).select('id, nombre, parentesco, activo')
+          if (eBenefs) throw eBenefs
+          benefRows = (insertedBenefs ?? []) as Beneficiario[]
+        }
+        if (newM) {
+          savedM = {
+            ...(newM as unknown as Membresia),
+            tipo: tipoActual
+              ? { nombre: tipoActual.nombre, precio: tipoActual.precio, duracion_dias: tipoActual.duracion_dias }
+              : undefined,
+            paciente: pacienteActual,
+            beneficiarios: benefRows,
+            sucursal: sucursalActual ? { nombre: sucursalActual.nombre } : undefined,
+          }
+          setMembresias(prev => [savedM!, ...prev])
+
+          const { data: np, error: ePagos } = await supabase.from('membresia_pagos')
+            .select('id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago, forma_pago, cajero_nombre, notas')
+            .eq('membresia_id', newM.id)
+          if (ePagos) throw ePagos
+          if (np) {
+            const pagosNuevos = (np as unknown as Pago[]).map(p => ({
+              ...p,
+              membresia: {
+                numero_carnet: savedM!.numero_carnet,
+                tipo_id: savedM!.tipo_id,
+                tipo: tipoActual ? { nombre: tipoActual.nombre } : null,
+                paciente: pacienteActual
+                  ? {
+                      nombre: pacienteActual.nombre,
+                      apellido1: pacienteActual.apellido1,
+                      telefono: pacienteActual.telefono,
+                      foto_url: pacienteActual.foto_url,
+                    }
+                  : null,
+              },
+            }))
+            setPagos(prev => [...prev, ...pagosNuevos])
+          }
         }
       }
-      setModalMem(false); setFormMem(memVacia); setBeneficiarios([])
+      cerrarModalMem()
     } catch (err: unknown) { setErrorMem(mensajeError(err)) }
     finally { setLoadingMem(false) }
   }
@@ -490,7 +627,7 @@ export default function MembresiasClient({
           { label: 'Por cobrar', value: fmt(stats.porCobrar), icon: Wallet },
         ]}
         actions={
-          <ModuleBtnPrimary onClick={() => { setModalMem(true); setErrorMem(''); setFormMem(memVacia); setBeneficiarios([]) }}>
+          <ModuleBtnPrimary onClick={abrirNuevaMembresia}>
             <Plus className="w-4 h-4" /> Nuevo Plan Médico
           </ModuleBtnPrimary>
         }
@@ -548,7 +685,7 @@ export default function MembresiasClient({
                   <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Vigencia</th>
                   <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Estado</th>
                   <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Beneficiarios</th>
-                  <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase w-36">Acciones</th>
+                  <th className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase w-44">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -622,6 +759,14 @@ export default function MembresiasClient({
                             </button>
                             <button onClick={() => renovar(m)} title="Renovar"
                               className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100"><RefreshCw className="w-3.5 h-3.5"/></button>
+                            {esSuperAdmin && (
+                              <>
+                                <button onClick={() => abrirEditarMembresia(m)} title="Editar"
+                                  className="p-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100"><Edit3 className="w-3.5 h-3.5"/></button>
+                                <button onClick={() => { void eliminarMembresia(m) }} title="Eliminar"
+                                  className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100"><Trash2 className="w-3.5 h-3.5"/></button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -882,12 +1027,14 @@ export default function MembresiasClient({
       {/* ══════════════ TAB: PLANES ══════════════════════════ */}
       {tab === 'planes' && (
         <div className="space-y-4">
-          <div className="flex justify-end">
-            <button onClick={() => { setModalTipo(true); setFormTipo(tipoVacio); setBensTipo(['']); setEditTipoId(null); setErrorTipo('') }}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-medium">
-              <Plus className="w-4 h-4" /> Nuevo Plan
-            </button>
-          </div>
+          {esSuperAdmin && (
+            <div className="flex justify-end">
+              <button onClick={() => { setModalTipo(true); setFormTipo(tipoVacio); setBensTipo(['']); setEditTipoId(null); setErrorTipo('') }}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-medium">
+                <Plus className="w-4 h-4" /> Nuevo Plan
+              </button>
+            </div>
+          )}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {tiposList.map(t => {
               const vendidas = membresias.filter(m => m.tipo_id === t.id).length
@@ -924,22 +1071,30 @@ export default function MembresiasClient({
                         </span>
                         <span className="text-xs text-gray-400">{vendidas} vendida{vendidas !== 1 ? 's' : ''}</span>
                       </div>
-                      <button onClick={() => {
-                        setEditTipoId(t.id)
-                        setFormTipo({
-                          nombre: t.nombre, precio: t.precio, duracion_dias: t.duracion_dias,
-                          descripcion: t.descripcion || '', activo: t.activo,
-                          consulta_gratis: t.consulta_gratis ?? false,
-                          pct_consulta: t.pct_consulta ?? 0,
-                          pct_laboratorio: t.pct_laboratorio ?? 0,
-                          pct_medicamentos: t.pct_medicamentos ?? 0,
-                          pct_servicios: t.pct_servicios ?? 0,
-                        })
-                        setBensTipo((t.membresia_beneficios ?? []).filter(b => b.activo).map(b => b.descripcion))
-                        setModalTipo(true); setErrorTipo('')
-                      }} className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                        <Edit3 className="w-3.5 h-3.5"/> Editar
-                      </button>
+                      {esSuperAdmin && (
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => {
+                            setEditTipoId(t.id)
+                            setFormTipo({
+                              nombre: t.nombre, precio: t.precio, duracion_dias: t.duracion_dias,
+                              descripcion: t.descripcion || '', activo: t.activo,
+                              consulta_gratis: t.consulta_gratis ?? false,
+                              pct_consulta: t.pct_consulta ?? 0,
+                              pct_laboratorio: t.pct_laboratorio ?? 0,
+                              pct_medicamentos: t.pct_medicamentos ?? 0,
+                              pct_servicios: t.pct_servicios ?? 0,
+                            })
+                            setBensTipo((t.membresia_beneficios ?? []).filter(b => b.activo).map(b => b.descripcion))
+                            setModalTipo(true); setErrorTipo('')
+                          }} className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                            <Edit3 className="w-3.5 h-3.5"/> Editar
+                          </button>
+                          <button onClick={() => { void eliminarTipo(t) }}
+                            className="flex items-center gap-1 text-xs text-red-600 hover:underline">
+                            <Trash2 className="w-3.5 h-3.5"/> Eliminar
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -967,22 +1122,34 @@ export default function MembresiasClient({
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b">
-              <h2 className="font-bold text-gray-900 text-lg">Nuevo Plan Médico</h2>
-              <button onClick={() => setModalMem(false)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
+              <h2 className="font-bold text-gray-900 text-lg">{editMemId ? 'Editar Plan Médico' : 'Nuevo Plan Médico'}</h2>
+              <button onClick={cerrarModalMem} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
             </div>
             <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
               {errorMem && <p className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded-lg">{errorMem}</p>}
 
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Paciente *</label>
-                <input value={buscarPac} onChange={e => setBuscarPac(e.target.value)} placeholder="Escribir nombre para filtrar…"
-                  className="w-full border rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-blue-300" />
-                <select value={formMem.paciente_id} onChange={e => setFormMem(p => ({ ...p, paciente_id: Number(e.target.value) }))}
-                  size={5} className="w-full border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
-                  <option value={0}>— Seleccionar —</option>
-                  {pacientes.filter(p => !buscarPac || `${p.nombre} ${p.apellido1}`.toLowerCase().includes(buscarPac.toLowerCase()))
-                    .map(p => <option key={p.id} value={p.id}>{p.nombre} {p.apellido1} {p.apellido2 || ''}</option>)}
-                </select>
+                {editMemId ? (
+                  <div className="w-full border rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-700">
+                    {pacientes.find(p => p.id === formMem.paciente_id)?.nombre
+                      ?? membresias.find(m => m.id === editMemId)?.paciente?.nombre
+                      ?? 'Paciente'} {pacientes.find(p => p.id === formMem.paciente_id)?.apellido1
+                      ?? membresias.find(m => m.id === editMemId)?.paciente?.apellido1
+                      ?? ''}
+                  </div>
+                ) : (
+                  <>
+                    <input value={buscarPac} onChange={e => setBuscarPac(e.target.value)} placeholder="Escribir nombre para filtrar…"
+                      className="w-full border rounded-lg px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                    <select value={formMem.paciente_id} onChange={e => setFormMem(p => ({ ...p, paciente_id: Number(e.target.value) }))}
+                      size={5} className="w-full border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                      <option value={0}>— Seleccionar —</option>
+                      {pacientes.filter(p => !buscarPac || `${p.nombre} ${p.apellido1}`.toLowerCase().includes(buscarPac.toLowerCase()))
+                        .map(p => <option key={p.id} value={p.id}>{p.nombre} {p.apellido1} {p.apellido2 || ''}</option>)}
+                    </select>
+                  </>
+                )}
               </div>
 
               <div>
@@ -993,11 +1160,11 @@ export default function MembresiasClient({
                   }}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
                   <option value={0}>— Seleccionar —</option>
-                  {tiposList.filter(t => t.activo).map(t => (
+                  {tiposList.filter(t => t.activo || t.id === formMem.tipo_id).map(t => (
                     <option key={t.id} value={t.id}>{t.nombre} — {fmt(t.precio)} / {t.duracion_dias}d</option>
                   ))}
                 </select>
-                {tipoSel && (tipoSel.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
+                {!editMemId && tipoSel && (tipoSel.membresia_beneficios ?? []).filter(b => b.activo).length > 0 && (
                   <div className="mt-2 p-3 bg-blue-50 rounded-lg">
                     <p className="text-xs font-semibold text-blue-700 mb-1">Cuotas que se generarán: {Math.round(tipoSel.duracion_dias <= 31 ? 1 : tipoSel.duracion_dias <= 93 ? 3 : tipoSel.duracion_dias <= 186 ? 6 : 12)}</p>
                     {(tipoSel.membresia_beneficios ?? []).filter(b => b.activo).map(b => (
@@ -1038,6 +1205,18 @@ export default function MembresiasClient({
                 </div>
               </div>
 
+              {editMemId && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Estado</label>
+                  <select value={formMem.estado} onChange={e => setFormMem(p => ({ ...p, estado: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+                    <option value="activo">Activo</option>
+                    <option value="inactivo">Inactivo</option>
+                    <option value="vencido">Vencido</option>
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Comentarios</label>
                 <textarea value={formMem.comentarios} rows={2}
@@ -1070,10 +1249,10 @@ export default function MembresiasClient({
               </div>
             </div>
             <div className="px-6 py-4 border-t flex gap-3 justify-end">
-              <button onClick={() => setModalMem(false)} className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
+              <button onClick={cerrarModalMem} className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
               <button onClick={guardarMembresia} disabled={loadingMem}
                 className="px-5 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
-                {loadingMem && <RefreshCw className="w-3.5 h-3.5 animate-spin"/>} Registrar Plan
+                {loadingMem && <RefreshCw className="w-3.5 h-3.5 animate-spin"/>} {editMemId ? 'Guardar cambios' : 'Registrar Plan'}
               </button>
             </div>
           </div>
