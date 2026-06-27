@@ -3,7 +3,9 @@ import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { PACIENTE_BUSQUEDA_SELECT } from '@/lib/buscar-pacientes'
 import { agruparLabPorCobrar, type LabOrdenCobroRow } from '@/lib/lab-cobro-utils'
 import { buildMembresiasMap } from '@/lib/membresia-utils'
+import { UMBRAL_CUOTAS_MORA } from '@/lib/membresia-mora'
 import { fechaHoyHN } from '@/lib/fecha-hn'
+import { obtenerFidelidadConfig } from '@/lib/fidelidad-config'
 import CajaClient from './caja-client'
 
 export const dynamic = 'force-dynamic'
@@ -138,7 +140,7 @@ export default async function VentasPage({
     supabase
       .from('membresias')
       .select(`
-        paciente_id, fecha_fin, numero_carnet, tipo_id,
+        id, paciente_id, fecha_fin, numero_carnet, tipo_id,
         tipo:membresia_tipos(nombre, consulta_gratis, pct_consulta, pct_laboratorio, pct_medicamentos, pct_servicios)
       `)
       .eq('estado', 'activo')
@@ -192,6 +194,22 @@ export default async function VentasPage({
 
   const labGruposPorCobrar = agruparLabPorCobrar(labOrdenesPendientes)
 
+  // Morosidad: 2+ cuotas vencidas → sin beneficios de plan en caja
+  const { data: cuotasMorosas } = await supabase
+    .from('membresia_pagos')
+    .select('membresia_id')
+    .in('estado', ['pendiente', 'vencido'])
+    .lt('fecha_vencimiento', hoy)
+  const moraPorMem = new Map<number, number>()
+  for (const c of cuotasMorosas ?? []) {
+    moraPorMem.set(c.membresia_id, (moraPorMem.get(c.membresia_id) ?? 0) + 1)
+  }
+  const activasSinMora = (membresiasActivasRaw ?? []).filter(m => {
+    const id = (m as { id?: number }).id
+    if (!id) return true
+    return (moraPorMem.get(id) ?? 0) < UMBRAL_CUOTAS_MORA
+  })
+
   let membresiaPagosPorCobrar = membresiaPagosRaw ?? []
   if (!esSuperAdmin && sucursalId) {
     // Cada sucursal cobra sus cuotas. Las cuotas sin sucursal asignada
@@ -205,7 +223,7 @@ export default async function VentasPage({
 
   // Mapa de membresías activas por paciente, con beneficios estructurados
   const membresiasMap = buildMembresiasMap(
-    (membresiasActivasRaw ?? []) as Parameters<typeof buildMembresiasMap>[0],
+    activasSinMora as Parameters<typeof buildMembresiasMap>[0],
   )
 
   if (!sucursalId && sucursales.length > 0) {
@@ -221,6 +239,8 @@ export default async function VentasPage({
     apellido: nombre.split(' ').slice(1).join(' ') ?? '',
     sucursal_id: sucursalId,
   }
+
+  const fidelidadConfig = await obtenerFidelidadConfig(supabase)
 
   return (
     <CajaClient
@@ -244,6 +264,7 @@ export default async function VentasPage({
       cotizacionesPorCobrar={cotizacionesPorCobrarRaw || []}
       correlativos={correlativos || []}
       membresiaPagoPrecarga={membresiaPagoPrecarga}
+      fidelidadConfig={fidelidadConfig}
     />
   )
 }

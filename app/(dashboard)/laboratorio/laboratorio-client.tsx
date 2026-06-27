@@ -1107,6 +1107,13 @@ export default function LaboratorioClient({
 
     await registrarCostosOrdenesSinConsumir(grupoActual.ordenes)
 
+    if (modo === 'validar') {
+      const tel = pac?.celular || pac?.telefono || grupoActual.telefono
+      if (tel && confirm('¿Avisar al paciente por WhatsApp que su resultado de laboratorio está listo?')) {
+        await enviarResultadosWhatsApp({ ...grupoActual, telefono: tel })
+      }
+    }
+
     if (modo === 'entregar') {
       const tel = pac?.celular || pac?.telefono || grupoActual.telefono
       if (tel && confirm('¿Notificar al paciente por WhatsApp con el enlace al portal?')) {

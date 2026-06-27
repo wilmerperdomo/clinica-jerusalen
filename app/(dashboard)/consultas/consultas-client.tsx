@@ -13,6 +13,7 @@ import {
 import { useConfirm } from '@/components/confirm-dialog'
 import ResponsiveModal from '@/components/responsive-modal'
 import BuscarPacienteInput from '@/components/buscar-paciente-input'
+import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
 import ConsultaDocumentosPanel from '@/components/consulta-documentos-panel'
 import ConsultaSeguimientoPanel from '@/components/consulta-seguimiento-panel'
 import ConsultaContextoClinicoPanel from '@/components/consulta-contexto-clinico-panel'
@@ -218,6 +219,11 @@ export default function ConsultasClient({
     rolesActivos.some(nombre => puedeAtenderConsulta(nombre, { rolIdsMedico })) ||
     (rolId != null && rolIdsMedico.includes(rolId))
   const esEnfermeria = esRolEnfermeria(rolUsuario)
+  const sbRef = useRef(supabase())
+  const buscarPacienteRemoto = useCallback(
+    (termino: string) => buscarPacientesActivos(sbRef.current, termino),
+    [],
+  )
   const [fechaOperativa, setFechaOperativa] = useState(fechaHoy)
   const [tab, setTab] = useState<'citas' | 'espera'>(() => {
     const hayCola = initialEspera.some(c => c.estado === 'SIGNOS' || c.estado === 'ATENDIENDO')
@@ -1886,6 +1892,7 @@ export default function ConsultasClient({
                 onChange={id => setFormCita(p => ({ ...p, paciente_id: id }))}
                 membresiasMap={membresiasMap}
                 listasMap={listasMap}
+                buscarRemoto={buscarPacienteRemoto}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -1947,6 +1954,7 @@ export default function ConsultasClient({
                 onChange={id => setFormConsulta(p => ({ ...p, paciente_id: id }))}
                 membresiasMap={membresiasMap}
                 listasMap={listasMap}
+                buscarRemoto={buscarPacienteRemoto}
               />
             </div>
             <div>

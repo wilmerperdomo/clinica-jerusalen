@@ -1,26 +1,53 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import {
+  type FidelidadConfig,
+  FIDELIDAD_CONFIG_DEFAULT,
+} from '@/lib/fidelidad-config'
 
-/** Cada L 26.00 facturados = 1 punto */
-export const LEMPIRAS_POR_PUNTO = 26
+/** @deprecated Usar FIDELIDAD_CONFIG_DEFAULT.lempiras_por_punto */
+export const LEMPIRAS_POR_PUNTO = FIDELIDAD_CONFIG_DEFAULT.lempiras_por_punto
 
-/** 1 punto = L 1.00 de descuento en laboratorio */
-export const VALOR_LEMPIRA_POR_PUNTO = 1
+/** @deprecated Usar FIDELIDAD_CONFIG_DEFAULT.valor_lempira_por_punto */
+export const VALOR_LEMPIRA_POR_PUNTO = FIDELIDAD_CONFIG_DEFAULT.valor_lempira_por_punto
 
-export function calcularPuntosPorMonto(monto: number): number {
+export function calcularPuntosPorMonto(monto: number, config: FidelidadConfig = FIDELIDAD_CONFIG_DEFAULT): number {
   const m = Number(monto)
-  if (!Number.isFinite(m) || m <= 0) return 0
-  return Math.floor(m / LEMPIRAS_POR_PUNTO)
+  if (!config.activo || !Number.isFinite(m) || m <= 0) return 0
+  const divisor = Math.max(1, config.lempiras_por_punto)
+  return Math.floor(m / divisor)
 }
 
-export function valorLempirasDePuntos(puntos: number): number {
-  return Math.max(0, Math.floor(Number(puntos) || 0)) * VALOR_LEMPIRA_POR_PUNTO
+export function valorLempirasDePuntos(puntos: number, config: FidelidadConfig = FIDELIDAD_CONFIG_DEFAULT): number {
+  const valor = Math.max(0.01, config.valor_lempira_por_punto)
+  return Math.max(0, Math.floor(Number(puntos) || 0)) * valor
 }
 
-/** Máximo de puntos canjeables dado saldo y total a pagar (después de otros descuentos) */
-export function maxPuntosCanjeables(saldoPuntos: number, totalAPagar: number): number {
-  const saldo = Math.max(0, Math.floor(saldoPuntos))
+/** Descuento máximo en lempiras permitido por reglas de canje */
+export function descuentoMaximoCanje(totalAPagar: number, config: FidelidadConfig = FIDELIDAD_CONFIG_DEFAULT): number {
+  if (!config.activo) return 0
   const total = Math.max(0, Number(totalAPagar) || 0)
-  return Math.min(saldo, Math.floor(total / VALOR_LEMPIRA_POR_PUNTO))
+  if (total <= 0) return 0
+
+  const pct = Math.min(100, Math.max(0, config.porcentaje_max_canje))
+  const minCobro = Math.max(0, config.monto_minimo_cobro)
+  const maxPorPct = total * (pct / 100)
+  const maxPorMinimo = Math.max(0, total - minCobro)
+
+  return Math.min(maxPorPct, maxPorMinimo, total)
+}
+
+/** Máximo de puntos canjeables dado saldo, total y configuración */
+export function maxPuntosCanjeables(
+  saldoPuntos: number,
+  totalAPagar: number,
+  config: FidelidadConfig = FIDELIDAD_CONFIG_DEFAULT,
+): number {
+  if (!config.activo) return 0
+  const saldo = Math.max(0, Math.floor(saldoPuntos))
+  const maxDescuento = descuentoMaximoCanje(totalAPagar, config)
+  const valorPt = Math.max(0.01, config.valor_lempira_por_punto)
+  const maxPorReglas = Math.floor(maxDescuento / valorPt)
+  return Math.min(saldo, maxPorReglas)
 }
 
 export async function obtenerSaldoPuntos(

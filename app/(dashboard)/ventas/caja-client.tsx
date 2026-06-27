@@ -54,12 +54,12 @@ import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
 import {
   acumularPuntosPorFactura,
   canjearPuntosLaboratorio,
-  LEMPIRAS_POR_PUNTO,
+  descuentoMaximoCanje,
   maxPuntosCanjeables,
   obtenerSaldoPuntos,
-  VALOR_LEMPIRA_POR_PUNTO,
   valorLempirasDePuntos,
 } from '@/lib/fidelidad-puntos'
+import type { FidelidadConfig } from '@/lib/fidelidad-config'
 
 /* ─── tipos ─────────────────────────────────────────────── */
 interface Concepto { id: number; nombre: string; tipo: 'INGRESO' | 'EGRESO'; categoria?: string; activo?: boolean }
@@ -197,6 +197,7 @@ interface Props {
   cotizacionesPorCobrar:   CotizacionPorCobrar[]
   correlativos:            Correlativo[]
   membresiaPagoPrecarga?:  number | null
+  fidelidadConfig:         FidelidadConfig
 }
 
 function sb() {
@@ -217,6 +218,7 @@ export default function CajaClient({
   cotizacionesPorCobrar: initCotizacionesPorCobrar,
   correlativos: initCorrelativos,
   membresiaPagoPrecarga = null,
+  fidelidadConfig,
 }: Props) {
   const [sesion,   setSesion]   = useState<Sesion | null>(initSesion)
   const [cxc,      setCxc]      = useState<CXC[]>(initCxc)
@@ -1378,7 +1380,7 @@ export default function CajaClient({
         setGuardandoCobroLab(false)
         return
       }
-      const maxPt = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad)
+      const maxPt = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad, fidelidadConfig)
       const solicitados = puntosCanjearLab.trim() === ''
         ? maxPt
         : Math.min(maxPt, Math.max(0, Math.floor(Number(puntosCanjearLab) || 0)))
@@ -1388,10 +1390,20 @@ export default function CajaClient({
         return
       }
       puntosCanje = solicitados
-      descPuntos = valorLempirasDePuntos(puntosCanje)
+      descPuntos = valorLempirasDePuntos(puntosCanje, fidelidadConfig)
     }
 
     const total = totalDespuesEdad - descPuntos
+    const minCobro = fidelidadConfig.monto_minimo_cobro ?? 1
+    if (total < minCobro) {
+      alert(
+        `El total a cobrar debe ser al menos L ${minCobro.toFixed(2)}. ` +
+        `Con la configuración actual solo puede canjear hasta el ${fidelidadConfig.porcentaje_max_canje}% del total ` +
+        `(máx. ${maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad, fidelidadConfig)} pts).`,
+      )
+      setGuardandoCobroLab(false)
+      return
+    }
     if (total < 0) {
       alert('El descuento por puntos excede el total a cobrar')
       setGuardandoCobroLab(false)
@@ -3601,17 +3613,19 @@ export default function CajaClient({
         const pctLabEfectivo = effLabUI.pct
         const valDescInput = labGrupoCobro.total * (pctLabEfectivo / 100)
         const totalDespuesEdad = labGrupoCobro.total - valDescInput
-        const maxPtCanje = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad)
+        const maxPtCanje = maxPuntosCanjeables(puntosFidelidadLab, totalDespuesEdad, fidelidadConfig)
         const ptsAplicar = usarPuntosLab && labGrupoCobro.pacienteId
           ? (puntosCanjearLab.trim() === ''
             ? maxPtCanje
             : Math.min(maxPtCanje, Math.max(0, Math.floor(Number(puntosCanjearLab) || 0))))
           : 0
-        const descPuntosUI = valorLempirasDePuntos(ptsAplicar)
+        const descPuntosUI = valorLempirasDePuntos(ptsAplicar, fidelidadConfig)
         const totalFinal = totalDespuesEdad - descPuntosUI
+        const minCobro = fidelidadConfig.monto_minimo_cobro ?? 1
+        const descMaxCanje = descuentoMaximoCanje(totalDespuesEdad, fidelidadConfig)
         const pac = labGrupoCobro.paciente
         const puedeUsarPuntos = Boolean(labGrupoCobro.pacienteId) && puntosFidelidadLab > 0
-          && formCobroLab.forma_pago !== 'CREDITO'
+          && formCobroLab.forma_pago !== 'CREDITO' && fidelidadConfig.activo
         return (
           <Modal
             title="Cobro de Laboratorio"
@@ -3629,12 +3643,12 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={procesarCobroLab}
-                  disabled={guardandoCobroLab || totalFinal < 0 || !sesion}
+                  disabled={guardandoCobroLab || totalFinal < minCobro || !sesion}
                   className="flex items-center justify-center gap-2 px-6 py-2.5 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm transition"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {guardandoCobroLab ? 'Procesando...' : totalFinal <= 0
-                    ? 'Confirmar cobro (L 0.00)'
+                  {guardandoCobroLab ? 'Procesando...' : totalFinal < minCobro
+                    ? `Mínimo L ${minCobro.toFixed(2)} (reduzca puntos)`
                     : `Cobrar L ${totalFinal.toFixed(2)}`}
                 </button>
               </div>
@@ -3769,7 +3783,7 @@ export default function CajaClient({
                         <p className="text-sm font-bold text-violet-900">Programa de Fidelidad</p>
                         <p className="text-xs text-violet-700 mt-0.5">
                           Saldo: <strong>{puntosFidelidadLab} punto{puntosFidelidadLab !== 1 ? 's' : ''}</strong>
-                          {' '}(equivale a L {valorLempirasDePuntos(puntosFidelidadLab).toFixed(2)} en laboratorio)
+                          {' '}(equivale a L {valorLempirasDePuntos(puntosFidelidadLab, fidelidadConfig).toFixed(2)} en laboratorio)
                         </p>
                         <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
                           <input
@@ -3802,8 +3816,10 @@ export default function CajaClient({
                               </span>
                             </div>
                             <p className="text-[11px] text-gray-500 leading-relaxed">
-                              Acumula 1 punto por cada L {LEMPIRAS_POR_PUNTO} en facturas.
-                              {' '}1 punto = L {VALOR_LEMPIRA_POR_PUNTO.toFixed(2)} de descuento en laboratorio.
+                              Acumula 1 punto por cada L {fidelidadConfig.lempiras_por_punto} en facturas.
+                              {' '}1 punto = L {fidelidadConfig.valor_lempira_por_punto.toFixed(2)} de descuento.
+                              {' '}Máx. canje: <strong>{fidelidadConfig.porcentaje_max_canje}%</strong> del total
+                              (hasta L {descMaxCanje.toFixed(2)} · {maxPtCanje} pts).
                             </p>
                           </div>
                         )}
@@ -3815,7 +3831,7 @@ export default function CajaClient({
                 {labGrupoCobro.pacienteId && puntosFidelidadLab === 0 && (
                   <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-gray-500">
                     <Gift className="w-3.5 h-3.5 inline mr-1 text-gray-400" />
-                    Sin puntos de fidelidad. Acumule 1 punto por cada L {LEMPIRAS_POR_PUNTO} facturados.
+                    Sin puntos de fidelidad. Acumule 1 punto por cada L {fidelidadConfig.lempiras_por_punto} facturados.
                   </div>
                 )}
 

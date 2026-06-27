@@ -3,6 +3,12 @@ import { getPerfilSucursal } from '@/lib/get-sucursal'
 
 export type AlertaTipo = 'danger' | 'warning' | 'info'
 
+export interface AlertaAccion {
+  label: string
+  href: string
+  variant?: 'primary' | 'secondary'
+}
+
 export interface Alerta {
   id:        string
   tipo:      AlertaTipo
@@ -11,6 +17,7 @@ export interface Alerta {
   mensaje:   string
   href:      string
   fecha?:    string
+  acciones?: AlertaAccion[]
 }
 
 function fmt(n: number) {
@@ -42,6 +49,7 @@ export async function getAlertas(): Promise<Alerta[]> {
     { data: labPendientes },
     { data: cxpVencidas },
     { data: consultasCobrar },
+    { data: sucursalesCai },
   ] = await Promise.all([
     filtroSuc(supabase
       .from('inventario')
@@ -157,6 +165,11 @@ export async function getAlertas(): Promise<Alerta[]> {
       .eq('estado', 'FINALIZADO')
       .eq('fecha', hoy)
       .limit(20)),
+
+    supabase
+      .from('sucursales')
+      .select('id, nombre, cai, fecha_limite, num_max, numero_inicial')
+      .not('cai', 'is', null),
   ])
 
   const alertas: Alerta[] = []
@@ -278,7 +291,26 @@ export async function getAlertas(): Promise<Alerta[]> {
       mensaje: `${consultasCobrar!.length} consulta(s) finalizada(s) esperando cobro`,
       href: '/ventas',
       fecha: hoy,
+      acciones: [{ label: 'Ir a Caja', href: '/ventas', variant: 'primary' }],
     })
+  }
+
+  // ── CAI por vencer o agotarse (riesgo fiscal) ────────────────
+  const en30 = en30dias
+  for (const s of sucursalesCai ?? []) {
+    if (s.fecha_limite && s.fecha_limite <= en30) {
+      const dias = Math.ceil((new Date(s.fecha_limite).getTime() - Date.now()) / 86400000)
+      alertas.push({
+        id: `cai-vence-${s.id}`,
+        tipo: dias <= 7 ? 'danger' : 'warning',
+        categoria: 'Facturación',
+        titulo: dias <= 0 ? 'CAI vencido' : 'CAI por vencer',
+        mensaje: `${s.nombre}: CAI vence ${s.fecha_limite}${dias <= 0 ? ' — ¡renovar urgente!' : ` (${dias}d)`}`,
+        href: '/facturacion',
+        fecha: s.fecha_limite,
+        acciones: [{ label: 'Ver facturación', href: '/facturacion', variant: 'primary' }],
+      })
+    }
   }
 
   // ── Planes médicos por vencer ────────────────────────────────
@@ -292,6 +324,10 @@ export async function getAlertas(): Promise<Alerta[]> {
       mensaje: `${pac?.nombre ?? ''} ${pac?.apellido1 ?? ''} — vence ${p.fecha_fin}`,
       href: '/membresias',
       fecha: p.fecha_fin,
+      acciones: [
+        { label: 'Renovar plan', href: `/membresias?renovar=${p.id}`, variant: 'primary' },
+        { label: 'Ver planes', href: '/membresias', variant: 'secondary' },
+      ],
     })
   }
 
@@ -307,6 +343,9 @@ export async function getAlertas(): Promise<Alerta[]> {
       mensaje: `${pac?.nombre ?? ''} ${pac?.apellido1 ?? ''} — ${fmt(cu.monto)} venció ${cu.fecha_vencimiento}`,
       href: `/ventas?membresia_pago=${cu.id}`,
       fecha: cu.fecha_vencimiento,
+      acciones: [
+        { label: 'Cobrar ahora', href: `/ventas?membresia_pago=${cu.id}`, variant: 'primary' },
+      ],
     })
   }
 
@@ -321,6 +360,9 @@ export async function getAlertas(): Promise<Alerta[]> {
       mensaje: `${pac?.nombre ?? ''} ${pac?.apellido1 ?? ''} — venció ${p.fecha_fin}`,
       href: '/membresias',
       fecha: p.fecha_fin,
+      acciones: [
+        { label: 'Renovar', href: `/membresias?renovar=${p.id}`, variant: 'primary' },
+      ],
     })
   }
 
@@ -333,6 +375,9 @@ export async function getAlertas(): Promise<Alerta[]> {
       titulo: 'Paciente frecuente sin plan',
       mensaje: `${p.nombre} — ${p.consultas} consultas en 90 días. Considere ofrecer plan médico.`,
       href: '/membresias',
+      acciones: [
+        { label: 'Registrar plan', href: '/membresias', variant: 'primary' },
+      ],
     })
   }
 

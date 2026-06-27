@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import ExpedienteClient from './expediente-client'
+import type { TimelineEvento } from '@/components/expediente-timeline'
 
 export const metadata = { title: 'Expediente Clínico' }
 
@@ -21,6 +22,7 @@ export default async function ExpedientePage({
     { data: analisisOrds },
     { data: antecedentes },
     { data: problemas },
+    { data: membresiasPac },
   ] = await Promise.all([
     // datos completos del paciente
     supabase
@@ -77,9 +79,27 @@ export default async function ExpedientePage({
       .eq('paciente_id', pacienteId)
       .neq('estado', 'resuelto')
       .order('created_at', { ascending: false }),
+
+    supabase
+      .from('membresias')
+      .select('id, fecha_inicio, fecha_fin, estado, numero_carnet, tipo:membresia_tipos(nombre)')
+      .eq('paciente_id', pacienteId)
+      .order('fecha_inicio', { ascending: false }),
   ])
 
   if (!paciente) notFound()
+
+  const memIds = (membresiasPac ?? []).map(m => m.id)
+  let pagosPlan: { id: number; numero_cuota: number; fecha_vencimiento: string; monto: number; estado: string; fecha_pago?: string | null }[] = []
+  if (memIds.length) {
+    const { data } = await supabase
+      .from('membresia_pagos')
+      .select('id, numero_cuota, fecha_vencimiento, monto, estado, fecha_pago')
+      .in('membresia_id', memIds)
+      .order('fecha_vencimiento', { ascending: false })
+      .limit(50)
+    pagosPlan = data ?? []
+  }
 
   const coloniaJoin = paciente.colonias
   const coloniaNombre = Array.isArray(coloniaJoin)
@@ -93,6 +113,51 @@ export default async function ExpedientePage({
     colonia_nombre: coloniaNombre ?? null,
   }
 
+  const timeline: TimelineEvento[] = []
+
+  for (const c of consultas ?? []) {
+    timeline.push({
+      id: `c-${c.id}`,
+      fecha: c.fecha,
+      hora: c.hora,
+      tipo: 'consulta',
+      titulo: c.tipo_nombre || 'Consulta',
+      detalle: [c.doctor, c.impresion].filter(Boolean).join(' · ').slice(0, 120),
+      href: '/consultas',
+    })
+  }
+  for (const a of analisisOrds ?? []) {
+    timeline.push({
+      id: `l-${a.id}`,
+      fecha: a.fecha,
+      tipo: 'lab',
+      titulo: `Lab ${a.no_analisis || a.id}`,
+      detalle: a.estado_lab || undefined,
+      href: '/laboratorio',
+    })
+  }
+  for (const m of membresiasPac ?? []) {
+    const tipo = Array.isArray(m.tipo) ? m.tipo[0] : m.tipo
+    timeline.push({
+      id: `m-${m.id}`,
+      fecha: m.fecha_inicio,
+      tipo: 'plan',
+      titulo: `Plan: ${(tipo as { nombre?: string })?.nombre || 'Médico'}`,
+      detalle: `${m.fecha_inicio} → ${m.fecha_fin} · ${m.estado}`,
+      href: '/membresias',
+    })
+  }
+  for (const p of pagosPlan ?? []) {
+    timeline.push({
+      id: `p-${p.id}`,
+      fecha: p.fecha_pago || p.fecha_vencimiento,
+      tipo: 'pago',
+      titulo: `Cuota #${p.numero_cuota} — ${p.estado}`,
+      detalle: `L. ${Number(p.monto).toFixed(2)}`,
+      href: p.estado !== 'pagado' ? `/ventas?membresia_pago=${p.id}` : '/membresias',
+    })
+  }
+
   return (
     <ExpedienteClient
       paciente={pacienteConAntecedentes}
@@ -100,6 +165,7 @@ export default async function ExpedientePage({
       consultas={consultas || []}
       analisis={analisisOrds || []}
       problemasActivos={problemas || []}
+      timeline={timeline}
     />
   )
 }

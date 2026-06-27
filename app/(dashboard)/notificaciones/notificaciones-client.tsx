@@ -150,8 +150,7 @@ export default function NotificacionesClient({ alertasIniciales }: Props) {
             {items.map(a => {
               const st = TIPO_STYLE[a.tipo]
               return (
-                <Link key={a.id} href={a.href}
-                  className={`flex items-start gap-4 px-4 py-3.5 hover:bg-slate-50 transition group ${st.bg}`}>
+                <div key={a.id} className={`flex items-start gap-4 px-4 py-3.5 hover:bg-slate-50 transition group ${st.bg}`}>
                   <div className="mt-0.5">{st.icon}</div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -162,9 +161,25 @@ export default function NotificacionesClient({ alertasIniciales }: Props) {
                     </div>
                     <p className="text-sm text-slate-600 mt-0.5">{a.mensaje}</p>
                     {a.fecha && <p className="text-xs text-slate-400 mt-1">{a.fecha}</p>}
+                    {(a.acciones?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {a.acciones!.map((ac, i) => (
+                          <Link key={i} href={ac.href}
+                            className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition ${
+                              ac.variant === 'primary'
+                                ? 'bg-slate-800 text-white hover:bg-slate-900'
+                                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}>
+                            {ac.label}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 mt-1 flex-shrink-0 transition" />
-                </Link>
+                  <Link href={a.href} className="mt-1 flex-shrink-0 text-slate-300 hover:text-slate-500 transition">
+                    <ChevronRight className="w-4 h-4" />
+                  </Link>
+                </div>
               )
             })}
           </div>

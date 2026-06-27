@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useRef, Fragment } from 'react'
+import { useState, useMemo, useRef, Fragment, useEffect } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -24,9 +24,10 @@ interface Tipo        {
   consulta_gratis?: boolean
   pct_consulta?: number; pct_laboratorio?: number
   pct_medicamentos?: number; pct_servicios?: number
+  max_beneficiarios?: number
   membresia_beneficios: Beneficio[]
 }
-interface Beneficiario { id?: number; nombre: string; parentesco: string; activo: boolean }
+interface Beneficiario { id?: number; nombre: string; parentesco: string; activo: boolean; fecha_inicio?: string; fecha_fin?: string }
 interface Membresia   {
   id: number; paciente_id: number; tipo_id: number
   fecha_inicio: string; fecha_fin: string
@@ -61,6 +62,8 @@ interface Props {
   hoy:             string
   esSuperAdmin?:   boolean
   esAdmin?:        boolean
+  renovarIdInicial?: number | null
+  descuentosPlan?: { id: number; fecha: string; paciente_nombre?: string; concepto?: string; descuento_monto: number; descuento_motivo?: string }[]
 }
 
 /* ══════════════════ HELPERS ══════════════════════════════════ */
@@ -136,6 +139,7 @@ function mensajeError(err: unknown) {
 export default function MembresiasClient({
   tipos, membresias: init, pacientes, sucursales,
   pagos: initPagos, sucursalDefault, hoy, esSuperAdmin = false, esAdmin = false,
+  renovarIdInicial = null, descuentosPlan = [],
 }: Props) {
   const supabase  = createClient()
   const confirmDialog = useConfirm()
@@ -173,6 +177,7 @@ export default function MembresiasClient({
   const tipoVacio = {
     nombre: '', precio: 0, duracion_dias: 30, descripcion: '', activo: true,
     consulta_gratis: false, pct_consulta: 0, pct_laboratorio: 0, pct_medicamentos: 0, pct_servicios: 0,
+    max_beneficiarios: 0,
   }
   const [modalTipo,   setModalTipo]   = useState(false)
   const [formTipo,    setFormTipo]    = useState(tipoVacio)
@@ -195,6 +200,18 @@ export default function MembresiasClient({
   /* ── duplicado / renovación inteligente ── */
   const [planDuplicado, setPlanDuplicado] = useState<Membresia | null>(null)
   const [renovarTarget, setRenovarTarget] = useState<Membresia | null>(null)
+
+  useEffect(() => {
+    if (!renovarIdInicial) return
+    const m = membresias.find(x => x.id === renovarIdInicial)
+    if (m && esAdmin) setRenovarTarget(m)
+  }, [renovarIdInicial, membresias, esAdmin])
+
+  const rentabilidad = useMemo(() => {
+    const ingresosCuotas = pagos.filter(p => p.estado === 'pagado').reduce((s, p) => s + p.monto, 0)
+    const descuentosOtorgados = descuentosPlan.reduce((s, d) => s + Number(d.descuento_monto || 0), 0)
+    return { ingresosCuotas, descuentosOtorgados, neto: ingresosCuotas - descuentosOtorgados }
+  }, [pagos, descuentosPlan])
 
   /* ════════ CÁLCULOS MEMOIZADOS ════════════════════════════ */
   const tipoSel = tiposList.find(t => t.id === formMem.tipo_id)
@@ -384,6 +401,13 @@ export default function MembresiasClient({
     if (!formMem.tipo_id)     return setErrorMem('Selecciona un plan')
     if (!formMem.fecha_inicio || !formMem.fecha_fin) return setErrorMem('Completa las fechas')
 
+    const tipoActualPre = tiposList.find(t => t.id === formMem.tipo_id)
+    const maxBen = tipoActualPre?.max_beneficiarios ?? 0
+    const benCount = beneficiarios.filter(b => b.nombre.trim()).length
+    if (maxBen > 0 && benCount > maxBen) {
+      return setErrorMem(`Este plan permite máximo ${maxBen} beneficiario(s). Tiene ${benCount}.`)
+    }
+
     const idReemplazo = reemplazarId
 
     if (!editMemId && !idReemplazo) {
@@ -438,8 +462,15 @@ export default function MembresiasClient({
         let benefRows: Beneficiario[] = []
         if (benefs.length) {
           const { data: insertedBenefs, error: eBenefs } = await supabase.from('membresia_beneficiarios').insert(
-            benefs.map(b => ({ membresia_id: editMemId, nombre: b.nombre, parentesco: b.parentesco, activo: true }))
-          ).select('id, nombre, parentesco, activo')
+            benefs.map(b => ({
+              membresia_id: editMemId,
+              nombre: b.nombre,
+              parentesco: b.parentesco,
+              activo: true,
+              fecha_inicio: b.fecha_inicio || formMem.fecha_inicio,
+              fecha_fin: b.fecha_fin || formMem.fecha_fin,
+            }))
+          ).select('id, nombre, parentesco, activo, fecha_inicio, fecha_fin')
           if (eBenefs) throw eBenefs
           benefRows = (insertedBenefs ?? []) as Beneficiario[]
         }
@@ -469,8 +500,15 @@ export default function MembresiasClient({
         let benefRows: Beneficiario[] = []
         if (benefs.length && newM?.id) {
           const { data: insertedBenefs, error: eBenefs } = await supabase.from('membresia_beneficiarios').insert(
-            benefs.map(b => ({ membresia_id: newM.id, nombre: b.nombre, parentesco: b.parentesco, activo: true }))
-          ).select('id, nombre, parentesco, activo')
+            benefs.map(b => ({
+              membresia_id: newM.id,
+              nombre: b.nombre,
+              parentesco: b.parentesco,
+              activo: true,
+              fecha_inicio: b.fecha_inicio || formMem.fecha_inicio,
+              fecha_fin: b.fecha_fin || formMem.fecha_fin,
+            }))
+          ).select('id, nombre, parentesco, activo, fecha_inicio, fecha_fin')
           if (eBenefs) throw eBenefs
           benefRows = (insertedBenefs ?? []) as Beneficiario[]
         }
@@ -621,6 +659,7 @@ export default function MembresiasClient({
             pct_laboratorio:  formTipo.pct_laboratorio,
             pct_medicamentos: formTipo.pct_medicamentos,
             pct_servicios:    formTipo.pct_servicios,
+            max_beneficiarios: formTipo.max_beneficiarios || 0,
           })
           .eq('id', editTipoId)
         if (eUpd) throw new Error(eUpd.message)
@@ -652,6 +691,7 @@ export default function MembresiasClient({
             pct_laboratorio:  formTipo.pct_laboratorio,
             pct_medicamentos: formTipo.pct_medicamentos,
             pct_servicios:    formTipo.pct_servicios,
+            max_beneficiarios: formTipo.max_beneficiarios || 0,
           })
           .select('*')
           .single()
@@ -1084,6 +1124,49 @@ export default function MembresiasClient({
               </div>
             ))}
           </div>
+
+          <div className="bg-white border rounded-2xl p-5">
+            <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-emerald-600" /> Rentabilidad del módulo (90 días)
+            </h3>
+            <div className="grid sm:grid-cols-3 gap-3 mb-4">
+              <div className="rounded-xl bg-green-50 border border-green-100 p-3">
+                <p className="text-xs text-green-700">Ingresos por cuotas</p>
+                <p className="text-xl font-bold text-green-800">{fmt(rentabilidad.ingresosCuotas)}</p>
+              </div>
+              <div className="rounded-xl bg-amber-50 border border-amber-100 p-3">
+                <p className="text-xs text-amber-700">Descuentos otorgados en caja</p>
+                <p className="text-xl font-bold text-amber-800">{fmt(rentabilidad.descuentosOtorgados)}</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 border p-3">
+                <p className="text-xs text-slate-600">Balance estimado</p>
+                <p className={`text-xl font-bold ${rentabilidad.neto >= 0 ? 'text-slate-800' : 'text-red-700'}`}>
+                  {fmt(rentabilidad.neto)}
+                </p>
+              </div>
+            </div>
+            {descuentosPlan.length > 0 && (
+              <div className="max-h-40 overflow-y-auto text-xs">
+                <table className="w-full">
+                  <thead><tr className="text-gray-500 border-b">
+                    <th className="text-left py-1">Fecha</th>
+                    <th className="text-left py-1">Paciente</th>
+                    <th className="text-right py-1">Descuento</th>
+                  </tr></thead>
+                  <tbody>
+                    {descuentosPlan.slice(0, 15).map(d => (
+                      <tr key={d.id} className="border-b border-gray-50">
+                        <td className="py-1">{d.fecha}</td>
+                        <td className="py-1">{d.paciente_nombre || '—'}</td>
+                        <td className="py-1 text-right font-medium text-amber-700">{fmt(Number(d.descuento_monto))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           <div className="grid md:grid-cols-2 gap-4">
 
             {/* ranking de planes */}
@@ -1397,13 +1480,19 @@ export default function MembresiasClient({
                   </button>
                 </div>
                 {beneficiarios.map((b, i) => (
-                  <div key={i} className="flex gap-2 mb-2 items-center">
+                  <div key={i} className="flex flex-wrap gap-2 mb-2 items-center">
                     <input value={b.nombre} placeholder="Nombre completo"
                       onChange={e => setBeneficiarios(p => p.map((x, j) => j === i ? { ...x, nombre: e.target.value } : x))}
-                      className="flex-1 border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                      className="flex-1 min-w-[120px] border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
                     <input value={b.parentesco} placeholder="Parentesco"
                       onChange={e => setBeneficiarios(p => p.map((x, j) => j === i ? { ...x, parentesco: e.target.value } : x))}
-                      className="w-28 border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                      className="w-24 border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                    <input type="date" value={b.fecha_inicio || formMem.fecha_inicio} title="Vigencia desde"
+                      onChange={e => setBeneficiarios(p => p.map((x, j) => j === i ? { ...x, fecha_inicio: e.target.value } : x))}
+                      className="w-32 border rounded-lg px-1.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                    <input type="date" value={b.fecha_fin || formMem.fecha_fin} title="Vigencia hasta"
+                      onChange={e => setBeneficiarios(p => p.map((x, j) => j === i ? { ...x, fecha_fin: e.target.value } : x))}
+                      className="w-32 border rounded-lg px-1.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-200" />
                     <button onClick={() => setBeneficiarios(p => p.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
                       <Trash2 className="w-4 h-4"/>
                     </button>
@@ -1450,6 +1539,14 @@ export default function MembresiasClient({
                   <input type="number" min={1} value={formTipo.duracion_dias}
                     onChange={e => setFormTipo(p => ({ ...p, duracion_dias: Number(e.target.value) }))}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Máx. beneficiarios</label>
+                  <input type="number" min={0} value={formTipo.max_beneficiarios ?? 0}
+                    onChange={e => setFormTipo(p => ({ ...p, max_beneficiarios: Number(e.target.value) }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    title="0 = sin límite" />
+                  <p className="text-[10px] text-gray-400 mt-0.5">0 = sin límite</p>
                 </div>
                 <div className="col-span-2">
                   <label className="text-xs font-semibold text-gray-600 uppercase mb-1 block">Descripción</label>

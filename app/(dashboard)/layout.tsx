@@ -1,8 +1,10 @@
+import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { createClient } from '@/lib/supabase/server'
 
 import { getPerfilSucursal, getModulosPermitidos } from '@/lib/get-sucursal'
+import { verificarAccesoModulo } from '@/lib/modulo-acceso'
 
 import Sidebar from '@/components/sidebar'
 
@@ -27,7 +29,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!user) redirect('/login')
 
-
+  const pathname = (await headers()).get('x-pathname') ?? ''
+  await verificarAccesoModulo(pathname)
 
   const perfilAuth = await getPerfilSucursal()
 

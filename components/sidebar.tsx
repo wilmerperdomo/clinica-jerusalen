@@ -8,7 +8,7 @@ import {
   Package, Pill, ShoppingCart, Receipt, CreditCard,
   BarChart3, Settings, LogOut, ChevronRight,
   FileText, BookOpen, CalendarDays, Building2, KeyRound, X, Eye, EyeOff, Truck, Menu, Bell, ClipboardList,
-  Wallet, PieChart, MapPin, ShieldCheck, Tag, Megaphone,
+  Wallet, PieChart, MapPin, ShieldCheck, Tag, Megaphone, Gift,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, getInitials } from '@/lib/utils'
@@ -51,6 +51,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'FIDELIZACIÓN',
     items: [
       { href: '/membresias',   label: 'Planes Médicos', icon: CreditCard   },
+      { href: '/fidelidad',    label: 'Puntos Fidelidad', icon: Gift       },
       { href: '/promociones',  label: 'Promociones',    icon: Megaphone    },
       { href: '/cotizaciones', label: 'Cotizaciones',   icon: ClipboardList },
       { href: '/facturacion',  label: 'Facturación',    icon: FileText     },
@@ -135,6 +136,9 @@ export default function Sidebar({
     if (href === '/precios') {
       return ['ventas', 'laboratorio', 'productos', 'inventario', 'cotizaciones']
         .some(m => modulosPermitidos.includes(m))
+    }
+    if (href === '/fidelidad') {
+      return Boolean(esAdmin || esSuperAdmin)
     }
     const clave = href.replace('/', '') || 'dashboard'
     return modulosPermitidos.includes(clave)

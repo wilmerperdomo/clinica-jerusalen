@@ -7,6 +7,7 @@ import {
   puedeAtenderConsulta,
 } from '@/lib/consultas-utils'
 import { buildMembresiasMap } from '@/lib/membresia-utils'
+import { UMBRAL_CUOTAS_MORA } from '@/lib/membresia-mora'
 import ConsultasClient from './consultas-client'
 
 export const dynamic = 'force-dynamic'
@@ -133,7 +134,7 @@ export default async function ConsultasPage() {
 
     supabase
       .from('membresias')
-      .select('paciente_id, tipo_id, fecha_fin, numero_carnet, tipo:membresia_tipos(nombre)')
+      .select('id, paciente_id, tipo_id, fecha_fin, numero_carnet, tipo:membresia_tipos(nombre)')
       .eq('estado', 'activo')
       .gte('fecha_fin', hoy),
 
@@ -150,7 +151,22 @@ export default async function ConsultasPage() {
     beneficiosPorTipo[b.tipo_id].push(b.descripcion)
   }
 
-  const membresiasMap = buildMembresiasMap(membresiasActivas ?? [], beneficiosPorTipo)
+  const { data: cuotasMorosas } = await supabase
+    .from('membresia_pagos')
+    .select('membresia_id')
+    .in('estado', ['pendiente', 'vencido'])
+    .lt('fecha_vencimiento', hoy)
+  const moraPorMem = new Map<number, number>()
+  for (const c of cuotasMorosas ?? []) {
+    moraPorMem.set(c.membresia_id, (moraPorMem.get(c.membresia_id) ?? 0) + 1)
+  }
+  const activasSinMora = (membresiasActivas ?? []).filter(m => {
+    const id = (m as { id?: number }).id
+    if (!id) return true
+    return (moraPorMem.get(id) ?? 0) < UMBRAL_CUOTAS_MORA
+  })
+
+  const membresiasMap = buildMembresiasMap(activasSinMora, beneficiosPorTipo)
 
   const listasMap: Record<number, string> = {}
   for (const l of listasPrecio ?? []) listasMap[l.id] = l.nombre

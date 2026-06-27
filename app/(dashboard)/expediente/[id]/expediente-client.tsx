@@ -20,6 +20,7 @@ import { linkWhatsAppMensaje, linkEmailMensaje, mensajePublicidad, nombrePacient
 import { etiquetaEnfoque, claseBadgeEnfoque, type EnfoqueClinico } from '@/lib/consulta-especialidad-utils'
 import ExpedientePediatriaPanel from '@/components/expediente-pediatria-panel'
 import ExpedientePrenatalPanel from '@/components/expediente-prenatal-panel'
+import ExpedienteTimeline, { type TimelineEvento } from '@/components/expediente-timeline'
 
 /* ── Tipos ─────────────────────────────────────────────────────── */
 interface Paciente {
@@ -80,6 +81,7 @@ interface Props {
   consultas: Consulta[]
   analisis:  Analisis[]
   problemasActivos?: { descripcion: string; cie10_codigo?: string | null; estado?: string }[]
+  timeline?: TimelineEvento[]
 }
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -391,8 +393,8 @@ function BloqueAntecedente({ titulo, texto }: { titulo: string; texto?: string |
   )
 }
 
-export default function ExpedienteClient({ paciente, antecedentes, consultas, analisis, problemasActivos = [] }: Props) {
-  const [tab, setTab]         = useState<'resumen'|'historial'|'laboratorio'|'pediatria'|'prenatal'>('resumen')
+export default function ExpedienteClient({ paciente, antecedentes, consultas, analisis, problemasActivos = [], timeline = [] }: Props) {
+  const [tab, setTab]         = useState<'resumen'|'historial'|'laboratorio'|'pediatria'|'prenatal'|'timeline'>('resumen')
   const [buscar, setBuscar]   = useState('')
   const [fechaI, setFechaI]   = useState('')
   const [fechaF, setFechaF]   = useState('')
@@ -564,6 +566,7 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
             { id: 'historial',    label: `Consultas (${consultas.length})`,                icon: Stethoscope },
             { id: 'pediatria',    label: 'Pediatría',                                      icon: Baby },
             { id: 'prenatal',     label: 'Prenatal',                                       icon: Heart },
+            { id: 'timeline',     label: `Línea de tiempo (${timeline.length})`,           icon: Activity },
             { id: 'laboratorio',  label: `Laboratorio (${analisis.length})`,               icon: FlaskConical },
           ] as const).map(t => (
             <button
@@ -724,6 +727,14 @@ export default function ExpedienteClient({ paciente, antecedentes, consultas, an
             apellido2={paciente.apellido2}
             fechaNac={paciente.fecha_nac}
           />
+        )}
+
+        {/* ── LÍNEA DE TIEMPO ───────────────────────────────────── */}
+        {tab === 'timeline' && (
+          <div className="p-4 sm:p-5">
+            <p className="text-xs text-slate-500 mb-4">Consultas, laboratorio, planes médicos y cobros en un solo historial.</p>
+            <ExpedienteTimeline eventos={timeline} />
+          </div>
         )}
 
         {/* ── LABORATORIO ───────────────────────────────────────── */}

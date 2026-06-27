@@ -199,6 +199,17 @@ export default function PlanillaClient({
     alert('Período cerrado y liquidaciones generadas. Pago programado para el día 1 del mes siguiente.')
   }
 
+  async function importarDesdeCaja() {
+    try {
+      const res = await fetch(`/api/planilla/importar-caja?anio=${anio}&mes=${mes}&quincena=${quincena}`)
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || 'Error al importar'); return }
+      alert(`Se encontraron ${data.lineas?.length ?? 0} líneas de comisión en caja para este período.\n\nRevise producción médica y cierre la quincena.`)
+    } catch {
+      alert('No se pudo consultar la caja')
+    }
+  }
+
   const reglas = comisiones.length ? comisiones : COMISIONES_DEFAULT
 
   return (
@@ -218,6 +229,9 @@ export default function PlanillaClient({
           <>
             <ModuleBtnGhost onClick={cargarProduccion} disabled={pending}>
               <RefreshCw className={`w-4 h-4 ${pending ? 'animate-spin' : ''}`} /> Actualizar
+            </ModuleBtnGhost>
+            <ModuleBtnGhost onClick={() => void importarDesdeCaja()}>
+              <DollarSign className="w-4 h-4" /> Importar desde Caja
             </ModuleBtnGhost>
             {periodoActual?.estado !== 'CERRADO' && (
               <ModuleBtnPrimary onClick={cerrarPeriodo}>

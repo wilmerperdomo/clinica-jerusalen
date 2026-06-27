@@ -1,12 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-/**
- * Middleware liviano para Vercel Edge.
- * La sesión y redirecciones se manejan en los layouts (dashboard / auth).
- * Evita MIDDLEWARE_INVOCATION_FAILED con @supabase/ssr en Edge.
- */
-export async function middleware(_request: NextRequest) {
-  return NextResponse.next()
+export async function middleware(request: NextRequest) {
+  const response = NextResponse.next()
+  response.headers.set('x-pathname', request.nextUrl.pathname)
+  return response
 }
 
 export const config = {
