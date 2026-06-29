@@ -75,7 +75,23 @@ export interface ConsultaDetalleCobro {
   precio_venta: number
 }
 
-/** Carga medicamentos de la consulta con precio de catálogo (soporta esquema legacy). */
+/** Lee un campo numérico de forma tolerante (acepta nombres alternativos). */
+function leerNum(row: Record<string, unknown>, ...keys: string[]): number {
+  for (const k of keys) {
+    const v = row[k]
+    if (v != null && v !== '') {
+      const n = Number(v)
+      if (!Number.isNaN(n)) return n
+    }
+  }
+  return 0
+}
+
+/**
+ * Carga medicamentos de la consulta con precio de catálogo.
+ * Usa select('*') para tolerar ambos esquemas (consulta_id/producto_id y
+ * legacy id_consulta/id_producto) sin fallar por columnas inexistentes.
+ */
 export async function cargarConsultaDetalleConPrecios(
   sb: SupabaseClient,
   consultaId: number,
@@ -85,21 +101,24 @@ export async function cargarConsultaDetalleConPrecios(
 
   let { data: dets } = await sb
     .from('consulta_detalle')
-    .select('id, no_producto, cant, id_producto, producto_id, precio, precio_venta')
+    .select('*')
     .eq(col, val)
 
+  // Fallback al esquema nuevo (consulta_id INTEGER) si el legacy no devolvió filas.
   if (!dets?.length && col !== 'consulta_id') {
     const alt = await sb
       .from('consulta_detalle')
-      .select('id, no_producto, cant, id_producto, producto_id, precio, precio_venta')
+      .select('*')
       .eq('consulta_id', consultaId)
     dets = alt.data ?? []
   }
 
+  const filas = (dets ?? []) as Record<string, unknown>[]
+
   const prodIds = [
     ...new Set(
-      (dets ?? [])
-        .map(d => Number(d.producto_id ?? d.id_producto))
+      filas
+        .map(d => leerNum(d, 'producto_id', 'id_producto'))
         .filter(id => id > 0),
     ),
   ]
@@ -115,14 +134,15 @@ export async function cargarConsultaDetalleConPrecios(
     }
   }
 
-  return (dets ?? []).map(d => {
-    const pid = Number(d.producto_id ?? d.id_producto) || undefined
-    const precioFila = Number(d.precio_venta ?? d.precio) || 0
+  return filas.map(d => {
+    const pid = leerNum(d, 'producto_id', 'id_producto') || undefined
+    // Algunos esquemas guardan el precio en la fila; si no, se toma del catálogo.
+    const precioFila = leerNum(d, 'precio_venta', 'precio', 'precio_unitario')
     const precioCat = pid ? (precioMap.get(pid) ?? 0) : 0
     return {
-      id: d.id as number | undefined,
+      id: d.id != null ? Number(d.id) : undefined,
       no_producto: String(d.no_producto ?? ''),
-      cant: Number(d.cant) || 1,
+      cant: leerNum(d, 'cant', 'cantidad') || 1,
       producto_id: pid,
       precio_venta: precioFila > 0 ? precioFila : precioCat,
     }
