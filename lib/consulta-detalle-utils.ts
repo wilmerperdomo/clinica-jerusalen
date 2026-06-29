@@ -68,7 +68,7 @@ export function filasInsertConsultaDetalle(
 }
 
 export interface ConsultaDetalleCobro {
-  id?: number
+  id: number
   no_producto: string
   cant: number
   producto_id?: number
@@ -85,6 +85,81 @@ function leerNum(row: Record<string, unknown>, ...keys: string[]): number {
     }
   }
   return 0
+}
+
+/** Normaliza texto para comparar nombres de medicamento (sin acentos, minúsculas). */
+function normNombre(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export interface ProductoResuelto {
+  id: number
+  precio_venta: number
+  nombre: string
+}
+
+/**
+ * Resuelve el producto del catálogo a partir del nombre escrito a mano en la receta.
+ * Empareja contra productos.nombre y productos.nombre_generico de forma tolerante.
+ * Solo acepta coincidencias fuertes (igualdad o prefijo) para no descontar de un
+ * producto equivocado. Devuelve un mapa nombreOriginal → producto.
+ */
+export async function resolverProductosPorNombre(
+  sb: SupabaseClient,
+  nombres: string[],
+): Promise<Map<string, ProductoResuelto>> {
+  const out = new Map<string, ProductoResuelto>()
+  const unicos = [...new Set(nombres.map(n => (n || '').trim()).filter(Boolean))]
+
+  for (const original of unicos) {
+    // Parte significativa: antes de coma o paréntesis (ej. "Nobiliax 75mg, Tabletas").
+    const base = normNombre(original).split(/[,(]/)[0].trim()
+    if (base.length < 3) continue
+
+    // Término de búsqueda: primeras 2 palabras, solo alfanumérico (filtro ilike seguro).
+    const term = base
+      .split(' ')
+      .slice(0, 2)
+      .join(' ')
+      .replace(/[^a-z0-9 ]/gi, ' ')
+      .trim()
+    if (term.length < 3) continue
+
+    const { data } = await sb
+      .from('productos')
+      .select('id, nombre, nombre_generico, precio_venta')
+      .or(`nombre.ilike.%${term}%,nombre_generico.ilike.%${term}%`)
+      .limit(15)
+
+    if (!data?.length) continue
+
+    let best: ProductoResuelto | null = null
+    let bestScore = 0
+    for (const c of data) {
+      const nc = normNombre(String(c.nombre ?? ''))
+      const ng = normNombre(String(c.nombre_generico ?? ''))
+      let score = 0
+      if (base === nc || (ng && base === ng)) score = 3
+      else if (
+        nc.startsWith(base) || base.startsWith(nc) ||
+        (ng && (ng.startsWith(base) || base.startsWith(ng)))
+      ) score = 2
+      if (score > bestScore) {
+        bestScore = score
+        best = { id: Number(c.id), precio_venta: Number(c.precio_venta) || 0, nombre: String(c.nombre ?? '') }
+      }
+    }
+
+    // Solo coincidencias fuertes (igualdad o prefijo). Evita descuentos erróneos.
+    if (best && bestScore >= 2) out.set(original, best)
+  }
+
+  return out
 }
 
 /**
@@ -134,17 +209,35 @@ export async function cargarConsultaDetalleConPrecios(
     }
   }
 
+  // Medicamentos escritos a mano (sin producto_id) → emparejar por nombre con el
+  // catálogo para que tomen precio y se descuenten del inventario.
+  const nombresSinPid = filas
+    .filter(d => !leerNum(d, 'producto_id', 'id_producto'))
+    .map(d => String(d.no_producto ?? ''))
+    .filter(Boolean)
+  const matchPorNombre = nombresSinPid.length
+    ? await resolverProductosPorNombre(sb, nombresSinPid)
+    : new Map<string, ProductoResuelto>()
+
   return filas.map(d => {
-    const pid = leerNum(d, 'producto_id', 'id_producto') || undefined
+    let pid = leerNum(d, 'producto_id', 'id_producto') || undefined
+    let precioResuelto = 0
+    if (!pid) {
+      const m = matchPorNombre.get(String(d.no_producto ?? ''))
+      if (m) {
+        pid = m.id
+        precioResuelto = m.precio_venta
+      }
+    }
     // Algunos esquemas guardan el precio en la fila; si no, se toma del catálogo.
     const precioFila = leerNum(d, 'precio_venta', 'precio', 'precio_unitario')
-    const precioCat = pid ? (precioMap.get(pid) ?? 0) : 0
+    const precioCat = pid ? (precioMap.get(pid) ?? precioResuelto) : 0
     return {
-      id: d.id != null ? Number(d.id) : undefined,
+      id: d.id != null ? Number(d.id) : 0,
       no_producto: String(d.no_producto ?? ''),
       cant: leerNum(d, 'cant', 'cantidad') || 1,
       producto_id: pid,
-      precio_venta: precioFila > 0 ? precioFila : precioCat,
+      precio_venta: precioFila > 0 ? precioFila : (precioCat || precioResuelto),
     }
   })
 }
