@@ -180,11 +180,17 @@ const round2 = (n: number): number => parseFloat((n || 0).toFixed(2))
  * descuento por edad y el de membresía (consulta gratis manda).
  * Devuelve cada línea con su % y motivo, más subtotal/descuento/total.
  */
+export interface OpcionesDesgloseCobro {
+  /** Descuento manual % por categoría (caja / administrador) */
+  pctManualPorCategoria?: Partial<Record<CategoriaCobro, number>>
+}
+
 export function desglosarLineasCobro(
   lineas: { categoria: CategoriaCobro; bruto: number }[],
   pctEdad: number,
   motivoEdad: string,
   b?: BeneficiosMembresia | null,
+  opciones?: OpcionesDesgloseCobro,
 ): { lineas: LineaCobroDesc[]; subtotal: number; descTotal: number; total: number; membAplicada: boolean } {
   let subtotal = 0
   let descTotal = 0
@@ -193,7 +199,12 @@ export function desglosarLineasCobro(
   const out: LineaCobroDesc[] = []
   for (const l of lineas) {
     const bruto = Math.max(0, l.bruto || 0)
-    const { pct, motivo } = descuentoEfectivo(l.categoria, pctEdad, motivoEdad, b)
+    const auto = descuentoEfectivo(l.categoria, pctEdad, motivoEdad, b)
+    const manual = Math.max(0, Math.min(100, opciones?.pctManualPorCategoria?.[l.categoria] ?? 0))
+    const pct = Math.min(100, Math.max(auto.pct, manual))
+    let motivo = auto.motivo
+    if (manual > auto.pct) motivo = 'Desc. línea'
+    else if (pct > 0 && !motivo) motivo = motivoEdad || 'Descuento'
     const descMonto = round2(bruto * pct / 100)
     const neto = round2(bruto - descMonto)
     if (motivo === 'Plan médico' || motivo === 'Consulta gratis') membAplicada = true

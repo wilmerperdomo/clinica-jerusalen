@@ -11,6 +11,8 @@ export const FORM_MOV_VACIO: FormMovimientoVenta = {
   monto: '',
   forma_pago: 'EFECTIVO',
   referencia_pago: '',
+  banco: '',
+  monto_efectivo: '',
   nota: '',
   descuento_pct: '0',
   descuento_motivo: '',

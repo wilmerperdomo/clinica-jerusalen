@@ -12,7 +12,15 @@ import ConsultasClient from './consultas-client'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ConsultasPage() {
+export default async function ConsultasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ paciente?: string; nuevo?: string }>
+}) {
+  const params = await searchParams
+  const pacientePrecarga = params.paciente ? parseInt(params.paciente, 10) || null : null
+  const abrirNuevaConsulta = params.nuevo === '1'
+
   const supabase = await createClient()
   const { userId, sucursalId, esSuperAdmin, esAdmin, sucursalNombre, rol, rolId } =
     await getPerfilSucursal()
@@ -205,6 +213,8 @@ export default async function ConsultasPage() {
       membresiasMap={membresiasMap}
       listasMap={listasMap}
       labPreciosLista={labPreciosLista}
+      pacientePrecarga={pacientePrecarga}
+      abrirNuevaConsulta={abrirNuevaConsulta}
     />
   )
 }

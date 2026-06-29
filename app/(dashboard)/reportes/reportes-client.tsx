@@ -12,12 +12,15 @@ import {
 import { exportarCSV, fmtReporte, imprimirReporte } from '@/lib/reporte-utils'
 import { ModuleShell, ModuleHero, ModuleContent } from '@/components/module-layout'
 import ReportesEjecutivo from '@/components/reportes/reportes-ejecutivo'
+import ReportesPacientesPro from '@/components/reportes/reportes-pacientes-pro'
+import { agruparTransferenciasPorBanco, listarVouchersTarjeta } from '@/lib/reportes-pagos'
 
 /* ─── tipos ─────────────────────────────────────────────── */
 interface Movimiento {
   tipo: string; concepto: string; forma_pago: string
   monto: number; monto_bruto?: number; descuento_monto?: number
-  descuento_motivo?: string; paciente_nombre?: string
+  descuento_motivo?: string; paciente_nombre?: string; paciente_id?: number
+  referencia_pago?: string | null
   fecha: string; hora?: string; anulado: boolean; sucursal_id?: number
 }
 interface Sesion {
@@ -27,11 +30,13 @@ interface Sesion {
   sucursal_id?: number; sucursal?: { nombre: string }
 }
 interface Cita {
-  id: number; estado: string; tipo_consulta?: string; fecha: string; hora?: string
-  paciente?: { nombre: string; apellido1: string }
+  id: number; paciente_id?: number; estado: string; tipo_consulta?: string; fecha: string; hora?: string
+  paciente?: { id?: number; nombre: string; apellido1: string; celular?: string; telefono?: string }
 }
+interface CitaHist { paciente_id: number | null; fecha: string; estado: string }
+interface PacienteContacto { id: number; nombre: string; apellido1: string; celular?: string; telefono?: string }
 interface LabOrden {
-  id: number; estado?: string; pagado?: boolean; entregado?: boolean
+  id: number; paciente_id?: number; estado?: string; pagado?: boolean; entregado?: boolean
   fecha_orden?: string
   paciente?: { nombre: string; apellido1: string }
   analisis?: { nombre: string; costo: number }
@@ -78,11 +83,19 @@ interface CxpAbono {
 
 type TabId = 'resumen' | 'caja' | 'consultas' | 'lab' | 'cxc' | 'fiscal' | 'cxp' | 'compras' | 'inventario' | 'pacientes' | 'descuentos'
 
+interface InvStock {
+  producto_id: number; cantidad: number
+  producto?: { id: number; nombre: string; codigo: string; categoria?: string; tipo?: string; unidad?: string; precio_venta: number }
+}
+
 interface Props {
   movimientos:      Movimiento[]
   sesiones:         Sesion[]
   citas:            Cita[]
+  citasHistorial:   CitaHist[]
+  pacientesContacto: PacienteContacto[]
   labOrdenes:       LabOrden[]
+  invStock:         InvStock[]
   cxc:              CXC[]
   nuevosPacientes:  Paciente[]
   sucursales:       Sucursal[]
@@ -131,7 +144,7 @@ const FORMAS: Record<string, { label: string; icon: React.ElementType; color: st
 
 /* ═══════════════════════════════════════════════════════ */
 export default function ReportesClient({
-  movimientos, sesiones, citas, labOrdenes, cxc,
+  movimientos, sesiones, citas, citasHistorial, pacientesContacto, labOrdenes, invStock, cxc,
   nuevosPacientes, sucursales, invMovimientos,
   facturas, compras, cxpLista, cxpAbonos,
   desde, hasta, sucursalFiltro, tabInicial,
@@ -139,6 +152,7 @@ export default function ReportesClient({
   const router = useRouter()
   const tabValido = TABS.some(t => t.id === tabInicial) ? tabInicial as TabId : 'resumen'
   const [tabActivo, setTabActivo] = useState<TabId>(tabValido)
+  const [filtroInvSoloMeds, setFiltroInvSoloMeds] = useState(false)
 
   const rangoStr = desde === hasta ? desde : `${desde} al ${hasta}`
   const sucStr   = sucursales.find(s => String(s.id) === sucursalFiltro)?.nombre || 'Todas las sucursales'
@@ -172,6 +186,8 @@ export default function ReportesClient({
     label: FORMAS[fp].label,
     total: ingresos.filter(m => m.forma_pago === fp).reduce((s, m) => s + m.monto, 0),
   }))
+  const pagosPorBanco = agruparTransferenciasPorBanco(movimientos)
+  const vouchersTarjeta = listarVouchersTarjeta(movimientos)
   const cxcSaldoTotal = cxc.reduce((s, c) => s + c.saldo, 0)
 
   /* ingresos por concepto (top 10) */
@@ -261,10 +277,23 @@ export default function ReportesClient({
   const refMedMovidos = useRef<HTMLDivElement>(null)
 
   /* ── ranking medicamentos más movidos ─ */
+  const diasPeriodo = Math.max(1, Math.ceil(
+    (new Date(hasta).getTime() - new Date(desde).getTime()) / (1000 * 60 * 60 * 24),
+  ) + 1)
+
+  const stockPorProducto = (() => {
+    const mapa = new Map<number, number>()
+    for (const s of invStock) {
+      mapa.set(s.producto_id, (mapa.get(s.producto_id) || 0) + Number(s.cantidad || 0))
+    }
+    return mapa
+  })()
+
   const rankingMeds = (() => {
     const mapa = new Map<number, {
-      nombre: string; codigo: string; categoria: string; unidad: string
+      nombre: string; codigo: string; categoria: string; unidad: string; tipo?: string
       totalUnidades: number; totalCosto: number; totalVenta: number; movimientos: number
+      stockActual: number; diasInventario: number | null
     }>()
     for (const m of invMovimientos) {
       if (!m.producto) continue
@@ -275,7 +304,10 @@ export default function ReportesClient({
           codigo:       m.producto.codigo,
           categoria:    m.producto.categoria || '—',
           unidad:       m.producto.unidad    || 'unidad',
+          tipo:         m.producto.categoria,
           totalUnidades: 0, totalCosto: 0, totalVenta: 0, movimientos: 0,
+          stockActual: stockPorProducto.get(m.producto_id) || 0,
+          diasInventario: null,
         })
       }
       const entry = mapa.get(m.producto_id)!
@@ -284,7 +316,29 @@ export default function ReportesClient({
       entry.totalVenta    += cantAbs * (m.producto.precio_venta || 0)
       entry.movimientos   += 1
     }
+    for (const entry of mapa.values()) {
+      const ritmo = entry.totalUnidades / diasPeriodo
+      entry.diasInventario = ritmo > 0 ? Math.round(entry.stockActual / ritmo) : null
+    }
     return Array.from(mapa.values()).sort((a, b) => b.totalUnidades - a.totalUnidades)
+  })()
+
+  const rankingMedsFiltrado = filtroInvSoloMeds
+    ? rankingMeds.filter(p => /medicamento|med|fármaco|farmaco/i.test(p.categoria + (p.tipo || '')))
+    : rankingMeds
+
+  /* ranking lab por ingresos */
+  const rankingLab = (() => {
+    const mapa = new Map<string, { nombre: string; cantidad: number; ingresos: number }>()
+    for (const l of labOrdenes) {
+      const nombre = l.analisis?.nombre || 'Desconocida'
+      const costo = Number(l.analisis?.costo || 0)
+      const prev = mapa.get(nombre) || { nombre, cantidad: 0, ingresos: 0 }
+      prev.cantidad += 1
+      prev.ingresos += costo
+      mapa.set(nombre, prev)
+    }
+    return Array.from(mapa.values()).sort((a, b) => b.ingresos - a.ingresos)
   })()
 
   /* ═══════════════ JSX ═══════════════════════════════════ */
@@ -540,6 +594,65 @@ export default function ReportesClient({
               <div className="text-center py-8 text-gray-400 text-sm">Sin movimientos en el período</div>
             )}
 
+            {/* transferencias por banco / vouchers tarjeta */}
+            {(pagosPorBanco.length > 0 || vouchersTarjeta.length > 0) && (
+              <>
+                <h3 className="text-xs font-semibold text-gray-500 uppercase mt-4">Formas de pago · banco / voucher</h3>
+                <div className="grid lg:grid-cols-2 gap-4">
+                  {pagosPorBanco.length > 0 && (
+                    <div className="rounded-xl border p-3">
+                      <p className="text-xs font-bold text-purple-700 mb-2">Transferencias por banco</p>
+                      <table className="w-full text-xs">
+                        <thead><tr className="border-b">
+                          <th className="text-left py-1 text-gray-500">Banco</th>
+                          <th className="text-right py-1 text-gray-500">Ops</th>
+                          <th className="text-right py-1 text-gray-500">Total</th>
+                        </tr></thead>
+                        <tbody className="divide-y">
+                          {pagosPorBanco.map(b => (
+                            <tr key={b.banco}>
+                              <td className="py-1.5 text-gray-700">{b.banco}</td>
+                              <td className="py-1.5 text-right text-gray-500">{b.cantidad}</td>
+                              <td className="py-1.5 text-right font-bold text-purple-700">{fmt(b.total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {vouchersTarjeta.length > 0 && (
+                    <div className="rounded-xl border p-3 max-h-48 overflow-y-auto">
+                      <p className="text-xs font-bold text-blue-700 mb-2">Vouchers de tarjeta ({vouchersTarjeta.length})</p>
+                      <table className="w-full text-xs">
+                        <thead><tr className="border-b">
+                          <th className="text-left py-1 text-gray-500">Voucher</th>
+                          <th className="text-left py-1 text-gray-500">Paciente</th>
+                          <th className="text-right py-1 text-gray-500">Monto</th>
+                        </tr></thead>
+                        <tbody className="divide-y">
+                          {vouchersTarjeta.slice(0, 20).map((v, i) => (
+                            <tr key={i}>
+                              <td className="py-1 font-mono text-gray-700">{v.voucher}</td>
+                              <td className="py-1 text-gray-500 truncate max-w-[100px]">{v.paciente}</td>
+                              <td className="py-1 text-right font-medium">{fmt(v.monto)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                <BtnExport
+                  nombre="formas_pago_banco_voucher"
+                  headers={['Tipo', 'Detalle', 'Fecha', 'Paciente', 'Monto', 'Concepto']}
+                  rows={[
+                    ...pagosPorBanco.map(b => ['TRANSFERENCIA', b.banco, '', '', b.total.toFixed(2), `${b.cantidad} operaciones`]),
+                    ...vouchersTarjeta.map(v => ['TARJETA', v.voucher, v.fecha, v.paciente, v.monto.toFixed(2), v.concepto]),
+                  ]}
+                />
+              </>
+            )}
+
             {/* tabla completa para impresión */}
             <div style={{ display: 'none' }} className="print-only">
               <h2>Detalle de movimientos</h2>
@@ -685,7 +798,34 @@ export default function ReportesClient({
               ))}
             </div>
 
-            {/* top pruebas */}
+            {/* top pruebas por ingresos */}
+            {rankingLab.length > 0 && (
+              <>
+                <h3 className="text-xs font-semibold text-gray-500 uppercase">Ingresos por prueba</h3>
+                <div className="space-y-1.5">
+                  {rankingLab.slice(0, 10).map(p => {
+                    const pct = labIngresos > 0 ? (p.ingresos / labIngresos) * 100 : 0
+                    return (
+                      <div key={p.nombre}>
+                        <div className="flex justify-between text-sm mb-0.5">
+                          <span className="text-gray-600 truncate pr-2">{p.nombre}</span>
+                          <span className="shrink-0">
+                            <span className="font-bold text-gray-800">{p.cantidad}×</span>
+                            <span className="text-green-700 font-medium ml-2">{fmt(p.ingresos)}</span>
+                            <span className="text-xs text-gray-400 ml-1">({pct.toFixed(1)}%)</span>
+                          </span>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-1.5">
+                          <div className="bg-purple-500 h-1.5 rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* top pruebas por conteo */}
             {labOrdenes.length > 0 && (() => {
               const pruebas = Object.entries(
                 labOrdenes.reduce((acc, l) => {
@@ -1083,11 +1223,19 @@ export default function ReportesClient({
             <h2 className="font-bold text-gray-800 flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-green-600" /> Medicamentos y Productos Más Movidos
             </h2>
-            <p className="text-xs text-gray-400 mt-0.5">Salidas, ventas y consumos del período — ordenados por unidades</p>
+            <p className="text-xs text-gray-400 mt-0.5">Salidas, ventas y consumos · días de inventario según ritmo de venta</p>
           </div>
-          <div className="flex gap-2">
-            <BtnExport nombre="inventario_movimientos" headers={['Código','Nombre','Categoría','Unidades','Movimientos','Costo total','Venta total','Margen']}
-              rows={rankingMeds.map(p => [p.codigo, p.nombre, p.categoria, p.totalUnidades, p.movimientos, p.totalCosto, p.totalVenta, p.totalVenta-p.totalCosto])} />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setFiltroInvSoloMeds(v => !v)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
+                filtroInvSoloMeds ? 'bg-green-100 text-green-800 border-green-300' : 'text-gray-600 hover:bg-white'
+              }`}
+            >
+              {filtroInvSoloMeds ? 'Solo medicamentos' : 'Todos los productos'}
+            </button>
+            <BtnExport nombre="inventario_movimientos" headers={['Código','Nombre','Categoría','Unidades','Stock','Días inv.','Movimientos','Costo total','Venta total','Margen']}
+              rows={rankingMedsFiltrado.map(p => [p.codigo, p.nombre, p.categoria, p.totalUnidades, p.stockActual, p.diasInventario ?? '', p.movimientos, p.totalCosto, p.totalVenta, p.totalVenta-p.totalCosto])} />
             <button onClick={() => imprimir('Medicamentos más movidos', refMedMovidos)}
               className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs text-gray-600 hover:bg-white">
               <Printer className="w-3.5 h-3.5" /> PDF
@@ -1096,7 +1244,7 @@ export default function ReportesClient({
         </div>
 
         <div className="p-5" ref={refMedMovidos}>
-          {rankingMeds.length === 0 ? (
+          {rankingMedsFiltrado.length === 0 ? (
             <div className="text-center py-12 text-gray-400">
               <TrendingUp className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p>No hay movimientos de inventario en el período seleccionado</p>
@@ -1114,6 +1262,8 @@ export default function ReportesClient({
                       <th className="px-3 py-2.5 text-left   text-xs font-semibold text-gray-500 uppercase">Nombre</th>
                       <th className="px-3 py-2.5 text-left   text-xs font-semibold text-gray-500 uppercase">Categoría</th>
                       <th className="px-3 py-2.5 text-right  text-xs font-semibold text-gray-500 uppercase">Unidades</th>
+                      <th className="px-3 py-2.5 text-right  text-xs font-semibold text-gray-500 uppercase">Stock</th>
+                      <th className="px-3 py-2.5 text-right  text-xs font-semibold text-gray-500 uppercase">Días inv.</th>
                       <th className="px-3 py-2.5 text-right  text-xs font-semibold text-gray-500 uppercase">Movimientos</th>
                       <th className="px-3 py-2.5 text-right  text-xs font-semibold text-gray-500 uppercase">Costo total</th>
                       <th className="px-3 py-2.5 text-right  text-xs font-semibold text-gray-500 uppercase">Venta total</th>
@@ -1121,9 +1271,9 @@ export default function ReportesClient({
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {rankingMeds.map((p, i) => {
+                    {rankingMedsFiltrado.map((p, i) => {
                       const margen = p.totalVenta - p.totalCosto
-                      const maxUnid = rankingMeds[0].totalUnidades
+                      const maxUnid = rankingMedsFiltrado[0]?.totalUnidades || 1
                       const pct = maxUnid > 0 ? (p.totalUnidades / maxUnid) * 100 : 0
                       return (
                         <tr key={p.codigo} className="hover:bg-gray-50">
@@ -1149,6 +1299,14 @@ export default function ReportesClient({
                             <span className="font-bold text-blue-700 text-base">{p.totalUnidades}</span>
                             <span className="text-xs text-gray-400 ml-1">{p.unidad}</span>
                           </td>
+                          <td className="px-3 py-2.5 text-right text-gray-600">{p.stockActual}</td>
+                          <td className="px-3 py-2.5 text-right">
+                            {p.diasInventario != null ? (
+                              <span className={`font-bold text-sm ${
+                                p.diasInventario <= 7 ? 'text-red-600' : p.diasInventario <= 30 ? 'text-amber-600' : 'text-green-700'
+                              }`}>{p.diasInventario}d</span>
+                            ) : <span className="text-gray-300">—</span>}
+                          </td>
                           <td className="px-3 py-2.5 text-right text-gray-500">{p.movimientos}</td>
                           <td className="px-3 py-2.5 text-right text-gray-600">
                             {p.totalCosto > 0 ? fmt(p.totalCosto) : <span className="text-gray-300">—</span>}
@@ -1169,24 +1327,25 @@ export default function ReportesClient({
                     })}
                   </tbody>
                   {/* fila totales */}
-                  {rankingMeds.length > 0 && (
+                  {rankingMedsFiltrado.length > 0 && (
                     <tfoot>
                       <tr className="border-t-2 bg-blue-50">
                         <td colSpan={4} className="px-3 py-2.5 text-right font-bold text-gray-700 text-sm">TOTALES</td>
                         <td className="px-3 py-2.5 text-right font-bold text-blue-700">
-                          {rankingMeds.reduce((s, p) => s + p.totalUnidades, 0)} uds
+                          {rankingMedsFiltrado.reduce((s, p) => s + p.totalUnidades, 0)} uds
                         </td>
+                        <td colSpan={2} />
                         <td className="px-3 py-2.5 text-right font-bold text-gray-600">
-                          {rankingMeds.reduce((s, p) => s + p.movimientos, 0)}
+                          {rankingMedsFiltrado.reduce((s, p) => s + p.movimientos, 0)}
                         </td>
                         <td className="px-3 py-2.5 text-right font-bold text-gray-700">
-                          {fmt(rankingMeds.reduce((s, p) => s + p.totalCosto, 0))}
+                          {fmt(rankingMedsFiltrado.reduce((s, p) => s + p.totalCosto, 0))}
                         </td>
                         <td className="px-3 py-2.5 text-right font-bold text-green-700">
-                          {fmt(rankingMeds.reduce((s, p) => s + p.totalVenta, 0))}
+                          {fmt(rankingMedsFiltrado.reduce((s, p) => s + p.totalVenta, 0))}
                         </td>
                         <td className="px-3 py-2.5 text-right font-bold text-green-700">
-                          {fmt(rankingMeds.reduce((s, p) => s + (p.totalVenta - p.totalCosto), 0))}
+                          {fmt(rankingMedsFiltrado.reduce((s, p) => s + (p.totalVenta - p.totalCosto), 0))}
                         </td>
                       </tr>
                     </tfoot>
@@ -1235,8 +1394,19 @@ export default function ReportesClient({
         </div>
       </div>}
 
-      {/* ══════════ REPORTE NUEVOS PACIENTES ══════════ */}
-      {tabActivo === 'pacientes' && <div className="bg-white border rounded-2xl overflow-hidden">
+      {/* ══════════ REPORTE PACIENTES (recurrencia + nuevos) ══════════ */}
+      {tabActivo === 'pacientes' && <div className="space-y-6">
+        <ReportesPacientesPro
+          citasHistorial={citasHistorial}
+          citasPeriodo={citas.map(c => ({ paciente_id: c.paciente_id ?? c.paciente?.id ?? null, fecha: c.fecha, estado: c.estado }))}
+          pacientes={pacientesContacto}
+          movimientos={movimientos.map(m => ({ paciente_id: m.paciente_id, tipo: m.tipo, monto: m.monto, concepto: m.concepto }))}
+          labOrdenes={labOrdenes}
+          desde={desde}
+          hasta={hasta}
+        />
+
+        <div className="bg-white border rounded-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b bg-gray-50">
           <h2 className="font-bold text-gray-800 flex items-center gap-2">
             <Users className="w-5 h-5 text-blue-600" /> Nuevos Pacientes en el Período

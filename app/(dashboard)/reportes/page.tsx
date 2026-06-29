@@ -28,7 +28,7 @@ export default async function ReportesPage({
   // ── Movimientos de caja en el período ──────────────────
   let cajaMov = supabase
     .from('caja_movimientos')
-    .select('tipo, concepto, forma_pago, monto, monto_bruto, descuento_monto, descuento_motivo, paciente_nombre, fecha, hora, anulado, sucursal_id')
+    .select('tipo, concepto, forma_pago, monto, monto_bruto, descuento_monto, descuento_motivo, paciente_nombre, paciente_id, referencia_pago, fecha, hora, anulado, sucursal_id')
     .gte('fecha', desde)
     .lte('fecha', hasta)
     .eq('anulado', false)
@@ -50,17 +50,32 @@ export default async function ReportesPage({
   // ── Consultas en el período ──────────────────────────────
   let consultas = supabase
     .from('citas')
-    .select('id, estado, tipo_consulta, fecha, hora, paciente:pacientes(nombre, apellido1)')
+    .select('id, paciente_id, estado, tipo_consulta, fecha, hora, paciente:pacientes(id, nombre, apellido1, celular, telefono)')
     .gte('fecha', desde)
     .lte('fecha', hasta)
     .order('fecha')
 
   if (sucursalId) consultas = consultas.eq('sucursal_id', Number(sucursalId))
 
+  // ── Historial de visitas atendidas (recurrencia / re-captación) ─
+  let citasHistorial = supabase
+    .from('citas')
+    .select('paciente_id, fecha, estado')
+    .in('estado', ['ASISTIO', 'ASISTIÓ'])
+    .not('paciente_id', 'is', null)
+
+  if (sucursalId) citasHistorial = citasHistorial.eq('sucursal_id', Number(sucursalId))
+
+  // ── Contacto de pacientes (perfil / re-captación) ───────
+  const pacientesContactoQ = supabase
+    .from('pacientes')
+    .select('id, nombre, apellido1, celular, telefono')
+    .order('nombre')
+
   // ── Órdenes de laboratorio en el período ────────────────
   let labOrdenes = supabase
     .from('consulta_analisis')
-    .select('id, estado, pagado, entregado, fecha_orden, paciente:pacientes(nombre, apellido1), analisis:laboratorio_info(nombre, costo)')
+    .select('id, paciente_id, estado, pagado, entregado, fecha_orden, paciente:pacientes(nombre, apellido1), analisis:laboratorio_info(nombre, costo)')
     .gte('fecha_orden', desde)
     .lte('fecha_orden', hasta)
 
@@ -73,6 +88,13 @@ export default async function ReportesPage({
     .lte('fecha', hasta)
 
   if (sucursalId) invMovs = invMovs.eq('sucursal_id', Number(sucursalId))
+
+  // ── Stock actual (días de inventario restante) ──────────
+  let invStockQ = supabase
+    .from('inventario')
+    .select('producto_id, cantidad, producto:productos(id, nombre, codigo, categoria, tipo, unidad, precio_venta)')
+
+  if (sucursalId) invStockQ = invStockQ.eq('sucursal_id', Number(sucursalId))
 
   // ── CXC pendientes ──────────────────────────────────────
   const cxcQuery = supabase
@@ -141,17 +163,21 @@ export default async function ReportesPage({
     { data: movimientos },
     { data: sesiones },
     { data: citasDia },
+    { data: citasHist },
+    { data: pacientesContacto },
     { data: labData },
     { data: cxc },
     { data: nuevosPacientes },
     { data: sucursales },
     { data: invMovimientos },
+    { data: invStock },
     { data: facturas },
     { data: compras },
     { data: cxpLista },
     { data: cxpAbonos },
   ] = await Promise.all([
-    cajaMov, cajaSes, consultas, labOrdenes, cxcQuery, pacientes, sucursalesQ, invMovs,
+    cajaMov, cajaSes, consultas, citasHistorial, pacientesContactoQ, labOrdenes,
+    cxcQuery, pacientes, sucursalesQ, invMovs, invStockQ,
     facturasQ, comprasQ, cxpQ, abonosQ,
   ])
 
@@ -160,7 +186,10 @@ export default async function ReportesPage({
       movimientos={movimientos || []}
       sesiones={sesiones || []}
       citas={citasDia || []}
+      citasHistorial={citasHist || []}
+      pacientesContacto={pacientesContacto || []}
       labOrdenes={labData || []}
+      invStock={invStock || []}
       cxc={cxc || []}
       nuevosPacientes={nuevosPacientes || []}
       sucursales={sucursales || []}

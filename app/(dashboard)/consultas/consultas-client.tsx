@@ -176,6 +176,8 @@ interface Props {
   membresiasMap?: MembresiasMap
   listasMap?: Record<number, string>
   labPreciosLista?: Record<number, Record<number, number>>
+  pacientePrecarga?: number | null
+  abrirNuevaConsulta?: boolean
 }
 
 function supabase() {
@@ -209,6 +211,8 @@ export default function ConsultasClient({
   membresiasMap = {},
   listasMap = {},
   labPreciosLista = {},
+  pacientePrecarga = null,
+  abrirNuevaConsulta = false,
 }: Props) {
   const confirmDialog = useConfirm()
   const rolesActivos = rolesUsuario.length > 0 ? rolesUsuario : (rolUsuario ? [rolUsuario] : [])
@@ -279,6 +283,22 @@ export default function ConsultasClient({
     () => servicios.filter(esServicioConsulta).sort((a, b) => a.nombre.localeCompare(b.nombre)),
     [servicios],
   )
+
+  /* Abrir nueva consulta con paciente precargado (desde registro de paciente) */
+  const precargaAplicada = useRef(false)
+  useEffect(() => {
+    if (precargaAplicada.current || !pacientePrecarga || !abrirNuevaConsulta || !puedeCrearConsulta) return
+    precargaAplicada.current = true
+    const def = serviciosConsulta[0]
+    setFormConsulta({
+      paciente_id: String(pacientePrecarga),
+      servicio_id: def ? String(def.id) : '',
+      fecha: fechaOperativa,
+      hora: '',
+      sucursal_id: String(sucursalOperativa ?? sucursales[0]?.id ?? ''),
+    })
+    setModalConsulta(true)
+  }, [pacientePrecarga, abrirNuevaConsulta, puedeCrearConsulta, fechaOperativa, sucursalOperativa, sucursales, serviciosConsulta])
   const [formSignos, setFormSignos] = useState(signosVitalesVacio)
   const [formMedico, setFormMedico] = useState({
     cabeza: 'NL', cuello: 'NL', ojos: 'NL', orl: 'NL',

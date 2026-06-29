@@ -275,10 +275,13 @@ export default function ComprasClient({
 
         const { data: stockRow } = await query.maybeSingle()
 
+        const cantidadAntes = stockRow ? Number(stockRow.cantidad) : 0
+        const cantidadDespues = cantidadAntes + it.cantidad
+
         if (stockRow) {
           await supabase
             .from('inventario')
-            .update({ cantidad: stockRow.cantidad + it.cantidad })
+            .update({ cantidad: cantidadDespues })
             .eq('id', stockRow.id)
         } else {
           await supabase.from('inventario').insert({
@@ -288,22 +291,24 @@ export default function ComprasClient({
             lote:              it.lote || null,
             fecha_vencimiento: fechaVenc,
             costo_unitario:    it.precio_costo,
-            stock_minimo:      0,
           })
         }
 
-        // movimiento kardex
-        await supabase.from('inventario_movimientos').insert({
+        // movimiento kardex (columnas según schema: tipo, motivo, referencia_*)
+        const { error: errKardex } = await supabase.from('inventario_movimientos').insert({
           producto_id:       it.producto_id,
           sucursal_id:       sucursalId,
-          tipo_movimiento:   'ENTRADA',
-          concepto:          'COMPRA',
-          referencia:        `Compra ${numero}`,
+          tipo:              'ENTRADA',
           cantidad:          it.cantidad,
-          costo_unitario:    it.precio_costo,
+          cantidad_antes:    cantidadAntes,
+          cantidad_despues:  cantidadDespues,
+          motivo:            `Compra ${numero}`,
+          referencia_tipo:   'compra',
+          referencia_id:     compraId,
           lote:              it.lote || null,
           fecha_vencimiento: fechaVenc,
         })
+        if (errKardex) console.warn('Kardex compra:', errKardex.message)
       }
 
       // CXP si hay crédito

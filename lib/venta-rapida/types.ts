@@ -23,6 +23,8 @@ export interface FormMovimientoVenta {
   monto: string
   forma_pago: string
   referencia_pago: string
+  banco: string
+  monto_efectivo: string
   nota: string
   descuento_pct: string
   descuento_motivo: string
@@ -96,6 +98,8 @@ export interface VentaRapidaIngresoOk {
   pacienteNombre: string | null
   formaPago: string
   paciente?: PacienteVenta
+  /** Avisos de inventario (stock 0 / faltante) generados al descontar */
+  alertasInventario?: string[]
 }
 
 export interface TabCatalogoConfig {

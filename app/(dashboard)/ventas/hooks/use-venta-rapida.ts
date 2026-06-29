@@ -1,9 +1,11 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { useConfirm } from '@/components/confirm-dialog'
 import { buscarPacientesActivos } from '@/lib/buscar-pacientes'
+import { evaluarStockMedicamentos } from '@/lib/medicamento-stock-alerta'
 import type { PacienteBusqueda } from '@/components/buscar-paciente-input'
 import {
   ajustarCantidadCarrito,
@@ -82,6 +84,8 @@ export function useVentaRapida({
   const [pacientesExtra, setPacientesExtra] = useState<PacienteBusqueda[]>([])
   const [descuentoInfo, setDescuentoInfo] = useState<DescuentoVentaInfo | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [alertasStock, setAlertasStock] = useState<string[]>([])
+  const confirmDialog = useConfirm()
 
   const pacientes = useMemo(() => {
     const map = new Map<number, PacienteBusqueda>()
@@ -126,6 +130,28 @@ export function useVentaRapida({
   const puedeConfirmar = form.tipo === 'EGRESO'
     ? Boolean(form.monto && Number(form.monto) > 0 && form.concepto_id)
     : items.length > 0 && total > 0
+
+  useEffect(() => {
+    if (!abierto || form.tipo !== 'INGRESO') {
+      setAlertasStock([])
+      return
+    }
+    const meds = items.filter(i => i.tipo === 'MEDICAMENTO' && i.refId > 0)
+    if (!meds.length) {
+      setAlertasStock([])
+      return
+    }
+    let cancel = false
+    void (async () => {
+      const res = await evaluarStockMedicamentos(
+        supabase,
+        meds.map(m => ({ productoId: m.refId, cantidad: m.cantidad, nombre: m.nombre })),
+        perfilSucursalId ?? sesion?.sucursal_id ?? null,
+      )
+      if (!cancel) setAlertasStock(res.mensajes)
+    })()
+    return () => { cancel = true }
+  }, [abierto, form.tipo, items, supabase, perfilSucursalId, sesion?.sucursal_id])
 
   const abrir = useCallback((tipo: FormMovimientoVenta['tipo'] = 'INGRESO') => {
     setForm({ ...FORM_MOV_VACIO, tipo })
@@ -191,6 +217,17 @@ export function useVentaRapida({
 
   const confirmar = useCallback(async () => {
     if (!sesion) return
+
+    if (form.tipo === 'INGRESO' && alertasStock.length > 0) {
+      const { confirmed } = await confirmDialog({
+        title: 'Aviso de inventario',
+        message: `${alertasStock.join('\n\n')}\n\n¿Desea continuar con la venta de todas formas?`,
+        variant: 'warning',
+        confirmLabel: 'Continuar venta',
+      })
+      if (!confirmed) return
+    }
+
     setGuardando(true)
 
     const resultado = form.tipo === 'INGRESO'
@@ -236,7 +273,7 @@ export function useVentaRapida({
   }, [
     sesion, form, items, pacientes, servicios, productos, pruebasLab, conceptos,
     supabase, userId, esAdmin, fechaHoy, perfilSucursalId, sucursalActiva, cerrar,
-    membInfo, onIngresoExitoso, onEgresoExitoso,
+    membInfo, onIngresoExitoso, onEgresoExitoso, alertasStock, confirmDialog,
   ])
 
   return {
@@ -245,6 +282,7 @@ export function useVentaRapida({
     cerrar,
     confirmar,
     guardando,
+    alertasStock,
     form,
     setForm,
     items,

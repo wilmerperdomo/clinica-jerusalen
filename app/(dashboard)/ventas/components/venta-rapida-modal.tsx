@@ -1,13 +1,13 @@
 'use client'
 
 import {
-  DollarSign, Receipt, Save, Search, TrendingDown, Trash2,
+  DollarSign, Receipt, Save, Search, TrendingDown, Trash2, AlertTriangle,
 } from 'lucide-react'
 
 import BuscarPacienteInput from '@/components/buscar-paciente-input'
 import { fmtCaja } from '@/lib/caja-format'
-import { FORMAS_PAGO } from '@/lib/caja-constants'
 import { TABS_CATALOGO_VENTA } from '@/lib/venta-rapida/constants'
+import CobroFormaPagoPanel from './cobro-forma-pago-panel'
 import type {
   ConceptoEgreso,
   PruebaLabCatalogo,
@@ -98,9 +98,31 @@ export default function VentaRapidaModal({ venta, conceptos, esAdmin }: Props) {
           />
         )}
 
-        <FormaPagoSection form={form} onChange={setForm} />
+        <CobroFormaPagoPanel
+          accent="blue"
+          formaPago={form.forma_pago}
+          onChange={fp => setForm(p => ({ ...p, forma_pago: fp }))}
+          referencia={form.referencia_pago}
+          onReferencia={v => setForm(p => ({ ...p, referencia_pago: v }))}
+          banco={form.banco}
+          onBanco={v => setForm(p => ({ ...p, banco: v }))}
+          montoEfectivo={form.monto_efectivo}
+          onMontoEfectivo={v => setForm(p => ({ ...p, monto_efectivo: v }))}
+          totalACobrar={venta.total}
+        />
 
         <NotaField nota={form.nota} onChange={nota => setForm(p => ({ ...p, nota }))} />
+
+        {esIngreso && venta.alertasStock.length > 0 && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2">
+            <p className="font-semibold flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> Inventario — aviso antes de cobrar
+            </p>
+            {venta.alertasStock.map((msg, i) => (
+              <p key={i} className="text-xs whitespace-pre-line leading-relaxed">{msg}</p>
+            ))}
+          </div>
+        )}
 
         {esIngreso && venta.total > 0 && (
           <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 flex items-center justify-between">
@@ -491,44 +513,6 @@ function DescuentoVentaSection({
         </p>
       )}
     </div>
-  )
-}
-
-function FormaPagoSection({
-  form, onChange,
-}: {
-  form: VentaRapidaController['form']
-  onChange: VentaRapidaController['setForm']
-}) {
-  return (
-    <>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">Forma de Pago *</label>
-        <div className="grid grid-cols-2 gap-2">
-          {FORMAS_PAGO.map(fp => (
-            <button key={fp.key} type="button"
-              onClick={() => onChange(p => ({ ...p, forma_pago: fp.key }))}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
-                form.forma_pago === fp.key
-                  ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
-                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
-              }`}>
-              <fp.icon className="w-4 h-4" /> {fp.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      {['TARJETA', 'TRANSFERENCIA'].includes(form.forma_pago) && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            {form.forma_pago === 'TARJETA' ? 'Número de Voucher' : 'Referencia de Transferencia'}
-          </label>
-          <input value={form.referencia_pago}
-            onChange={e => onChange(p => ({ ...p, referencia_pago: e.target.value }))}
-            className="w-full border rounded-lg px-3 py-2 text-sm" />
-        </div>
-      )}
-    </>
   )
 }
 

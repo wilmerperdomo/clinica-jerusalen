@@ -1,11 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { nombrePaciente } from '@/lib/consultas-utils'
+import { construirReferenciaPago, validarFormaPagoCobro } from '@/lib/caja-pago-utils'
+import { validarVoucherDuplicadoDia } from '@/lib/caja-voucher-seguridad'
+import { descontarStockVenta } from '@/lib/inventario-descuento'
 import {
   validarCreditoConPaciente,
   validarDescuento,
   validarItemsVentaCatalogo,
-  validarReferenciaPago,
   validarSesionOperacion,
 } from '@/lib/caja-seguridad'
 import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
@@ -60,9 +62,6 @@ export async function registrarVentaRapidaIngreso(
   const paciente = ctx.pacientes.find(p => p.id === pacienteId)
   const pacNombre = paciente ? nombrePaciente(paciente) : null
 
-  const errRef = validarReferenciaPago(ctx.form.forma_pago, ctx.form.referencia_pago)
-  if (errRef) return { ok: false, error: errRef }
-
   const errCred = validarCreditoConPaciente(ctx.form.forma_pago, pacienteId)
   if (errCred) return { ok: false, error: errCred }
 
@@ -89,7 +88,7 @@ export async function registrarVentaRapidaIngreso(
     fecha: ctx.fechaHoy,
     hora,
     forma_pago: ctx.form.forma_pago,
-    referencia_pago: ctx.form.referencia_pago || null,
+    referencia_pago: construirReferenciaPago(ctx.form.forma_pago, ctx.form.referencia_pago, ctx.form.banco),
     nota: ctx.form.nota || null,
     paciente_id: pacienteId,
     paciente_nombre: pacNombre,
@@ -117,6 +116,20 @@ export async function registrarVentaRapidaIngreso(
   const totalNeto = movimientos.reduce((sum, mov) => sum + mov.monto, 0)
   const descuentoMonto = parseFloat((subtotal - totalNeto).toFixed(2))
 
+  const errPago = validarFormaPagoCobro(ctx.form.forma_pago, totalNeto, {
+    referencia: ctx.form.referencia_pago,
+    banco: ctx.form.banco,
+    montoEfectivo: ctx.form.monto_efectivo,
+  })
+  if (errPago) return { ok: false, error: errPago }
+
+  const errVoucher = await validarVoucherDuplicadoDia(
+    ctx.supabase,
+    ctx.form.referencia_pago,
+    ctx.fechaHoy,
+  )
+  if (errVoucher) return { ok: false, error: errVoucher }
+
   const { data: movs, error: errMovs } = await insertarMovimientosCaja(ctx.supabase, movimientos)
   if (errMovs) return { ok: false, error: 'Error al registrar cobro: ' + errMovs.message }
 
@@ -127,6 +140,19 @@ export async function registrarVentaRapidaIngreso(
     .eq('estado', 'ABIERTA')
 
   if (errSesUpd) return { ok: false, error: 'Error al actualizar sesión: ' + errSesUpd.message }
+
+  // ── Descontar inventario de los medicamentos vendidos ──
+  const itemsStock = cat.items
+    .filter(item => item.tipo === 'MEDICAMENTO')
+    .map(item => ({ productoId: item.refId, cantidad: item.cantidad, nombre: item.nombre }))
+  const movId = (movs?.[0] as { id?: number } | undefined)?.id ?? null
+  const resStock = await descontarStockVenta(
+    ctx.supabase,
+    itemsStock,
+    ctx.sesion.sucursal_id ?? ctx.perfilSucursalId ?? null,
+    { tipo: 'venta_rapida', id: movId, motivo: 'Venta rápida en caja' },
+    ctx.userId,
+  )
 
   if (ctx.form.forma_pago === 'CREDITO' && movs?.[0]) {
     const { error: errCxc } = await ctx.supabase.from('cxc').insert({
@@ -162,6 +188,7 @@ export async function registrarVentaRapidaIngreso(
     pacienteNombre: pacNombre,
     formaPago: ctx.form.forma_pago,
     paciente: paciente ?? undefined,
+    alertasInventario: resStock.alertas,
   }
 }
 

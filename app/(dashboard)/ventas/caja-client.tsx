@@ -49,12 +49,23 @@ import { BRAND } from '@/lib/brand'
 import { FORMAS_PAGO } from '@/lib/caja-constants'
 import { fmtCaja as fmt } from '@/lib/caja-format'
 import {
+  construirReferenciaPago,
+  FORM_COBRO_VACIO,
+  pctManualDesdeForm,
+  validarFormaPagoCobro,
+  calcularCambioEfectivo,
+} from '@/lib/caja-pago-utils'
+import { abrirCobroTicketPrint, lineasDesgloseATicket, type CobroTicketData } from '@/lib/cobro-ticket-print'
+import { validarVoucherDuplicadoDia } from '@/lib/caja-voucher-seguridad'
+import {
   descuentoEdadPaciente,
   validarCreditoConPaciente,
   validarDescuento,
-  validarReferenciaPago,
   validarSesionOperacion,
 } from '@/lib/caja-seguridad'
+import CobroFormaPagoPanel from './components/cobro-forma-pago-panel'
+import type { LineaCobroDesc } from '@/lib/membresia-utils'
+import { descontarStockVenta } from '@/lib/inventario-descuento'
 import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 import { useConfirm } from '@/components/confirm-dialog'
@@ -62,7 +73,8 @@ import { Modal } from './components/caja-modal'
 import VentaRapidaModal from './components/venta-rapida-modal'
 import NombreFacturarProtegido from './components/nombre-facturar-protegido'
 import { useVentaRapida } from './hooks/use-venta-rapida'
-import { columnaConsultaDetalle, valorConsultaDetalle } from '@/lib/consulta-detalle-utils'
+import { cargarConsultaDetalleConPrecios } from '@/lib/consulta-detalle-utils'
+import { evaluarStockMedicamentos } from '@/lib/medicamento-stock-alerta'
 import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
 import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
 import {
@@ -137,6 +149,7 @@ interface ConsultaPorCobrar {
   sucursal_id?: number
   tipo_nombre?: string
   consulta_valor?: number
+  consulta_otros?: number
   paciente?: {
     id: number; codigo: string; tipo?: string
     nombre: string; apellido1: string; apellido2?: string
@@ -254,30 +267,28 @@ export default function CajaClient({
   const [modalCobroCot, setModalCobroCot] = useState(false)
   const [guardandoCobroCot, setGuardandoCobroCot] = useState(false)
   const [formCobroCot, setFormCobroCot] = useState({
-    forma_pago: 'EFECTIVO', referencia: '', nota: '', mostrar_nombres_meds: false,
+    ...FORM_COBRO_VACIO,
+    mostrar_nombres_meds: false,
   })
   const [modalCobroLab, setModalCobroLab] = useState(false)
   const [modalCobroMembresia, setModalCobroMembresia] = useState(false)
   const [membresiaCobroLote, setMembresiaCobroLote] = useState<MembresiaPagoCobro[]>([])
   const [membresiaCobroRespaldoUi, setMembresiaCobroRespaldoUi] = useState<RespaldoCobroMembresia>({})
   const [guardandoCobroMembresia, setGuardandoCobroMembresia] = useState(false)
-  const [formCobroMembresia, setFormCobroMembresia] = useState({
-    forma_pago: 'EFECTIVO', referencia: '', nota: '',
-  })
+  const [formCobroMembresia, setFormCobroMembresia] = useState({ ...FORM_COBRO_VACIO })
   const precargaMembresiaRef = useRef(false)
   const [labGrupoCobro, setLabGrupoCobro] = useState<LabGrupoCobro | null>(null)
   const [labCobroExitoso, setLabCobroExitoso] = useState<{
     total: number; pacNombre: string; formaPago: string; puntosCanjeados?: number
     paciente?: { nombre: string; apellido1: string; celular?: string; telefono?: string; correo?: string }
+    ticket?: CobroTicketData
   } | null>(null)
   const [labFacturaCtx, setLabFacturaCtx] = useState<{
     grupo: LabGrupoCobro; subtotal: number; valDesc: number
   } | null>(null)
   const [modalFacturaLab, setModalFacturaLab] = useState(false)
   const [guardandoCobroLab, setGuardandoCobroLab] = useState(false)
-  const [formCobroLab, setFormCobroLab] = useState({
-    forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', descuento_confirmado: false,
-  })
+  const [formCobroLab, setFormCobroLab] = useState({ ...FORM_COBRO_VACIO })
   const [puntosFidelidadLab, setPuntosFidelidadLab] = useState(0)
   const [usarPuntosLab, setUsarPuntosLab] = useState(false)
   const [puntosCanjearLab, setPuntosCanjearLab] = useState('')
@@ -286,18 +297,19 @@ export default function CajaClient({
   const [cobroExitoso, setCobroExitoso] = useState<{
     total: number; pacNombre: string; formaPago: string
     paciente?: { nombre: string; apellido1: string; celular?: string; telefono?: string; correo?: string }
+    ticket?: CobroTicketData
   } | null>(null)
-  const [consultaCobro,  setConsultaCobro]  = useState<ConsultaPorCobrar | null>(null)
+  const [membresiaCobroExitoso, setMembresiaCobroExitoso] = useState<{
+    total: number; pacNombre: string; formaPago: string; ticket: CobroTicketData
+  } | null>(null)
+  const [alertasStockCobro, setAlertasStockCobro] = useState<string[]>([])
   const [correlativos,   setCorrelativos]   = useState(initCorrelativos)
   const [modalFactura,   setModalFactura]   = useState(false)
   const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
   const [titularFacturaRegistrado, setTitularFacturaRegistrado] = useState({ nombre: '', rtn: '' })
   const [guardandoFact,  setGuardandoFact]  = useState(false)
   const [factImpresa,    setFactImpresa]    = useState<Record<string, unknown> | null>(null)
-  const [formCobro, setFormCobro] = useState({
-    forma_pago: 'EFECTIVO', referencia: '', nota: '',
-    descuento_pct: '0', monto_manual: '', descuento_confirmado: false,
-  })
+  const [formCobro, setFormCobro] = useState({ ...FORM_COBRO_VACIO })
   const [guardandoCobro, setGuardandoCobro] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [errorAp,   setErrorAp]   = useState('')
@@ -336,7 +348,7 @@ export default function CajaClient({
   })
 
   const [formAbono, setFormAbono] = useState({
-    monto: '', forma_pago: 'EFECTIVO', referencia: '', nota: '',
+    monto: '', ...FORM_COBRO_VACIO,
   })
 
   const [ventaRapidaCobro, setVentaRapidaCobro] = useState<VentaRapidaIngresoOk | null>(null)
@@ -350,8 +362,64 @@ export default function CajaClient({
 
   const supabase = sb()
 
+  const cajeroNombreTicket = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Cajero/a'
+
+  async function validarVoucherTarjeta(formaPago: string, referencia: string): Promise<string | null> {
+    if (formaPago !== 'TARJETA' || !referencia.trim()) return null
+    return validarVoucherDuplicadoDia(supabase, referencia, fechaHoy)
+  }
+
+  function armarTicketCobro(opts: {
+    paciente_nombre: string
+    concepto?: string
+    forma_pago: string
+    referencia?: string
+    banco?: string
+    monto_efectivo?: string
+    lineas: CobroTicketData['lineas']
+    subtotal?: number
+    descuento_monto?: number
+    total: number
+    nota?: string | null
+    titulo?: string
+  }): CobroTicketData {
+    const hora = new Date().toTimeString().slice(0, 5)
+    const montoRecibido = opts.forma_pago === 'EFECTIVO' && opts.monto_efectivo?.trim()
+      ? Number(opts.monto_efectivo)
+      : null
+    return {
+      titulo: opts.titulo,
+      fecha: fechaHoy,
+      hora,
+      paciente_nombre: opts.paciente_nombre,
+      concepto: opts.concepto,
+      forma_pago: opts.forma_pago,
+      referencia_pago: opts.referencia?.trim() || null,
+      banco: opts.banco?.trim() || null,
+      lineas: opts.lineas,
+      subtotal: opts.subtotal,
+      descuento_monto: opts.descuento_monto,
+      total: opts.total,
+      monto_recibido: montoRecibido,
+      cambio: montoRecibido != null ? calcularCambioEfectivo(opts.total, opts.monto_efectivo) : null,
+      cajero_nombre: cajeroNombreTicket,
+      nota: opts.nota,
+    }
+  }
+
   const MSG_CIERRE_SIN_FACTURA =
     'El cobro ya quedó registrado en caja. Si cierra sin facturar, la venta puede quedar pendiente en el orden cronológico de facturación. Deberá emitir la factura después desde el módulo Facturación.'
+
+  async function confirmarAlertasStock(mensajes: string[]): Promise<boolean> {
+    if (!mensajes.length) return true
+    const { confirmed } = await confirmDialog({
+      title: 'Aviso de inventario',
+      message: `${mensajes.join('\n\n')}\n\n¿Desea continuar con el cobro de todas formas?`,
+      variant: 'warning',
+      confirmLabel: 'Continuar cobro',
+    })
+    return confirmed
+  }
 
   async function confirmarCierreSinFacturar(): Promise<boolean> {
     const { confirmed } = await confirmDialog({
@@ -395,6 +463,9 @@ export default function CajaClient({
         mostrar_nombres_meds: false,
       })
       setVentaRapidaCobro(data)
+      if (data.alertasInventario && data.alertasInventario.length > 0) {
+        alert('Inventario:\n\n' + data.alertasInventario.join('\n'))
+      }
       startTransition(() => { recargar() })
     },
     onEgresoExitoso: () => startTransition(() => { recargar() }),
@@ -782,8 +853,14 @@ export default function CajaClient({
     if (montoAbono <= 0) return alert('El monto del abono debe ser mayor a cero')
     if (montoAbono > cxcActual.saldo) return alert('El abono no puede superar el saldo pendiente')
 
-    const errRef = validarReferenciaPago(formAbono.forma_pago, formAbono.referencia)
-    if (errRef) return alert(errRef)
+    const errPago = validarFormaPagoCobro(formAbono.forma_pago, montoAbono, {
+      referencia: formAbono.referencia,
+      banco: formAbono.banco,
+      montoEfectivo: formAbono.monto_efectivo,
+    })
+    if (errPago) return alert(errPago)
+    const errVoucher = await validarVoucherTarjeta(formAbono.forma_pago, formAbono.referencia)
+    if (errVoucher) return alert(errVoucher)
 
     setGuardandoAbono(true)
     const hora = new Date().toTimeString().slice(0, 5)
@@ -800,7 +877,7 @@ export default function CajaClient({
       paciente_nombre: pacNombre || null,
       monto:           montoAbono,
       forma_pago:      formAbono.forma_pago,
-      referencia_pago: formAbono.referencia || null,
+      referencia_pago: construirReferenciaPago(formAbono.forma_pago, formAbono.referencia, formAbono.banco),
       nota:            formAbono.nota || null,
       fecha:           fechaHoy,
       hora,
@@ -833,7 +910,7 @@ export default function CajaClient({
     if (errCxc) { setGuardandoAbono(false); return alert('Error al actualizar CXC: ' + errCxc.message) }
 
     setModalAbono(false)
-    setFormAbono({ monto: '', forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setFormAbono({ monto: '', ...FORM_COBRO_VACIO })
     setGuardandoAbono(false)
     startTransition(() => { recargar() })
   }
@@ -989,11 +1066,8 @@ export default function CajaClient({
         .eq('consulta_id', c.id)
       if (errServs) console.warn('consulta_servicios:', errServs.message)
 
-      // Medicamentos recetados — unir con productos para obtener precio_venta
-      const { data: dets } = await sb
-        .from('consulta_detalle')
-        .select('id, no_producto, cant, id_producto, productos(precio_venta)')
-        .eq(columnaConsultaDetalle(), valorConsultaDetalle(c.id))
+      // Medicamentos recetados — precio desde catálogo (soporta legacy id_producto)
+      const detsFlat = await cargarConsultaDetalleConPrecios(sb, c.id)
 
       // Análisis de laboratorio — id_consulta es TEXT en esa tabla
       const { data: labs, error: errLabs } = await sb
@@ -1003,19 +1077,9 @@ export default function CajaClient({
       if (errLabs) console.warn('consulta_analisis:', errLabs.message)
 
       // Cargar tipo_nombre y consulta_valor si existen
-      const { data: extra }   = await sb.from('consultas').select('tipo_nombre, consulta_valor, cobrado, doctor_id, sucursal_id').eq('id', c.id).single()
+      const { data: extra }   = await sb.from('consultas').select('tipo_nombre, consulta_valor, consulta_otros, cobrado, doctor_id, sucursal_id').eq('id', c.id).single()
 
-      // aplanar precio_venta del join anidado
-      const detsFlat = (dets ?? []).map((d: Record<string, unknown> & {
-        productos?: { precio_venta?: number }
-      }) => ({
-        id:          d.id,
-        no_producto: d.no_producto,
-        cant:        d.cant,
-        producto_id: d.id_producto ?? d.producto_id,
-        precio_venta: d.productos?.precio_venta ?? 0,
-      }))
-
+      // aplanar precio_venta del catálogo
       const full: ConsultaPorCobrar = {
         ...c,
         paciente:            pac ?? undefined,
@@ -1024,6 +1088,7 @@ export default function CajaClient({
         consulta_analisis:   labs   ?? [],
         tipo_nombre:         extra?.tipo_nombre  ?? c.tipo_nombre,
         consulta_valor:      extra?.consulta_valor ?? c.consulta_valor ?? 0,
+        consulta_otros:      extra?.consulta_otros ?? c.consulta_otros ?? 0,
         cobrado:             extra?.cobrado ?? false,
         doctor_id:           extra?.doctor_id ?? c.doctor_id,
         sucursal_id:         extra?.sucursal_id ?? c.sucursal_id ?? sesion?.sucursal_id,
@@ -1033,8 +1098,19 @@ export default function CajaClient({
       const factInit = datosFacturaDesdePaciente(pac ?? undefined)
       setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
       setConsultaCobro(full)
-      setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
+      setFormCobro({ ...FORM_COBRO_VACIO })
       setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true, mostrar_nombres_meds: false })
+
+      const sucIdStock = full.sucursal_id ?? sesion?.sucursal_id ?? perfil?.sucursal_id ?? null
+      const stockEval = await evaluarStockMedicamentos(
+        sb,
+        detsFlat
+          .filter(d => d.producto_id)
+          .map(d => ({ productoId: d.producto_id!, cantidad: d.cant, nombre: d.no_producto })),
+        sucIdStock,
+      )
+      setAlertasStockCobro(stockEval.mensajes)
+
       setModalCobro(true)
     } finally {
       setLoadingCobro(false)
@@ -1049,7 +1125,8 @@ export default function CajaClient({
     membInfo: MembresiaPacienteInfo | null
   } {
     const consulta  = Number(c.consulta_valor || 0)
-    const servicios = (c.consulta_servicios || []).reduce((a, s) => a + s.precio * s.cantidad, 0)
+    let servicios = (c.consulta_servicios || []).reduce((a, s) => a + s.precio * s.cantidad, 0)
+    if (servicios <= 0 && Number(c.consulta_otros) > 0) servicios = Number(c.consulta_otros)
     const meds      = (c.consulta_detalle || []).reduce((a, d) => a + Number(d.precio_venta || 0) * d.cant, 0)
     const lab       = (c.consulta_analisis || []).reduce((a, l) => a + Number(l.importe || 0), 0)
     const subtotal  = consulta + servicios + meds + lab
@@ -1094,8 +1171,6 @@ export default function CajaClient({
       return
     }
 
-    const errRef = validarReferenciaPago(formCobro.forma_pago, formCobro.referencia)
-    if (errRef) { alert(errRef); setGuardandoCobro(false); return }
     const errCred = validarCreditoConPaciente(formCobro.forma_pago, consultaCobro.paciente_id)
     if (errCred) { alert(errCred); setGuardandoCobro(false); return }
 
@@ -1112,7 +1187,6 @@ export default function CajaClient({
     }
 
     const pct = valDescuento.pctAplicar
-    // Desglose por categoría: combina descuento por edad + beneficios de membresía.
     const desglose = desglosarLineasCobro(
       [
         { categoria: 'consulta',     bruto: detalle.consulta },
@@ -1123,8 +1197,24 @@ export default function CajaClient({
       pct,
       detalle.motivo || 'Descuento',
       detalle.membInfo?.estructurados,
+      { pctManualPorCategoria: pctManualDesdeForm(formCobro) },
     )
     const total = desglose.total
+
+    const errPago = validarFormaPagoCobro(formCobro.forma_pago, total, {
+      referencia: formCobro.referencia,
+      banco: formCobro.banco,
+      montoEfectivo: formCobro.monto_efectivo,
+    })
+    if (errPago) { alert(errPago); setGuardandoCobro(false); return }
+    const errVoucher = await validarVoucherTarjeta(formCobro.forma_pago, formCobro.referencia)
+    if (errVoucher) { alert(errVoucher); setGuardandoCobro(false); return }
+
+    if (!(await confirmarAlertasStock(alertasStockCobro))) {
+      setGuardandoCobro(false)
+      return
+    }
+
     // Se permite total 0 solo si la membresía cubre el cobro (ej. consulta gratis).
     if (total <= 0 && !desglose.membAplicada) {
       alert('El monto a cobrar debe ser mayor a cero')
@@ -1142,7 +1232,7 @@ export default function CajaClient({
       tipo:       'INGRESO' as const,
       fecha, hora,
       forma_pago: formCobro.forma_pago,
-      referencia_pago: formCobro.referencia || null,
+      referencia_pago: construirReferenciaPago(formCobro.forma_pago, formCobro.referencia, formCobro.banco),
       nota:       formCobro.nota || null,
       paciente_id: consultaCobro.paciente_id,
       consulta_id: consultaCobro.id,
@@ -1205,6 +1295,18 @@ export default function CajaClient({
       if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
     }
 
+    // ── Descontar inventario de los medicamentos recetados y cobrados ──
+    const itemsStockConsulta = (consultaCobro.consulta_detalle || [])
+      .filter(d => d.producto_id != null && Number(d.cant) > 0)
+      .map(d => ({ productoId: Number(d.producto_id), cantidad: Number(d.cant), nombre: d.no_producto }))
+    const resStockConsulta = await descontarStockVenta(
+      sb,
+      itemsStockConsulta,
+      consultaCobro.sucursal_id ?? sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
+      { tipo: 'consulta', id: consultaCobro.id, motivo: `Cobro consulta #${consultaCobro.id}` },
+      userId,
+    )
+
     // Órdenes de laboratorio → cola de lab tras el cobro
     const { error: errLab } = await sb.from('consulta_analisis').update({
       pagado: true,
@@ -1263,6 +1365,10 @@ export default function CajaClient({
       }
     }
 
+    if (resStockConsulta.alertas.length > 0) {
+      alert('Inventario:\n\n' + resStockConsulta.alertas.join('\n'))
+    }
+
     // quitar de la lista local
     setConsultasPorCobrar(prev => prev.filter(c => c.id !== consultaCobro.id))
     // mostrar paso "éxito + ¿facturar?"
@@ -1283,6 +1389,31 @@ export default function CajaClient({
         telefono: consultaCobro.paciente.telefono,
         correo: consultaCobro.paciente.correo,
       } : undefined,
+      ticket: armarTicketCobro({
+        paciente_nombre: pacNombre || 'Cliente',
+        concepto: `Consulta — ${consultaCobro.tipo_nombre || 'General'}`,
+        forma_pago: formCobro.forma_pago,
+        referencia: formCobro.referencia,
+        banco: formCobro.banco,
+        monto_efectivo: formCobro.monto_efectivo,
+        lineas: (() => {
+          const base = lineasDesgloseATicket(desglose.lineas.filter(l => l.categoria !== 'medicamentos'))
+          const meds = (consultaCobro.consulta_detalle || [])
+            .map(d => ({
+              descripcion: `${d.no_producto} × ${d.cant}`,
+              monto: Number(d.precio_venta || 0) * Number(d.cant || 1),
+            }))
+            .filter(l => l.monto > 0)
+          if (meds.length === 0 && detalle.meds > 0) {
+            base.push({ descripcion: 'Medicamentos', monto: desglose.lineas.find(l => l.categoria === 'medicamentos')?.neto ?? detalle.meds })
+          }
+          return [...base, ...meds]
+        })(),
+        subtotal: desglose.subtotal,
+        descuento_monto: desglose.descTotal,
+        total,
+        nota: formCobro.nota,
+      }),
     })
     setGuardandoCobro(false)
     // recargar sesión en paralelo
@@ -1302,7 +1433,8 @@ export default function CajaClient({
     setCobroExitoso(null)
     setModalFactura(false)
     setFactImpresa(null)
-    setFormCobro({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', monto_manual: '', descuento_confirmado: false })
+    setFormCobro({ ...FORM_COBRO_VACIO })
+    setAlertasStockCobro([])
     setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
   }
 
@@ -1310,13 +1442,7 @@ export default function CajaClient({
     const factInit = datosFacturaDesdePaciente(grupo.paciente as ConsultaPorCobrar['paciente'])
     setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
     setLabGrupoCobro(grupo)
-    setFormCobroLab({
-      forma_pago: 'EFECTIVO',
-      referencia: '',
-      nota: '',
-      descuento_pct: '0',
-      descuento_confirmado: false,
-    })
+    setFormCobroLab({ ...FORM_COBRO_VACIO })
     setUsarPuntosLab(false)
     setPuntosCanjearLab('')
     setPuntosFidelidadLab(
@@ -1338,7 +1464,7 @@ export default function CajaClient({
     setLabFacturaCtx(null)
     setModalFacturaLab(false)
     setFactImpresa(null)
-    setFormCobroLab({ forma_pago: 'EFECTIVO', referencia: '', nota: '', descuento_pct: '0', descuento_confirmado: false })
+    setFormCobroLab({ ...FORM_COBRO_VACIO })
     setFormFactura({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
     setPuntosFidelidadLab(0)
     setUsarPuntosLab(false)
@@ -1384,8 +1510,6 @@ export default function CajaClient({
       return
     }
 
-    const errRef = validarReferenciaPago(formCobroLab.forma_pago, formCobroLab.referencia)
-    if (errRef) { alert(errRef); setGuardandoCobroLab(false); return }
     const errCred = validarCreditoConPaciente(formCobroLab.forma_pago, labGrupoCobro.pacienteId)
     if (errCred) { alert(errCred); setGuardandoCobroLab(false); return }
 
@@ -1434,6 +1558,15 @@ export default function CajaClient({
       setGuardandoCobroLab(false)
       return
     }
+
+    const errPagoLab = validarFormaPagoCobro(formCobroLab.forma_pago, total, {
+      referencia: formCobroLab.referencia,
+      banco: formCobroLab.banco,
+      montoEfectivo: formCobroLab.monto_efectivo,
+    })
+    if (errPagoLab) { alert(errPagoLab); setGuardandoCobroLab(false); return }
+    const errVoucherLab = await validarVoucherTarjeta(formCobroLab.forma_pago, formCobroLab.referencia)
+    if (errVoucherLab) { alert(errVoucherLab); setGuardandoCobroLab(false); return }
 
     const pac = labGrupoCobro.paciente
     const pacNombre = labGrupoCobro.pacienteNombre
@@ -1494,7 +1627,7 @@ export default function CajaClient({
       fecha: fechaHoy,
       hora,
       forma_pago: formCobroLab.forma_pago,
-      referencia_pago: formCobroLab.referencia || null,
+      referencia_pago: construirReferenciaPago(formCobroLab.forma_pago, formCobroLab.referencia, formCobroLab.banco),
       nota: formCobroLab.nota || notaPuntos,
       paciente_id: labGrupoCobro.pacienteId || null,
     })
@@ -1558,6 +1691,23 @@ export default function CajaClient({
         telefono: pac.telefono,
         correo: pac.correo,
       } : undefined,
+      ticket: armarTicketCobro({
+        paciente_nombre: pacNombre,
+        concepto: 'Laboratorio',
+        forma_pago: formCobroLab.forma_pago,
+        referencia: formCobroLab.referencia,
+        banco: formCobroLab.banco,
+        monto_efectivo: formCobroLab.monto_efectivo,
+        lineas: labGrupoCobro.ordenes.map(o => ({
+          descripcion: o.no_analisis || `Orden #${o.id}`,
+          monto: Number(o.importe) || 0,
+        })),
+        subtotal,
+        descuento_monto: valDesc + descPuntos,
+        total,
+        nota: formCobroLab.nota,
+        titulo: 'COBRO DE LABORATORIO',
+      }),
     })
     setLabGrupoCobro(null)
     setGuardandoCobroLab(false)
@@ -1585,13 +1735,13 @@ export default function CajaClient({
     if (!sesion) {
       setMembresiaCobroLote(lote)
       setMembresiaCobroRespaldoUi(respaldo ?? {})
-      setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+      setFormCobroMembresia({ ...FORM_COBRO_VACIO })
       setModalCobroMembresia(true)
       return
     }
     setMembresiaCobroLote(lote)
     setMembresiaCobroRespaldoUi(respaldo ?? {})
-    setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setFormCobroMembresia({ ...FORM_COBRO_VACIO })
     setModalCobroMembresia(true)
   }
 
@@ -1642,7 +1792,7 @@ export default function CajaClient({
     setModalCobroMembresia(false)
     setMembresiaCobroLote([])
     setMembresiaCobroRespaldoUi({})
-    setFormCobroMembresia({ forma_pago: 'EFECTIVO', referencia: '', nota: '' })
+    setFormCobroMembresia({ ...FORM_COBRO_VACIO })
   }
 
   async function procesarCobroMembresia() {
@@ -1662,8 +1812,14 @@ export default function CajaClient({
       return
     }
 
-    const errRef = validarReferenciaPago(formCobroMembresia.forma_pago, formCobroMembresia.referencia)
-    if (errRef) { alert(errRef); setGuardandoCobroMembresia(false); return }
+    const errPagoMem = validarFormaPagoCobro(formCobroMembresia.forma_pago, total, {
+      referencia: formCobroMembresia.referencia,
+      banco: formCobroMembresia.banco,
+      montoEfectivo: formCobroMembresia.monto_efectivo,
+    })
+    if (errPagoMem) { alert(errPagoMem); setGuardandoCobroMembresia(false); return }
+    const errVoucherMem = await validarVoucherTarjeta(formCobroMembresia.forma_pago, formCobroMembresia.referencia)
+    if (errVoucherMem) { alert(errVoucherMem); setGuardandoCobroMembresia(false); return }
 
     const primerPago = lote[0]
     const pac = primerPago.membresia?.paciente
@@ -1746,7 +1902,7 @@ export default function CajaClient({
       paciente_nombre: pacNombre,
       monto:           total,
       forma_pago:      formCobroMembresia.forma_pago,
-      referencia_pago: formCobroMembresia.referencia || null,
+      referencia_pago: construirReferenciaPago(formCobroMembresia.forma_pago, formCobroMembresia.referencia, formCobroMembresia.banco),
       nota:            [
         formCobroMembresia.nota || `Carnet ${carnet} · pagos ${lote.map(p => p.id).join(',')}`,
         totalesLote.recargo > 0 ? `Incluye recargo mora L ${totalesLote.recargo.toFixed(2)}` : null,
@@ -1784,6 +1940,30 @@ export default function CajaClient({
 
     const idsCobrados = new Set(lote.map(p => p.id))
     setMembresiaPorCobrar(prev => prev.filter(p => !idsCobrados.has(p.id)))
+
+    const lineasCuotas = lote.map(p => {
+      const det = montoCuotaConRecargo(p.monto, p.fecha_vencimiento, fechaHoy, p.estado)
+      const recargo = det.total - Number(p.monto)
+      const desc = recargo > 0
+        ? `Cuota #${p.numero_cuota} (+ mora ${recargo.toFixed(2)})`
+        : `Cuota #${p.numero_cuota}`
+      return { descripcion: desc, monto: det.total }
+    })
+    const ticketMem = armarTicketCobro({
+      paciente_nombre: pacNombre,
+      concepto: `Membresía — ${planNombre}`,
+      forma_pago: formCobroMembresia.forma_pago,
+      referencia: formCobroMembresia.referencia,
+      banco: formCobroMembresia.banco,
+      monto_efectivo: formCobroMembresia.monto_efectivo,
+      lineas: lineasCuotas,
+      subtotal: totalesLote.montoBase,
+      descuento_monto: 0,
+      total,
+      nota: formCobroMembresia.nota,
+      titulo: 'COBRO DE MEMBRESÍA',
+    })
+    setMembresiaCobroExitoso({ total, pacNombre, formaPago: formCobroMembresia.forma_pago, ticket: ticketMem })
     cerrarModalCobroMembresia()
     setGuardandoCobroMembresia(false)
 
@@ -1802,14 +1982,14 @@ export default function CajaClient({
       return
     }
     setCotCobro(c)
-    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '', mostrar_nombres_meds: false })
+    setFormCobroCot({ ...FORM_COBRO_VACIO, mostrar_nombres_meds: false })
     setModalCobroCot(true)
   }
 
   function cerrarModalCobroCot() {
     setModalCobroCot(false)
     setCotCobro(null)
-    setFormCobroCot({ forma_pago: 'EFECTIVO', referencia: '', nota: '', mostrar_nombres_meds: false })
+    setFormCobroCot({ ...FORM_COBRO_VACIO, mostrar_nombres_meds: false })
   }
 
   async function procesarCobroCotizacion() {
@@ -1869,8 +2049,14 @@ export default function CajaClient({
       return
     }
 
-    const errRef = validarReferenciaPago(formCobroCot.forma_pago, formCobroCot.referencia)
-    if (errRef) { alert(errRef); setGuardandoCobroCot(false); return }
+    const errPagoCot = validarFormaPagoCobro(formCobroCot.forma_pago, total, {
+      referencia: formCobroCot.referencia,
+      banco: formCobroCot.banco,
+      montoEfectivo: formCobroCot.monto_efectivo,
+    })
+    if (errPagoCot) { alert(errPagoCot); setGuardandoCobroCot(false); return }
+    const errVoucherCot = await validarVoucherTarjeta(formCobroCot.forma_pago, formCobroCot.referencia)
+    if (errVoucherCot) { alert(errVoucherCot); setGuardandoCobroCot(false); return }
     const errCred = validarCreditoConPaciente(formCobroCot.forma_pago, cot.paciente_id ?? undefined)
     if (errCred) { alert(errCred); setGuardandoCobroCot(false); return }
 
@@ -1910,7 +2096,7 @@ export default function CajaClient({
       monto_bruto:     totalesCot.subtotal || total,
       descuento_monto: totalesCot.descuento_monto || 0,
       forma_pago:      formCobroCot.forma_pago,
-      referencia_pago: formCobroCot.referencia || null,
+      referencia_pago: construirReferenciaPago(formCobroCot.forma_pago, formCobroCot.referencia, formCobroCot.banco),
       nota:            formCobroCot.nota || `Cotización ${cot.numero}`,
       fecha:           fechaHoy,
       hora,
@@ -2012,6 +2198,21 @@ export default function CajaClient({
 
     await sb2.from('cotizaciones').update({ factura_id: fact.id }).eq('id', cot.id)
 
+    // ── Descontar inventario de los medicamentos de la cotización ──
+    const itemsStockCot = (itemsCotBlind as ItemCotizacion[])
+      .filter(it => it.tipo === 'MEDICAMENTO' && it.producto_id != null && Number(it.cantidad) > 0)
+      .map(it => ({ productoId: Number(it.producto_id), cantidad: Number(it.cantidad), nombre: it.descripcion }))
+    const resStockCot = await descontarStockVenta(
+      sb2,
+      itemsStockCot,
+      suc.id ?? sesion.sucursal_id ?? null,
+      { tipo: 'factura', id: fact.id as number, motivo: `Cotización ${cot.numero} facturada` },
+      userId,
+    )
+    if (resStockCot.alertas.length > 0) {
+      alert('Inventario:\n\n' + resStockCot.alertas.join('\n'))
+    }
+
     if (fact.paciente_id) {
       const resPts = await acumularPuntosPorFactura(sb2, fact.id as number)
       if (!resPts.ok) console.warn('Puntos fidelidad:', resPts.error)
@@ -2075,6 +2276,7 @@ export default function CajaClient({
       pct,
       det.motivo || 'Descuento',
       det.membInfo?.estructurados,
+      { pctManualPorCategoria: pctManualDesdeForm(formCobro) },
     )
     const base = desgloseFact.subtotal
     const valDesc = desgloseFact.descTotal
@@ -3624,30 +3826,20 @@ export default function CajaClient({
                   className="w-full border rounded-lg pl-9 pr-3 py-2.5 text-lg font-bold" />
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Forma de Pago</label>
-              <div className="grid grid-cols-3 gap-2">
-                {FORMAS_PAGO.filter(f => f.key !== 'CREDITO').map(fp => (
-                  <button key={fp.key}
-                    onClick={() => setFormAbono(p => ({ ...p, forma_pago: fp.key }))}
-                    className={`flex items-center gap-1.5 px-2 py-2 rounded-lg border text-xs transition-all ${
-                      formAbono.forma_pago === fp.key ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'
-                    }`}>
-                    <fp.icon className="w-3.5 h-3.5" /> {fp.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {['TARJETA', 'TRANSFERENCIA'].includes(formAbono.forma_pago) && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {formAbono.forma_pago === 'TARJETA' ? 'Número de voucher *' : 'Referencia de transferencia *'}
-                </label>
-                <input value={formAbono.referencia}
-                  onChange={e => setFormAbono(p => ({ ...p, referencia: e.target.value }))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
-            )}
+            <CobroFormaPagoPanel
+              accent="blue"
+              compacto
+              sinCredito
+              formaPago={formAbono.forma_pago}
+              onChange={fp => setFormAbono(p => ({ ...p, forma_pago: fp }))}
+              referencia={formAbono.referencia}
+              onReferencia={v => setFormAbono(p => ({ ...p, referencia: v }))}
+              banco={formAbono.banco}
+              onBanco={v => setFormAbono(p => ({ ...p, banco: v }))}
+              montoEfectivo={formAbono.monto_efectivo}
+              onMontoEfectivo={v => setFormAbono(p => ({ ...p, monto_efectivo: v }))}
+              totalACobrar={Number(formAbono.monto) || 0}
+            />
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Nota (opcional)</label>
               <input value={formAbono.nota}
@@ -3714,17 +3906,32 @@ export default function CajaClient({
                   <p className="font-semibold text-violet-900">{nombrePac}</p>
                   <p className="text-violet-700">{planNombre}</p>
                   {esLote ? (
-                    <ul className="text-xs text-violet-800 space-y-1 max-h-36 overflow-y-auto">
-                      {membresiaCobroLote.map(p => {
-                        const det = montoCuotaConRecargo(p.monto, p.fecha_vencimiento, fechaHoy, p.estado)
-                        return (
-                          <li key={p.id} className="flex justify-between gap-2">
-                            <span>Cuota #{p.numero_cuota} · vence {p.fecha_vencimiento}</span>
-                            <span className="font-medium shrink-0">{fmt(det.total)}</span>
-                          </li>
-                        )
-                      })}
-                    </ul>
+                    <div className="text-xs text-violet-800 max-h-40 overflow-y-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-violet-600 border-b border-violet-200">
+                            <th className="text-left py-1 font-semibold">Cuota</th>
+                            <th className="text-right py-1 font-semibold">Base</th>
+                            <th className="text-right py-1 font-semibold">Recargo</th>
+                            <th className="text-right py-1 font-semibold">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {membresiaCobroLote.map(p => {
+                            const det = montoCuotaConRecargo(p.monto, p.fecha_vencimiento, fechaHoy, p.estado)
+                            const recargo = det.total - Number(p.monto)
+                            return (
+                              <tr key={p.id} className="border-b border-violet-100 last:border-0">
+                                <td className="py-1.5">#{p.numero_cuota} · {p.fecha_vencimiento}</td>
+                                <td className="py-1.5 text-right">{fmt(Number(p.monto))}</td>
+                                <td className="py-1.5 text-right text-red-600">{recargo > 0 ? fmt(recargo) : '—'}</td>
+                                <td className="py-1.5 text-right font-semibold">{fmt(det.total)}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   ) : (
                     <p className="text-xs text-violet-600">
                       Vence {primerPago.fecha_vencimiento}
@@ -3734,22 +3941,20 @@ export default function CajaClient({
                     </p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Forma de pago</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {FORMAS_PAGO.filter(f => f.key !== 'CREDITO').map(fp => (
-                      <button key={fp.key} type="button"
-                        onClick={() => setFormCobroMembresia(p => ({ ...p, forma_pago: fp.key }))}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs transition-all ${
-                          formCobroMembresia.forma_pago === fp.key
-                            ? 'border-violet-500 bg-violet-50 text-violet-700'
-                            : 'border-gray-200 text-gray-600'
-                        }`}>
-                        <fp.icon className="w-3.5 h-3.5" /> {fp.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <CobroFormaPagoPanel
+                  accent="violet"
+                  compacto
+                  sinCredito
+                  formaPago={formCobroMembresia.forma_pago}
+                  onChange={fp => setFormCobroMembresia(p => ({ ...p, forma_pago: fp }))}
+                  referencia={formCobroMembresia.referencia}
+                  onReferencia={v => setFormCobroMembresia(p => ({ ...p, referencia: v }))}
+                  banco={formCobroMembresia.banco}
+                  onBanco={v => setFormCobroMembresia(p => ({ ...p, banco: v }))}
+                  montoEfectivo={formCobroMembresia.monto_efectivo}
+                  onMontoEfectivo={v => setFormCobroMembresia(p => ({ ...p, monto_efectivo: v }))}
+                  totalACobrar={montoMostrar}
+                />
               </div>
               <div className="space-y-3">
                 <div className="rounded-xl border p-4 text-center space-y-1">
@@ -3772,17 +3977,6 @@ export default function CajaClient({
                     <span>Debes <strong>abrir la caja del día</strong> antes de cobrar. El monto ya está cargado; abre la caja y vuelve a presionar Cobrar.</span>
                   </div>
                 )}
-                {(formCobroMembresia.forma_pago === 'TARJETA' || formCobroMembresia.forma_pago === 'TRANSFERENCIA') && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Referencia</label>
-                    <input
-                      value={formCobroMembresia.referencia}
-                      onChange={e => setFormCobroMembresia(p => ({ ...p, referencia: e.target.value }))}
-                      className="w-full border rounded-lg px-3 py-2 text-sm"
-                      placeholder="No. voucher / transferencia"
-                    />
-                  </div>
-                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nota</label>
                   <input
@@ -3797,6 +3991,40 @@ export default function CajaClient({
           </Modal>
         )
       })()}
+
+      {/* ══ COBRO MEMBRESÍA EXITOSO → TICKET ══ */}
+      {membresiaCobroExitoso && (
+        <Modal
+          title="Membresía Cobrada"
+          onClose={() => setMembresiaCobroExitoso(null)}
+          size="md"
+          accent="violet"
+          icon={BadgeCheck}
+        >
+          <div className="space-y-4 text-center">
+            <CheckCircle2 className="w-12 h-12 text-violet-600 mx-auto" />
+            <p className="text-lg font-bold text-gray-900">¡Cuota(s) cobrada(s)!</p>
+            <p className="text-2xl font-extrabold text-violet-700">L {membresiaCobroExitoso.total.toFixed(2)}</p>
+            <p className="text-sm text-gray-500">{membresiaCobroExitoso.pacNombre} · {membresiaCobroExitoso.formaPago}</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => abrirCobroTicketPrint(membresiaCobroExitoso.ticket)}
+                className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+              >
+                <Printer className="w-4 h-4" /> Imprimir ticket
+              </button>
+              <button
+                type="button"
+                onClick={() => setMembresiaCobroExitoso(null)}
+                className="flex-1 px-4 py-2.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* ══════════ MODAL COBRO COTIZACIÓN ══════════ */}
       {modalCobroCot && cotCobro && (
@@ -3832,22 +4060,19 @@ export default function CajaClient({
                 {cotCobro.cliente_rtn && <p className="text-xs text-orange-600">RTN {cotCobro.cliente_rtn}</p>}
                 <p className="text-xs text-orange-600">Fecha {cotCobro.fecha}</p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Forma de pago</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {FORMAS_PAGO.map(fp => (
-                    <button key={fp.key} type="button"
-                      onClick={() => setFormCobroCot(p => ({ ...p, forma_pago: fp.key }))}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs transition-all ${
-                        formCobroCot.forma_pago === fp.key
-                          ? 'border-orange-500 bg-orange-50 text-orange-700'
-                          : 'border-gray-200 text-gray-600'
-                      }`}>
-                      <fp.icon className="w-3.5 h-3.5" /> {fp.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <CobroFormaPagoPanel
+                accent="orange"
+                compacto
+                formaPago={formCobroCot.forma_pago}
+                onChange={fp => setFormCobroCot(p => ({ ...p, forma_pago: fp }))}
+                referencia={formCobroCot.referencia}
+                onReferencia={v => setFormCobroCot(p => ({ ...p, referencia: v }))}
+                banco={formCobroCot.banco}
+                onBanco={v => setFormCobroCot(p => ({ ...p, banco: v }))}
+                montoEfectivo={formCobroCot.monto_efectivo}
+                onMontoEfectivo={v => setFormCobroCot(p => ({ ...p, monto_efectivo: v }))}
+                totalACobrar={cotCobro.total}
+              />
             </div>
             <div className="space-y-3">
               <div className="rounded-xl border p-4 text-center">
@@ -3857,17 +4082,6 @@ export default function CajaClient({
                   <p className="text-xs text-gray-500 mt-1">Incluye descuento de {fmt(cotCobro.descuento_monto)}</p>
                 )}
               </div>
-              {(formCobroCot.forma_pago === 'TARJETA' || formCobroCot.forma_pago === 'TRANSFERENCIA') && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Referencia</label>
-                  <input
-                    value={formCobroCot.referencia}
-                    onChange={e => setFormCobroCot(p => ({ ...p, referencia: e.target.value }))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
-                    placeholder="No. voucher / transferencia"
-                  />
-                </div>
-              )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nota</label>
                 <input
@@ -4151,6 +4365,11 @@ export default function CajaClient({
                   }}
                   referencia={formCobroLab.referencia}
                   onReferencia={v => setFormCobroLab(p => ({ ...p, referencia: v }))}
+                  banco={formCobroLab.banco}
+                  onBanco={v => setFormCobroLab(p => ({ ...p, banco: v }))}
+                  montoEfectivo={formCobroLab.monto_efectivo}
+                  onMontoEfectivo={v => setFormCobroLab(p => ({ ...p, monto_efectivo: v }))}
+                  totalACobrar={totalFinal}
                 />
 
                 <input
@@ -4201,6 +4420,15 @@ export default function CajaClient({
               }
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
+              {labCobroExitoso.ticket && (
+                <button
+                  type="button"
+                  onClick={() => abrirCobroTicketPrint(labCobroExitoso.ticket!)}
+                  className="flex-1 px-4 py-2.5 border border-cyan-300 bg-cyan-50 rounded-lg text-sm font-medium text-cyan-800 hover:bg-cyan-100 flex items-center justify-center gap-2"
+                >
+                  <Printer className="w-4 h-4" /> Imprimir ticket
+                </button>
+              )}
               <button
                 type="button"
                 onClick={cerrarModalCobroLab}
@@ -4334,7 +4562,10 @@ export default function CajaClient({
           pctInput,
           det.motivo || 'Descuento',
           membInfo?.estructurados,
+          { pctManualPorCategoria: pctManualDesdeForm(formCobro) },
         )
+        const lineaDesc = (cat: LineaCobroDesc['categoria']) =>
+          desgloseUI.lineas.find(l => l.categoria === cat)
         const baseAmount = det.subtotal
         const valDescInput = desgloseUI.descTotal
         const totalFinal = desgloseUI.total
@@ -4409,6 +4640,17 @@ export default function CajaClient({
                 <div className="space-y-3">
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-wider px-1">Desglose de cobro</p>
 
+                  {alertasStockCobro.length > 0 && (
+                    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 shrink-0" /> Inventario — aviso antes de cobrar
+                      </p>
+                      {alertasStockCobro.map((msg, i) => (
+                        <p key={i} className="text-xs whitespace-pre-line leading-relaxed">{msg}</p>
+                      ))}
+                    </div>
+                  )}
+
                   {det.consulta > 0 && (
                     <CobroLineaGrupo
                       icon={Stethoscope}
@@ -4416,6 +4658,10 @@ export default function CajaClient({
                       total={det.consulta}
                       headerClass="bg-emerald-50"
                       iconClass="text-emerald-600"
+                      lineaDesc={lineaDesc('consulta')}
+                      descPctManual={formCobro.desc_pct_consulta}
+                      onDescPctManual={v => setFormCobro(p => ({ ...p, desc_pct_consulta: v }))}
+                      esAdmin={esAdmin}
                     >
                       <CobroLineaItem nombre="Valor de consulta" monto={det.consulta} />
                     </CobroLineaGrupo>
@@ -4428,15 +4674,27 @@ export default function CajaClient({
                       total={det.servicios}
                       headerClass="bg-blue-50"
                       iconClass="text-blue-600"
+                      lineaDesc={lineaDesc('servicios')}
+                      descPctManual={formCobro.desc_pct_servicios}
+                      onDescPctManual={v => setFormCobro(p => ({ ...p, desc_pct_servicios: v }))}
+                      esAdmin={esAdmin}
                     >
-                      {(consultaCobro.consulta_servicios || []).map((s, i) => (
-                        <CobroLineaItem
-                          key={i}
-                          nombre={s.nombre}
-                          detalle={`Cantidad: ${s.cantidad} × L ${s.precio.toFixed(2)}`}
-                          monto={s.precio * s.cantidad}
-                        />
-                      ))}
+                      {(consultaCobro.consulta_servicios || []).length > 0
+                        ? (consultaCobro.consulta_servicios || []).map((s, i) => (
+                          <CobroLineaItem
+                            key={i}
+                            nombre={s.nombre}
+                            detalle={`Cantidad: ${s.cantidad} × L ${s.precio.toFixed(2)}`}
+                            monto={s.precio * s.cantidad}
+                          />
+                        ))
+                        : (
+                          <CobroLineaItem
+                            nombre="Servicios del examen"
+                            detalle="Total registrado en la consulta"
+                            monto={det.servicios}
+                          />
+                        )}
                     </CobroLineaGrupo>
                   )}
 
@@ -4447,6 +4705,10 @@ export default function CajaClient({
                       total={det.lab}
                       headerClass="bg-cyan-50"
                       iconClass="text-cyan-600"
+                      lineaDesc={lineaDesc('laboratorio')}
+                      descPctManual={formCobro.desc_pct_lab}
+                      onDescPctManual={v => setFormCobro(p => ({ ...p, desc_pct_lab: v }))}
+                      esAdmin={esAdmin}
                     >
                       {(consultaCobro.consulta_analisis || []).map((a, i) => (
                         <CobroLineaItem key={i} nombre={a.no_analisis} monto={Number(a.importe)} />
@@ -4454,35 +4716,60 @@ export default function CajaClient({
                     </CobroLineaGrupo>
                   )}
 
-                  {det.meds > 0 && (
+                  {(det.meds > 0 || (consultaCobro.consulta_detalle?.length ?? 0) > 0) && (
                     <CobroLineaGrupo
                       icon={Pill}
                       titulo="Medicamentos"
                       total={det.meds}
                       headerClass="bg-violet-50"
                       iconClass="text-violet-600"
+                      lineaDesc={lineaDesc('medicamentos')}
+                      descPctManual={formCobro.desc_pct_meds}
+                      onDescPctManual={v => setFormCobro(p => ({ ...p, desc_pct_meds: v }))}
+                      esAdmin={esAdmin}
                     >
-                      {(consultaCobro.consulta_detalle || []).map((d, i) => (
-                        <CobroLineaItem
-                          key={i}
-                          nombre={d.no_producto}
-                          detalle={`Cantidad: ${d.cant}`}
-                          monto={Number(d.precio_venta || 0) * d.cant}
-                        />
-                      ))}
+                      {(consultaCobro.consulta_detalle || []).map((d, i) => {
+                        const unit = Number(d.precio_venta || 0)
+                        const lineTotal = unit * Number(d.cant || 1)
+                        return (
+                          <CobroLineaItem
+                            key={d.id ?? i}
+                            nombre={d.no_producto}
+                            detalle={
+                              unit > 0
+                                ? `Cantidad: ${d.cant} × L ${unit.toFixed(2)}`
+                                : `Cantidad: ${d.cant} · sin precio en catálogo`
+                            }
+                            monto={lineTotal}
+                          />
+                        )
+                      })}
                     </CobroLineaGrupo>
-                  )}
-
-                  {(consultaCobro.consulta_detalle?.length || 0) > 0 && det.meds === 0 && (
-                    <div className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-3 text-sm text-purple-800">
-                      Medicamentos recetados ({consultaCobro.consulta_detalle!.length}) sin precio en catálogo
-                    </div>
                   )}
 
                   <div className="flex justify-between items-center px-4 py-3 rounded-xl bg-gray-100 border border-gray-200 font-bold text-gray-900">
                     <span>Subtotal</span>
                     <span className="text-lg tabular-nums">L {det.subtotal.toFixed(2)}</span>
                   </div>
+
+                  {valDescInput > 0 && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 space-y-1.5 text-sm">
+                      <p className="font-semibold text-amber-900">Resumen de descuentos</p>
+                      {desgloseUI.lineas.filter(l => l.bruto > 0 && l.pct > 0).map(l => (
+                        <div key={l.categoria} className="flex justify-between text-amber-800 text-xs">
+                          <span className="capitalize">
+                            {l.categoria === 'laboratorio' ? 'Laboratorio' : l.categoria}
+                            {' '}{l.pct}%{l.motivo ? ` (${l.motivo})` : ''}
+                          </span>
+                          <span className="tabular-nums">L {l.bruto.toFixed(2)} → L {l.neto.toFixed(2)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between font-bold text-amber-900 pt-1 border-t border-amber-200/80">
+                        <span>Descuento total</span>
+                        <span className="tabular-nums">- L {valDescInput.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -4586,6 +4873,11 @@ export default function CajaClient({
                   onChange={fp => setFormCobro(p => ({ ...p, forma_pago: fp }))}
                   referencia={formCobro.referencia}
                   onReferencia={v => setFormCobro(p => ({ ...p, referencia: v }))}
+                  banco={formCobro.banco}
+                  onBanco={v => setFormCobro(p => ({ ...p, banco: v }))}
+                  montoEfectivo={formCobro.monto_efectivo}
+                  onMontoEfectivo={v => setFormCobro(p => ({ ...p, monto_efectivo: v }))}
+                  totalACobrar={totalFinal}
                 />
 
                 <input
@@ -4634,6 +4926,15 @@ export default function CajaClient({
               }
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
+              {cobroExitoso.ticket && (
+                <button
+                  type="button"
+                  onClick={() => abrirCobroTicketPrint(cobroExitoso.ticket!)}
+                  className="flex-1 px-4 py-2.5 border border-green-300 bg-green-50 rounded-lg text-sm font-medium text-green-800 hover:bg-green-100 flex items-center justify-center gap-2"
+                >
+                  <Printer className="w-4 h-4" /> Imprimir ticket
+                </button>
+              )}
               <button
                 onClick={cerrarModalCobro}
                 className="flex-1 px-4 py-2.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
@@ -4761,6 +5062,7 @@ export default function CajaClient({
 
 function CobroLineaGrupo({
   icon: Icon, titulo, total, headerClass, iconClass, children,
+  lineaDesc, descPctManual, onDescPctManual, esAdmin,
 }: {
   icon: LucideIcon
   titulo: string
@@ -4768,6 +5070,10 @@ function CobroLineaGrupo({
   headerClass: string
   iconClass: string
   children: React.ReactNode
+  lineaDesc?: LineaCobroDesc
+  descPctManual?: string
+  onDescPctManual?: (v: string) => void
+  esAdmin?: boolean
 }) {
   return (
     <div className="rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -4779,6 +5085,31 @@ function CobroLineaGrupo({
         <span className="text-sm font-bold text-gray-900 tabular-nums shrink-0 ml-2">L {total.toFixed(2)}</span>
       </div>
       <div className="divide-y divide-gray-100 bg-white">{children}</div>
+      {lineaDesc && lineaDesc.pct > 0 && (
+        <div className="px-4 py-2 bg-amber-50/70 border-t border-amber-100 text-xs flex flex-wrap justify-between gap-1 text-amber-900">
+          <span>
+            Desc. {lineaDesc.pct}%
+            {lineaDesc.motivo ? ` (${lineaDesc.motivo})` : ''}
+          </span>
+          <span className="tabular-nums font-semibold">
+            - L {lineaDesc.descMonto.toFixed(2)} → L {lineaDesc.neto.toFixed(2)}
+          </span>
+        </div>
+      )}
+      {esAdmin && onDescPctManual && (
+        <div className="px-4 py-2 flex items-center gap-2 text-xs border-t bg-slate-50">
+          <span className="text-gray-600 shrink-0">Desc. manual %</span>
+          <input
+            type="number"
+            min="0"
+            max="100"
+            step="any"
+            value={descPctManual ?? '0'}
+            onChange={e => onDescPctManual(e.target.value)}
+            className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-center font-semibold"
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -4824,49 +5155,6 @@ function CobroFacturaFields({
         supabase={supabase}
         resetKey={resetKey}
       />
-    </div>
-  )
-}
-
-function CobroFormaPagoPanel({
-  formaPago, onChange, referencia, onReferencia, accent = 'green',
-}: {
-  formaPago: string
-  onChange: (fp: string) => void
-  referencia: string
-  onReferencia: (v: string) => void
-  accent?: 'green' | 'cyan'
-}) {
-  const active = accent === 'cyan'
-    ? 'border-cyan-500 bg-cyan-50 text-cyan-700 ring-1 ring-cyan-200'
-    : 'border-green-500 bg-green-50 text-green-700 ring-1 ring-green-200'
-
-  return (
-    <div className="space-y-3">
-      <label className="block text-sm font-semibold text-gray-800">Forma de pago</label>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {FORMAS_PAGO.map(fp => (
-          <button
-            key={fp.key}
-            type="button"
-            onClick={() => onChange(fp.key)}
-            className={`flex flex-col sm:flex-row items-center justify-center gap-1.5 px-3 py-3 rounded-xl border text-sm font-medium transition min-h-[52px] ${
-              formaPago === fp.key ? active : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
-            }`}
-          >
-            <fp.icon className="w-4 h-4 flex-shrink-0" />
-            <span className="text-xs sm:text-sm">{fp.label}</span>
-          </button>
-        ))}
-      </div>
-      {formaPago === 'TRANSFERENCIA' && (
-        <input
-          value={referencia}
-          onChange={e => onReferencia(e.target.value)}
-          placeholder="Número de referencia / comprobante"
-          className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-        />
-      )}
     </div>
   )
 }

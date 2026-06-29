@@ -14,6 +14,7 @@ import { nombreCompletoPaciente, edadPaciente, textoBusquedaPacienteFull, export
 import { buscarPacienteDuplicado, mensajePacienteDuplicado, type PacienteDuplicado } from '@/lib/paciente-duplicado'
 import { subirFotoPaciente } from '@/lib/paciente-foto'
 import ColoniaSelect, { type Colonia } from '@/components/colonia-select'
+import PacienteExitoPanel from '@/components/paciente-exito-panel'
 
 interface Paciente {
   id: number
@@ -361,11 +362,7 @@ export default function PacientesClient({ pacientes, listas, colonias, membresia
           listas={listas}
           colonias={colonias}
           onClose={() => setShowModal(false)}
-          onSuccess={(id) => {
-            setShowModal(false)
-            if (id) router.push(`/pacientes/${id}`)
-            else startTransition(() => router.refresh())
-          }}
+          onCreated={() => startTransition(() => router.refresh())}
         />
       )}
       </div>
@@ -377,18 +374,23 @@ export default function PacientesClient({ pacientes, listas, colonias, membresia
 //  MODAL — Nuevo Paciente
 // ================================================================
 function NuevoPacienteModal({
-  listas, colonias, onClose, onSuccess,
+  listas, colonias, onClose, onCreated,
 }: {
   listas: Lista[]
   colonias: Colonia[]
   onClose: () => void
-  onSuccess: (id?: number) => void
+  onCreated: () => void
 }) {
   const [tipo,    setTipo]    = useState<'persona' | 'empresa'>('persona')
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
   const [dupExistente, setDupExistente] = useState<PacienteDuplicado | null>(null)
   const [fotoFile, setFotoFile] = useState<File | null>(null)
+  const [exito, setExito] = useState<{ id: number; nombre: string; aviso?: string } | null>(null)
+
+  function cerrarExito() {
+    onClose()
+  }
 
   async function verificarDuplicado(codigo: string, rtn?: string) {
     const { createClient } = await import('@/lib/supabase/client')
@@ -477,18 +479,43 @@ function NuevoPacienteModal({
       return
     }
 
+    const nombreCreado = tipo === 'persona'
+      ? `${String(data.nombre ?? '').trim()} ${String(data.apellido1 ?? '').trim()}`.trim()
+      : String(data.nombre_empresa ?? '').trim()
+
+    let avisoFoto: string | undefined
     if (fotoFile && inserted?.id) {
       try {
         await subirFotoPaciente(supabase, inserted.id, fotoFile)
       } catch (err) {
-        setError('Paciente creado, pero la foto no se pudo subir: ' + (err instanceof Error ? err.message : ''))
-        setLoading(false)
-        onSuccess(inserted.id)
-        return
+        avisoFoto = 'Paciente creado, pero la foto no se pudo subir: ' + (err instanceof Error ? err.message : '')
       }
     }
 
-    onSuccess(inserted?.id)
+    if (inserted?.id) {
+      onCreated()
+      setExito({ id: inserted.id, nombre: nombreCreado || `Paciente #${inserted.id}`, aviso: avisoFoto })
+      setLoading(false)
+      return
+    }
+
+    onCreated()
+    onClose()
+  }
+
+  if (exito) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[95vh] overflow-y-auto">
+          <PacienteExitoPanel
+            pacienteId={exito.id}
+            nombre={exito.nombre}
+            aviso={exito.aviso}
+            onClose={cerrarExito}
+          />
+        </div>
+      </div>
+    )
   }
 
   return (
