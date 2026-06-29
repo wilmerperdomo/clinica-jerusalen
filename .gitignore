@@ -16,3 +16,7 @@ tsconfig.tsbuildinfo
 *.log
 .DS_Store
 Thumbs.db
+
+# salidas temporales de build/typecheck
+build-out.txt
+tsc-out.txt
