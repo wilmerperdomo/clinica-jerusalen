@@ -826,6 +826,30 @@ export default function CajaClient({
 
   const arqueoCuadrado = Math.abs(diferenciaArqueo) < 0.01
 
+  /* ── corregir el monto inicial de la sesión abierta ─ */
+  // Si la caja se abrió con un monto equivocado (p. ej. 0), permitimos
+  // ajustarlo SIN cerrar la sesión (cerrar la bloquearía por el resto del día).
+  async function ajustarMontoInicial() {
+    if (!sesion) return
+    const errSesion = validarSesionOperacion(sesion, userId)
+    if (errSesion) { alert(errSesion); return }
+    const actual = Number(sesion.monto_inicial || 0)
+    const entrada = window.prompt(
+      'Monto inicial real con el que abriste la caja (efectivo en el cajón):',
+      String(actual),
+    )
+    if (entrada == null) return
+    const nuevo = Number(entrada)
+    if (Number.isNaN(nuevo) || nuevo < 0) { alert('Monto inválido'); return }
+    if (nuevo === actual) return
+    const { error } = await supabase
+      .from('caja_sesiones')
+      .update({ monto_inicial: nuevo })
+      .eq('id', sesion.id)
+    if (error) { alert('No se pudo actualizar el monto inicial: ' + error.message); return }
+    setSesion(prev => (prev ? { ...prev, monto_inicial: nuevo } : prev))
+  }
+
   function abrirModalCierre() {
     if (!sesion) return
     setFormCierre({
@@ -3119,6 +3143,9 @@ export default function CajaClient({
             <ModuleBtnPrimary onClick={() => ventaRapida.abrir('INGRESO')}>
               <Receipt className="w-4 h-4" /> Venta rápida
             </ModuleBtnPrimary>
+            <ModuleBtnGhost onClick={ajustarMontoInicial}>
+              <Pencil className="w-4 h-4" /> Monto inicial
+            </ModuleBtnGhost>
             {esAdmin && (
               <ModuleBtnGhost onClick={abrirModalConceptos}>
                 <Tags className="w-4 h-4" /> Egresos
