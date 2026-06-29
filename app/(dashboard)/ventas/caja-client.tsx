@@ -897,6 +897,21 @@ export default function CajaClient({
       }
     }
 
+    // Verificar que la sesión realmente quedó CERRADA antes de imprimir el
+    // comprobante. Si sigue ABIERTA (p. ej. RLS bloqueó el update), avisamos
+    // en lugar de imprimir un cierre que no se guardó.
+    const { data: verif } = await supabase
+      .from('caja_sesiones')
+      .select('estado')
+      .eq('id', sesion.id)
+      .maybeSingle()
+    if (verif && verif.estado !== 'CERRADA') {
+      return alert(
+        'No se pudo confirmar el cierre: la sesión sigue abierta en el sistema.\n\n'
+        + 'No se imprimió el comprobante. Ejecute scripts/FIX-CAJA-CIERRE-RLS.sql en Supabase e intente de nuevo.',
+      )
+    }
+
     const suc = sucursales.find(s => s.id === sesion.sucursal_id)
     const printData: CajaCierrePrintData = {
       sucursal_nombre: suc?.nombre,
@@ -934,7 +949,33 @@ export default function CajaClient({
 
     setModalCierre(false)
     abrirCierreCajaPrint(printData)
+
+    // ¿Quedan otras sesiones ABIERTAS de este cajero? (turnos de días previos
+    // que no se cerraron por los cortes de sesión / cruce de medianoche).
+    // Las detectamos para avisar con claridad que NO es que el cierre falló.
+    const { data: otras } = await supabase
+      .from('caja_sesiones')
+      .select('id, fecha, monto_inicial')
+      .eq('cajero_id', userId)
+      .eq('estado', 'ABIERTA')
+      .neq('id', sesion.id)
+      .order('fecha', { ascending: false })
+
     startTransition(() => { recargar() })
+
+    if (otras && otras.length > 0) {
+      const o = otras[0]
+      const fechaTxt = fmtFechaNac(String(o.fecha || '')) || String(o.fecha || '')
+      const mas = otras.length > 1 ? ` (y ${otras.length - 1} más)` : ''
+      alert(
+        'Caja cerrada e impresa correctamente.\n\n'
+        + `Tienes otra sesión de caja ABIERTA del ${fechaTxt}${mas}, `
+        + `con apertura L ${Number(o.monto_inicial || 0).toFixed(2)}. `
+        + 'Se cargó en pantalla para que también la cierres.\n\n'
+        + 'Esto ocurre cuando una caja quedó abierta de un día anterior. '
+        + 'Ciérrala con su propio arqueo y listo.',
+      )
+    }
     } catch (e) {
       console.error('cerrarCaja:', e)
       alert('Error inesperado al cerrar caja. Verifique si la sesión quedó cerrada antes de reintentar.')
