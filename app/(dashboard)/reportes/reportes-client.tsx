@@ -1458,6 +1458,7 @@ export default function ReportesClient({
             </div>
           )}
         </div>
+        </div>
       </div>}
 
       {tabActivo === 'descuentos' && <div className="space-y-5">
