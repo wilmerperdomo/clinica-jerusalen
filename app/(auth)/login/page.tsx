@@ -14,6 +14,12 @@ import { BRAND } from '@/lib/brand'
 import { LOGO_TICKET_CLASS } from '@/lib/brand-logo'
 
 import { asegurarPerfilAlLogin, obtenerRutaInicioPostLogin } from './actions'
+import {
+  etiquetaRutaRetorno,
+  leerRutaRetornoGuardada,
+  limpiarRutaRetornoGuardada,
+  rutaRetornoSegura,
+} from '@/lib/return-url'
 
 
 
@@ -40,6 +46,8 @@ export default function LoginPage() {
 
 
   const motivoTimeout = searchParams.get('motivo') === 'inactividad'
+  const returnTo = rutaRetornoSegura(searchParams.get('returnTo')) ?? leerRutaRetornoGuardada()
+  const etiquetaRetorno = returnTo ? etiquetaRutaRetorno(returnTo) : null
 
 
 
@@ -93,7 +101,8 @@ export default function LoginPage() {
 
 
 
-    const rutaInicio = await obtenerRutaInicioPostLogin()
+    const rutaInicio = returnTo ?? await obtenerRutaInicioPostLogin()
+    limpiarRutaRetornoGuardada()
     router.push(rutaInicio)
     router.refresh()
 
@@ -199,7 +208,12 @@ export default function LoginPage() {
 
             <Clock className="w-4 h-4 mt-0.5 flex-shrink-0" />
 
-            <span>Tu sesión se cerró por <strong>30 minutos de inactividad</strong>. Inicia sesión nuevamente.</span>
+            <span>
+              Tu sesión se cerró por <strong>30 minutos de inactividad</strong>. Inicia sesión nuevamente.
+              {etiquetaRetorno && (
+                <> Al entrar volverás a <strong>{etiquetaRetorno}</strong>.</>
+              )}
+            </span>
 
           </div>
 

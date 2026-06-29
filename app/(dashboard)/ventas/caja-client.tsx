@@ -75,6 +75,12 @@ import NombreFacturarProtegido from './components/nombre-facturar-protegido'
 import { useVentaRapida } from './hooks/use-venta-rapida'
 import { cargarConsultaDetalleConPrecios } from '@/lib/consulta-detalle-utils'
 import { evaluarStockMedicamentos } from '@/lib/medicamento-stock-alerta'
+import {
+  guardarCobroPendiente,
+  leerCobroPendiente,
+  limpiarCobroPendiente,
+  type CajaCobroPendiente,
+} from '@/lib/caja-resume'
 import { PREFIJOS_CONCEPTO_VENTA } from '@/lib/venta-rapida/constants'
 import type { VentaRapidaIngresoOk } from '@/lib/venta-rapida/types'
 import {
@@ -303,6 +309,7 @@ export default function CajaClient({
     total: number; pacNombre: string; formaPago: string; ticket: CobroTicketData
   } | null>(null)
   const [alertasStockCobro, setAlertasStockCobro] = useState<string[]>([])
+  const [cobroPendiente, setCobroPendiente] = useState<CajaCobroPendiente | null>(null)
   const [correlativos,   setCorrelativos]   = useState(initCorrelativos)
   const [modalFactura,   setModalFactura]   = useState(false)
   const [formFactura,    setFormFactura]    = useState({ nombre_cliente: '', rtn_cliente: '', exento: true, mostrar_nombres_meds: false })
@@ -361,6 +368,13 @@ export default function CajaClient({
   const [factImpresaVentaRapida, setFactImpresaVentaRapida] = useState<Record<string, unknown> | null>(null)
 
   const supabase = sb()
+
+  // Cobro interrumpido (error de red, sesión, etc.) — ofrecer reanudar al volver a caja.
+  useEffect(() => {
+    if (!sesion || sesion.estado !== 'ABIERTA') return
+    const p = leerCobroPendiente()
+    if (p) setCobroPendiente(p)
+  }, [sesion])
 
   const cajeroNombreTicket = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Cajero/a'
 
@@ -1049,6 +1063,12 @@ export default function CajaClient({
 
   /* ── abrir modal de cobro cargando detalles completos ─ */
   async function abrirModalCobro(c: ConsultaPorCobrar) {
+    const labelPendiente = c.paciente
+      ? `${c.paciente.nombre} ${c.paciente.apellido1 || ''}`.trim()
+      : `Consulta #${c.id}`
+    guardarCobroPendiente({ tipo: 'consulta', id: c.id, tab: 'cobrar', label: labelPendiente })
+    setCobroPendiente(leerCobroPendiente())
+
     setLoadingCobro(true)
     try {
       const sb = supabase
@@ -1126,7 +1146,15 @@ export default function CajaClient({
       }
     } catch (e) {
       console.error('abrirModalCobro:', e)
-      alert('No se pudo abrir el cobro. Intente de nuevo.')
+      const msg = e instanceof Error ? e.message : 'Error desconocido'
+      const { confirmed } = await confirmDialog({
+        title: 'No se pudo abrir el cobro',
+        message: `Ocurrió un problema al cargar esta consulta (${msg}). Puede reintentar ahora o usar el aviso «Continuar cobro» en caja.`,
+        variant: 'warning',
+        confirmLabel: 'Reintentar',
+        cancelLabel: 'Cerrar',
+      })
+      if (confirmed) await abrirModalCobro(c)
     } finally {
       setLoadingCobro(false)
     }
@@ -1386,6 +1414,8 @@ export default function CajaClient({
 
     // quitar de la lista local
     setConsultasPorCobrar(prev => prev.filter(c => c.id !== consultaCobro.id))
+    limpiarCobroPendiente()
+    setCobroPendiente(null)
     // mostrar paso "éxito + ¿facturar?"
     setCobroExitoso({
       total,
@@ -1438,6 +1468,28 @@ export default function CajaClient({
         .eq('id', sesion.id).maybeSingle()
       if (s2) setSesion(s2)
     })
+  }
+
+  function descartarCobroPendiente() {
+    limpiarCobroPendiente()
+    setCobroPendiente(null)
+  }
+
+  async function reanudarCobroPendiente() {
+    const p = cobroPendiente ?? leerCobroPendiente()
+    if (!p) return
+    setTab(p.tab)
+    if (p.tipo === 'consulta') {
+      const c = consultasPorCobrar.find(x => x.id === Number(p.id))
+      if (c) {
+        await abrirModalCobro(c)
+        return
+      }
+      await recargar()
+      alert('La consulta ya no está en la lista. Actualice y vuelva a intentar desde Consultas por cobrar.')
+      return
+    }
+    alert('Reanudación automática disponible solo para consultas por ahora.')
   }
 
   /* ── cerrar modal cobro limpiamente ── */
@@ -2924,6 +2976,39 @@ export default function CajaClient({
           </p>
         </div>
       </div>
+
+      {cobroPendiente && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2 text-sm text-amber-950 min-w-0">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-semibold">Cobro pendiente de reanudar</p>
+              <p className="text-amber-800 truncate">
+                {cobroPendiente.label || `Consulta #${cobroPendiente.id}`}
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Si hubo un error o se cerró la sesión, puede continuar aquí sin perder el turno de caja.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={descartarCobroPendiente}
+              className="px-3 py-2 rounded-lg border border-amber-300 text-sm text-amber-900 hover:bg-amber-100"
+            >
+              Descartar
+            </button>
+            <button
+              type="button"
+              onClick={() => void reanudarCobroPendiente()}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-amber-600 text-white hover:bg-amber-700"
+            >
+              Continuar cobro
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* desglose por forma de pago */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
