@@ -552,8 +552,10 @@ export default function CajaClient({
           .from('caja_sesiones')
           .select('*, movimientos:caja_movimientos(*)')
           .eq('cajero_id', userId)
-          .eq('fecha', fechaHoy)
           .eq('estado', 'ABIERTA')
+          .order('fecha', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         cxcQuery,
         supabase
@@ -710,13 +712,15 @@ export default function CajaClient({
     const nombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
     try {
-    // Reanudar sesión abierta existente del día (evita choque con idx_sesion_unica).
+    // Reanudar cualquier sesión abierta del cajero (aunque sea de un día
+    // anterior por cruce de medianoche). Evita abrir una nueva sesión vacía y
+    // perder de vista el monto de apertura y los cobros ya registrados.
     const sesionAbierta = await supabase
       .from('caja_sesiones')
       .select('*, movimientos:caja_movimientos(*)')
       .eq('cajero_id', userId)
-      .eq('fecha', fechaHoy)
       .eq('estado', 'ABIERTA')
+      .order('fecha', { ascending: false })
       .order('id', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -896,7 +900,7 @@ export default function CajaClient({
     const printData: CajaCierrePrintData = {
       sucursal_nombre: suc?.nombre,
       cajero_nombre: sesion.cajero_nombre,
-      fecha: fechaHoy,
+      fecha: sesion.fecha || fechaHoy,
       hora_apertura: sesion.hora_apertura,
       hora_cierre: horaCierre,
       monto_inicial: Number(sesion.monto_inicial || 0),

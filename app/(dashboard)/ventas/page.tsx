@@ -74,12 +74,18 @@ export default async function VentasPage({
     { data: membresiaPagosRaw },
     { data: membresiasActivasRaw },
   ] = await Promise.all([
+    // Sesión ABIERTA del cajero. NO se filtra por fecha: si quedó una sesión
+    // abierta de un día anterior (p. ej. se cobró cerca de medianoche y luego
+    // cambió el día), debe seguir visible para verla y cerrarla, sin perder el
+    // monto de apertura ni los cobros ya registrados.
     supabase
       .from('caja_sesiones')
       .select('*, movimientos:caja_movimientos(*)')
       .eq('cajero_id', user?.id)
-      .eq('fecha', hoy)
       .eq('estado', 'ABIERTA')
+      .order('fecha', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(1)
       .maybeSingle(),
 
     supabase
