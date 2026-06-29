@@ -1,14 +1,18 @@
 import type { createClient } from '@/lib/supabase/client'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 
 type BrowserSupabase = ReturnType<typeof createClient>
 
-/** true si el usuario tiene una sesión de caja ABIERTA hoy (no debe auto-cerrar login). */
+/**
+ * true si el usuario tiene una sesión de caja ABIERTA hoy (no debe auto-cerrar login).
+ * En error de red/BD asumimos caja abierta (fail-safe) para no expulsar al cajero.
+ */
 export async function tieneCajaSesionAbierta(sb: BrowserSupabase): Promise<boolean> {
   try {
     const { data: { user } } = await sb.auth.getUser()
     if (!user) return false
 
-    const hoy = new Date().toISOString().slice(0, 10)
+    const hoy = fechaHoyHN()
     const { data, error } = await sb
       .from('caja_sesiones')
       .select('id')
@@ -19,10 +23,10 @@ export async function tieneCajaSesionAbierta(sb: BrowserSupabase): Promise<boole
 
     if (error) {
       console.warn('tieneCajaSesionAbierta:', error.message)
-      return false
+      return true
     }
     return !!data
   } catch {
-    return false
+    return true
   }
 }

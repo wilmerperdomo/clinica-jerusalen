@@ -26,7 +26,7 @@ export async function validarVoucherDuplicadoDia(
 
   if (error) {
     console.warn('validarVoucherDuplicadoDia:', error.message)
-    return null
+    return 'No se pudo verificar el voucher. Intente de nuevo en unos segundos.'
   }
 
   const dup = (data || []).find(

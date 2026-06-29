@@ -183,7 +183,11 @@ export default async function VentasPage({
     .order('id', { ascending: false })
     .limit(300)
 
-  const { data: labRaw, error: labErr } = await labBase.eq('estado_lab', 'PENDIENTE_COBRO')
+  const { data: labRaw, error: labErr } = await (
+    !esSuperAdmin && sucursalId
+      ? labBase.eq('estado_lab', 'PENDIENTE_COBRO').eq('sucursal_id', sucursalId)
+      : labBase.eq('estado_lab', 'PENDIENTE_COBRO')
+  )
 
   if (!labErr && labRaw) {
     const pacIds = [

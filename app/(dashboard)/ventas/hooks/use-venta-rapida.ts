@@ -230,6 +230,7 @@ export function useVentaRapida({
 
     setGuardando(true)
 
+    try {
     const resultado = form.tipo === 'INGRESO'
       ? await registrarVentaRapidaIngreso({
           supabase,
@@ -256,8 +257,6 @@ export function useVentaRapida({
           fechaHoy,
         })
 
-    setGuardando(false)
-
     if (!resultado.ok) {
       alert(resultado.error)
       return
@@ -269,6 +268,12 @@ export function useVentaRapida({
       onIngresoExitoso?.(resultado)
     } else {
       onEgresoExitoso?.()
+    }
+    } catch (e) {
+      console.error('venta rapida confirmar:', e)
+      alert('Error inesperado al registrar la venta.')
+    } finally {
+      setGuardando(false)
     }
   }, [
     sesion, form, items, pacientes, servicios, productos, pruebasLab, conceptos,

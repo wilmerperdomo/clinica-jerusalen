@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useMemo, useEffect, useCallback, useRef } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { generarLineasProduccion } from '@/lib/planilla-utils'
 import {
   DollarSign, TrendingUp, TrendingDown, Save, Plus,
@@ -12,8 +12,10 @@ import {
   AlertTriangle, type LucideIcon,
 } from 'lucide-react'
 import {
+  agruparLabPorCobrar,
   calcularDescuentoEdad,
   type LabGrupoCobro,
+  type LabOrdenCobroRow,
 } from '@/lib/lab-cobro-utils'
 import {
   descuentoEfectivo,
@@ -104,7 +106,7 @@ interface Movimiento {
 }
 interface Sesion {
   id: number; monto_inicial: number; hora_apertura: string
-  cajero_nombre?: string; sucursal_id?: number
+  cajero_id?: string; cajero_nombre?: string; sucursal_id?: number
   total_ingresos: number; total_egresos: number
   estado: string; fecha?: string
   hora_cierre?: string
@@ -236,13 +238,6 @@ interface Props {
   fidelidadConfig:         FidelidadConfig
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
-
 /* ═══════════════════════════════════════════════════════ */
 export default function CajaClient({
   sesionActual: initSesion, conceptos, pacientes, sucursales,
@@ -336,6 +331,7 @@ export default function CajaClient({
   const [guardandoFondo, setGuardandoFondo] = useState(false)
 
   const [modalCierre, setModalCierre] = useState(false)
+  const [guardandoCierre, setGuardandoCierre] = useState(false)
   const [modalConceptos, setModalConceptos] = useState(false)
   const [conceptosEgreso, setConceptosEgreso] = useState<Concepto[]>([])
   const [cargandoConceptos, setCargandoConceptos] = useState(false)
@@ -367,7 +363,7 @@ export default function CajaClient({
   const [guardandoFactVentaRapida, setGuardandoFactVentaRapida] = useState(false)
   const [factImpresaVentaRapida, setFactImpresaVentaRapida] = useState<Record<string, unknown> | null>(null)
 
-  const supabase = sb()
+  const supabase = createClient()
 
   // Cobro interrumpido (error de red, sesión, etc.) — ofrecer reanudar al volver a caja.
   useEffect(() => {
@@ -505,59 +501,135 @@ export default function CajaClient({
 
   /* ── recargar sesión ─ */
   async function recargar() {
-    const { data } = await supabase
-      .from('caja_sesiones')
-      .select('*, movimientos:caja_movimientos(*)')
-      .eq('cajero_id', userId)
-      .eq('fecha', fechaHoy)
-      .eq('estado', 'ABIERTA')
-      .maybeSingle()
-    setSesion(data)
+    try {
+      const consQuery = (!esSuperAdmin && perfil?.sucursal_id)
+        ? supabase.from('consultas')
+          .select('id, paciente_id, fecha, hora, estado, cobrado, tipo_nombre, consulta_valor, doctor_id, sucursal_id')
+          .eq('estado', 'FINALIZADO')
+          .eq('sucursal_id', perfil.sucursal_id)
+          .or('cobrado.eq.false,cobrado.is.null')
+          .order('fecha', { ascending: false })
+          .limit(100)
+        : supabase.from('consultas')
+          .select('id, paciente_id, fecha, hora, estado, cobrado, tipo_nombre, consulta_valor, doctor_id, sucursal_id')
+          .eq('estado', 'FINALIZADO')
+          .or('cobrado.eq.false,cobrado.is.null')
+          .order('fecha', { ascending: false })
+          .limit(100)
 
-    const { data: c } = await supabase
-      .from('cxc')
-      .select('*, paciente:pacientes(nombre, apellido1)')
-      .in('estado', ['PENDIENTE', 'PARCIAL'])
-      .order('fecha', { ascending: false })
-      .limit(50)
-    if (c) setCxc(c)
+      const cxcQuery = (!esSuperAdmin && perfil?.sucursal_id)
+        ? supabase.from('cxc')
+          .select('*, paciente:pacientes(nombre, apellido1)')
+          .in('estado', ['PENDIENTE', 'PARCIAL'])
+          .eq('sucursal_id', perfil.sucursal_id)
+          .order('fecha', { ascending: false })
+          .limit(50)
+        : supabase.from('cxc')
+          .select('*, paciente:pacientes(nombre, apellido1)')
+          .in('estado', ['PENDIENTE', 'PARCIAL'])
+          .order('fecha', { ascending: false })
+          .limit(50)
 
-    const { data: mp } = await supabase
-      .from('membresia_pagos')
-      .select(`
-        id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado,
-        membresia:membresias(
-          numero_carnet, paciente_id, sucursal_id,
-          tipo:membresia_tipos(nombre),
-          paciente:pacientes(id, codigo, nombre, apellido1, apellido2, telefono, celular, correo)
-        )
-      `)
-      .in('estado', ['pendiente', 'vencido'])
-      .order('fecha_vencimiento')
-      .limit(100)
-    if (mp) {
-      let lista = mp as MembresiaPagoCobro[]
-      // Misma regla que la carga inicial: cada sucursal cobra sus cuotas y
-      // las "General" (sin sucursal) se ven en todas las cajas.
+      let labQuery = supabase
+        .from('consulta_analisis')
+        .select('id, id_consulta, lab_grupo_id, paciente_id, id_cliente, no_analisis, importe, fecha, hora, estado_lab, pagado, sucursal_id')
+        .eq('estado_lab', 'PENDIENTE_COBRO')
+        .order('id', { ascending: false })
+        .limit(300)
       if (!esSuperAdmin && perfil?.sucursal_id) {
-        lista = lista.filter(p => {
-          const suc = (p.membresia as { sucursal_id?: number | null } | null)?.sucursal_id
-          return suc == null || suc === perfil.sucursal_id
-        })
+        labQuery = labQuery.eq('sucursal_id', perfil.sucursal_id)
       }
-      setMembresiaPorCobrar(lista)
-    }
 
-    const cotQuery = supabase
-      .from('cotizaciones')
-      .select('id, numero, sucursal_id, cliente_nombre, cliente_rtn, cliente_email, paciente_id, items, subtotal, descuento_monto, isv_monto, total, exento_isv, fecha')
-      .eq('estado', 'POR_COBRAR')
-      .order('fecha', { ascending: false })
-      .limit(100)
-    const { data: cotRows } = (!esAdmin && perfil?.sucursal_id)
-      ? await cotQuery.eq('sucursal_id', perfil.sucursal_id)
-      : await cotQuery
-    if (cotRows) setCotPorCobrar(cotRows as CotizacionPorCobrar[])
+      const cotBase = supabase
+        .from('cotizaciones')
+        .select('id, numero, sucursal_id, cliente_nombre, cliente_rtn, cliente_email, paciente_id, items, subtotal, descuento_monto, isv_monto, total, exento_isv, fecha')
+        .eq('estado', 'POR_COBRAR')
+        .order('fecha', { ascending: false })
+        .limit(100)
+
+      const [sesionRes, cxcRes, mpRes, cotRes, consRes, labRes] = await Promise.all([
+        supabase
+          .from('caja_sesiones')
+          .select('*, movimientos:caja_movimientos(*)')
+          .eq('cajero_id', userId)
+          .eq('fecha', fechaHoy)
+          .eq('estado', 'ABIERTA')
+          .maybeSingle(),
+        cxcQuery,
+        supabase
+          .from('membresia_pagos')
+          .select(`
+            id, membresia_id, numero_cuota, fecha_vencimiento, monto, estado,
+            membresia:membresias(
+              numero_carnet, paciente_id, sucursal_id,
+              tipo:membresia_tipos(nombre),
+              paciente:pacientes(id, codigo, nombre, apellido1, apellido2, telefono, celular, correo)
+            )
+          `)
+          .in('estado', ['pendiente', 'vencido'])
+          .order('fecha_vencimiento')
+          .limit(100),
+        (!esAdmin && perfil?.sucursal_id)
+          ? cotBase.eq('sucursal_id', perfil.sucursal_id)
+          : cotBase,
+        consQuery,
+        labQuery,
+      ])
+
+      setSesion(sesionRes.data)
+
+      if (cxcRes.data) setCxc(cxcRes.data)
+
+      let consultas = consRes.data ?? []
+      if (consRes.error) {
+        const fallback = await supabase
+          .from('consultas')
+          .select('id, paciente_id, fecha, hora, estado, cobrado')
+          .eq('estado', 'FINALIZADO')
+          .order('fecha', { ascending: false })
+          .limit(100)
+        consultas = (fallback.data ?? []).map(c => ({ ...c, cobrado: false }))
+      } else {
+        consultas = consultas.filter(c => c.cobrado !== true)
+      }
+      setConsultasPorCobrar(consultas as ConsultaPorCobrar[])
+
+      if (!labRes.error && labRes.data) {
+        const pacIds = [
+          ...new Set(
+            labRes.data.map(o => o.paciente_id).filter((id): id is number => id != null && id > 0),
+          ),
+        ]
+        const pacMap = new Map<number, LabOrdenCobroRow['paciente']>()
+        if (pacIds.length) {
+          const { data: pacs } = await supabase
+            .from('pacientes')
+            .select('id, codigo, tipo, nombre, apellido1, apellido2, nombre_empresa, rtn_empresa, contacto, fecha_nac, celular, telefono, correo')
+            .in('id', pacIds)
+          for (const p of pacs ?? []) pacMap.set(Number(p.id), p as LabOrdenCobroRow['paciente'])
+        }
+        const labOrdenes = labRes.data.map(o => ({
+          ...o,
+          paciente: o.paciente_id ? pacMap.get(Number(o.paciente_id)) : undefined,
+        })) as LabOrdenCobroRow[]
+        setLabPorCobrar(agruparLabPorCobrar(labOrdenes))
+      }
+
+      if (mpRes.data) {
+        let lista = mpRes.data as MembresiaPagoCobro[]
+        if (!esSuperAdmin && perfil?.sucursal_id) {
+          lista = lista.filter(p => {
+            const suc = (p.membresia as { sucursal_id?: number | null } | null)?.sucursal_id
+            return suc == null || suc === perfil.sucursal_id
+          })
+        }
+        setMembresiaPorCobrar(lista)
+      }
+
+      if (cotRes.data) setCotPorCobrar(cotRes.data as CotizacionPorCobrar[])
+    } catch (e) {
+      console.error('recargar caja:', e)
+    }
   }
 
   /* ── guardar fondo sugerido de la sucursal (solo admin) ─ */
@@ -637,6 +709,7 @@ export default function CajaClient({
     setLoadingAp(true)
     const nombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim() || 'Enfermero/a'
 
+    try {
     // Reanudar sesión abierta existente del día (evita choque con idx_sesion_unica).
     const sesionAbierta = await supabase
       .from('caja_sesiones')
@@ -649,7 +722,6 @@ export default function CajaClient({
       .maybeSingle()
 
     if (sesionAbierta.data) {
-      setLoadingAp(false)
       setSesion(sesionAbierta.data)
       return
     }
@@ -675,7 +747,6 @@ export default function CajaClient({
           .order('id', { ascending: false })
           .limit(1)
           .maybeSingle()
-        setLoadingAp(false)
         if (existente.data?.estado === 'ABIERTA') {
           setSesion(existente.data)
           return
@@ -683,12 +754,14 @@ export default function CajaClient({
         setErrorAp('Ya cerraste la caja hoy con este usuario. No se puede abrir otra sesión el mismo día; conserva el reporte de cierre impreso.')
         return
       }
-      setLoadingAp(false)
       setErrorAp(error.message)
     } else if (data) {
-      setLoadingAp(false)
       setSesion(data)
-    } else {
+    }
+    } catch (e) {
+      console.error('abrirCaja:', e)
+      setErrorAp('Error inesperado al abrir caja. Intente de nuevo.')
+    } finally {
       setLoadingAp(false)
     }
   }
@@ -763,7 +836,7 @@ export default function CajaClient({
 
   /* ── cierre de caja + impresión de reporte ─ */
   async function cerrarCaja() {
-    if (!sesion) return
+    if (!sesion || guardandoCierre) return
 
     if (!formCierre.ventas_efectivo || !formCierre.egresos_contado) {
       alert('Complete el arqueo: ventas en efectivo y egresos pagados.')
@@ -774,6 +847,8 @@ export default function CajaClient({
       return
     }
 
+    setGuardandoCierre(true)
+    try {
     const horaCierre = new Date().toTimeString().slice(0, 8)
     const efectReal = efectivoContado
     const diferencia = diferenciaArqueo
@@ -855,6 +930,12 @@ export default function CajaClient({
     setModalCierre(false)
     abrirCierreCajaPrint(printData)
     startTransition(() => { recargar() })
+    } catch (e) {
+      console.error('cerrarCaja:', e)
+      alert('Error inesperado al cerrar caja. Verifique si la sesión quedó cerrada antes de reintentar.')
+    } finally {
+      setGuardandoCierre(false)
+    }
   }
 
   /* ── abonar CXC ─ */
@@ -877,6 +958,7 @@ export default function CajaClient({
     if (errVoucher) return alert(errVoucher)
 
     setGuardandoAbono(true)
+    try {
     const hora = new Date().toTimeString().slice(0, 5)
     const pacNombre = cxcActual.paciente_nombre
       || `${cxcActual.paciente?.nombre || ''} ${cxcActual.paciente?.apellido1 || ''}`.trim()
@@ -896,7 +978,7 @@ export default function CajaClient({
       fecha:           fechaHoy,
       hora,
     })
-    if (errMov) { setGuardandoAbono(false); return alert('Error al registrar ingreso en caja: ' + errMov.message) }
+    if (errMov) { return alert('Error al registrar ingreso en caja: ' + errMov.message) }
 
     const { error: errSes } = await supabase.from('caja_sesiones').update({
       total_ingresos: (sesion.total_ingresos || 0) + montoAbono,
@@ -911,7 +993,7 @@ export default function CajaClient({
       nota:       formAbono.nota || null,
       cajero_id:  userId,
     })
-    if (errAbono) { setGuardandoAbono(false); return alert('Error al registrar abono: ' + errAbono.message) }
+    if (errAbono) { return alert('Error al registrar abono: ' + errAbono.message) }
 
     const nuevoPagado = cxcActual.monto_pagado + montoAbono
     const nuevoEstado = nuevoPagado >= cxcActual.monto_total ? 'PAGADO' : 'PARCIAL'
@@ -921,12 +1003,17 @@ export default function CajaClient({
       estado:       nuevoEstado,
       fecha_pago:   nuevoEstado === 'PAGADO' ? fechaHoy : null,
     }).eq('id', cxcActual.id)
-    if (errCxc) { setGuardandoAbono(false); return alert('Error al actualizar CXC: ' + errCxc.message) }
+    if (errCxc) { return alert('Error al actualizar CXC: ' + errCxc.message) }
 
     setModalAbono(false)
     setFormAbono({ monto: '', ...FORM_COBRO_VACIO })
-    setGuardandoAbono(false)
     startTransition(() => { recargar() })
+    } catch (e) {
+      console.error('registrarAbono:', e)
+      alert('Error inesperado al registrar el abono.')
+    } finally {
+      setGuardandoAbono(false)
+    }
   }
 
   /* ── cálculos ─ */
@@ -968,12 +1055,12 @@ export default function CajaClient({
   const cargarHistorialMovs = useCallback(async () => {
     if (!esAdmin) return
     setCargandoHistorial(true)
-    const sbClient = sb()
+    try {
     const d = new Date(fechaHoy + 'T12:00:00')
     d.setDate(d.getDate() - 14)
     const desde = d.toISOString().split('T')[0]
 
-    const { data } = await sbClient
+    const { data } = await supabase
       .from('caja_sesiones')
       .select('*, movimientos:caja_movimientos(*)')
       .eq('cajero_id', userId)
@@ -994,8 +1081,12 @@ export default function CajaClient({
       }
     })
     setHistorialDias(dias)
-    setCargandoHistorial(false)
-  }, [userId, fechaHoy, esAdmin])
+    } catch (e) {
+      console.error('cargarHistorialMovs:', e)
+    } finally {
+      setCargandoHistorial(false)
+    }
+  }, [userId, fechaHoy, esAdmin, supabase])
 
   useEffect(() => {
     if (!esAdmin && vistaMovs === 'historial') setVistaMovs('hoy')
@@ -1069,43 +1160,52 @@ export default function CajaClient({
     guardarCobroPendiente({ tipo: 'consulta', id: c.id, tab: 'cobrar', label: labelPendiente })
     setCobroPendiente(leerCobroPendiente())
 
+    setConsultaCobro({ ...c })
+    setFormCobro({ ...FORM_COBRO_VACIO })
+    setCobroExitoso(null)
+    setAlertasStockCobro([])
+    setModalCobro(true)
     setLoadingCobro(true)
+
     try {
-      const sb = supabase
-      // Cargar paciente
-      const { data: pac } = await sb
-        .from('pacientes')
-        .select('id, codigo, tipo, nombre, apellido1, apellido2, nombre_empresa, rtn_empresa, contacto, fecha_nac, celular, telefono, correo')
-        .eq('id', c.paciente_id)
-        .single()
+      const [pacRes, servsRes, detsFlat, labsRes, extraRes] = await Promise.all([
+        supabase
+          .from('pacientes')
+          .select('id, codigo, tipo, nombre, apellido1, apellido2, nombre_empresa, rtn_empresa, contacto, fecha_nac, celular, telefono, correo')
+          .eq('id', c.paciente_id)
+          .single(),
+        supabase
+          .from('consulta_servicios')
+          .select('id, nombre, precio, cantidad')
+          .eq('consulta_id', c.id),
+        cargarConsultaDetalleConPrecios(supabase, c.id).catch(() => [] as Awaited<ReturnType<typeof cargarConsultaDetalleConPrecios>>),
+        supabase
+          .from('consulta_analisis')
+          .select('id, no_analisis, importe')
+          .eq('id_consulta', String(c.id)),
+        supabase
+          .from('consultas')
+          .select('tipo_nombre, consulta_valor, consulta_otros, cobrado, doctor_id, sucursal_id')
+          .eq('id', c.id)
+          .single(),
+      ])
 
-      // Servicios médicos agregados en el examen
-      const { data: servs, error: errServs } = await sb
-        .from('consulta_servicios')
-        .select('id, nombre, precio, cantidad')
-        .eq('consulta_id', c.id)
-      if (errServs) console.warn('consulta_servicios:', errServs.message)
+      if (servsRes.error) console.warn('consulta_servicios:', servsRes.error.message)
+      if (labsRes.error) console.warn('consulta_analisis:', labsRes.error.message)
 
-      // Medicamentos recetados — precio desde catálogo (soporta legacy id_producto).
-      // Best-effort: si falla la carga/empate por nombre, no debe bloquear el cobro.
-      let detsFlat: Awaited<ReturnType<typeof cargarConsultaDetalleConPrecios>> = []
-      try {
-        detsFlat = await cargarConsultaDetalleConPrecios(sb, c.id)
-      } catch (e) {
-        console.warn('cargarConsultaDetalleConPrecios:', e)
+      const extra = extraRes.data
+      if (extra?.cobrado === true) {
+        alert('Esta consulta ya fue cobrada.')
+        setModalCobro(false)
+        setConsultaCobro(null)
+        startTransition(() => recargar())
+        return
       }
 
-      // Análisis de laboratorio — id_consulta es TEXT en esa tabla
-      const { data: labs, error: errLabs } = await sb
-        .from('consulta_analisis')
-        .select('id, no_analisis, importe')
-        .eq('id_consulta', String(c.id))
-      if (errLabs) console.warn('consulta_analisis:', errLabs.message)
+      const pac = pacRes.data
+      const servs = servsRes.data
+      const labs = labsRes.data
 
-      // Cargar tipo_nombre y consulta_valor si existen
-      const { data: extra }   = await sb.from('consultas').select('tipo_nombre, consulta_valor, consulta_otros, cobrado, doctor_id, sucursal_id').eq('id', c.id).single()
-
-      // aplanar precio_venta del catálogo
       const full: ConsultaPorCobrar = {
         ...c,
         paciente:            pac ?? undefined,
@@ -1123,18 +1223,12 @@ export default function CajaClient({
       const factInit = datosFacturaDesdePaciente(pac ?? undefined)
       setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
       setConsultaCobro(full)
-      setFormCobro({ ...FORM_COBRO_VACIO })
       setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true, mostrar_nombres_meds: false })
-      setAlertasStockCobro([])
-
-      // Abrir el modal de inmediato; las alertas de stock se cargan después
-      // sin bloquear (best-effort) para que el botón nunca se quede colgado.
-      setModalCobro(true)
 
       try {
         const sucIdStock = full.sucursal_id ?? sesion?.sucursal_id ?? perfil?.sucursal_id ?? null
         const stockEval = await evaluarStockMedicamentos(
-          sb,
+          supabase,
           detsFlat
             .filter(d => d.producto_id)
             .map(d => ({ productoId: d.producto_id!, cantidad: d.cant, nombre: d.no_producto })),
@@ -1196,6 +1290,7 @@ export default function CajaClient({
 
     setGuardandoCobro(true)
     const sb = supabase
+    try {
 
     const { data: chk } = await sb.from('consultas')
       .select('cobrado, estado_pago')
@@ -1402,9 +1497,11 @@ export default function CajaClient({
         fecha:          fecha,
       })
       if (errCxc) {
-        alert('Error al crear CXC: ' + errCxc.message)
-        setGuardandoCobro(false)
-        return
+        console.error('CXC consulta:', errCxc)
+        alert(
+          `ATENCIÓN: El cobro quedó registrado pero NO se creó la cuenta por cobrar (CXC). ` +
+          `Informe a administración — Consulta #${consultaCobro.id}: ${errCxc.message}`,
+        )
       }
     }
 
@@ -1460,7 +1557,6 @@ export default function CajaClient({
         nota: formCobro.nota,
       }),
     })
-    setGuardandoCobro(false)
     // recargar sesión en paralelo
     startTransition(async () => {
       const { data: s2 } = await sb.from('caja_sesiones')
@@ -1468,6 +1564,12 @@ export default function CajaClient({
         .eq('id', sesion.id).maybeSingle()
       if (s2) setSesion(s2)
     })
+    } catch (e) {
+      console.error('procesarCobro:', e)
+      alert('Error inesperado al procesar el cobro. Revise movimientos de caja antes de reintentar.')
+    } finally {
+      setGuardandoCobro(false)
+    }
   }
 
   function descartarCobroPendiente() {
@@ -1512,15 +1614,18 @@ export default function CajaClient({
     setFormCobroLab({ ...FORM_COBRO_VACIO })
     setUsarPuntosLab(false)
     setPuntosCanjearLab('')
-    setPuntosFidelidadLab(
-      grupo.pacienteId ? await obtenerSaldoPuntos(supabase, grupo.pacienteId) : 0,
-    )
+    setPuntosFidelidadLab(0)
     setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true, mostrar_nombres_meds: false })
     setLabCobroExitoso(null)
     setLabFacturaCtx(null)
     setModalFacturaLab(false)
     setFactImpresa(null)
     setModalCobroLab(true)
+    if (grupo.pacienteId) {
+      void obtenerSaldoPuntos(supabase, grupo.pacienteId)
+        .then(pts => setPuntosFidelidadLab(pts))
+        .catch(e => console.warn('obtenerSaldoPuntos lab:', e))
+    }
   }
 
   async function cerrarModalCobroLab() {
@@ -1545,6 +1650,7 @@ export default function CajaClient({
 
     setGuardandoCobroLab(true)
     const sb = supabase
+    try {
     const ordenIds = labGrupoCobro.ordenes.map(o => o.id)
 
     const { data: ordenesDb } = await sb.from('consulta_analisis')
@@ -1777,7 +1883,6 @@ export default function CajaClient({
       }),
     })
     setLabGrupoCobro(null)
-    setGuardandoCobroLab(false)
 
     startTransition(async () => {
       const { data: s2 } = await sb.from('caja_sesiones')
@@ -1785,6 +1890,12 @@ export default function CajaClient({
         .eq('id', sesion.id).maybeSingle()
       if (s2) setSesion(s2)
     })
+    } catch (e) {
+      console.error('procesarCobroLab:', e)
+      alert('Error inesperado al cobrar laboratorio. Revise movimientos de caja antes de reintentar.')
+    } finally {
+      setGuardandoCobroLab(false)
+    }
   }
 
   const QUERY_PAGO_MEMBRESIA = `
@@ -1869,6 +1980,7 @@ export default function CajaClient({
 
     setGuardandoCobroMembresia(true)
     const sb = supabase
+    try {
     const lote = membresiaCobroLote
 
     const totalesLote = totalLoteConRecargo(lote, fechaHoy)
@@ -2032,7 +2144,6 @@ export default function CajaClient({
     })
     setMembresiaCobroExitoso({ total, pacNombre, formaPago: formCobroMembresia.forma_pago, ticket: ticketMem })
     cerrarModalCobroMembresia()
-    setGuardandoCobroMembresia(false)
 
     startTransition(async () => {
       const { data: s2 } = await sb.from('caja_sesiones')
@@ -2040,6 +2151,12 @@ export default function CajaClient({
         .eq('id', sesion.id).maybeSingle()
       if (s2) setSesion(s2)
     })
+    } catch (e) {
+      console.error('procesarCobroMembresia:', e)
+      alert('Error inesperado al cobrar membresía. Revise movimientos de caja antes de reintentar.')
+    } finally {
+      setGuardandoCobroMembresia(false)
+    }
   }
 
   /* ════════ COBRO DE COTIZACIÓN (enviada desde Cotizaciones) ════════ */
@@ -2066,6 +2183,7 @@ export default function CajaClient({
 
     setGuardandoCobroCot(true)
     const sb2 = supabase
+    try {
     const cot = cotCobro
 
     const suc = sucursales.find(s => s.id === cot.sucursal_id) ?? sucursalActiva
@@ -2294,12 +2412,10 @@ export default function CajaClient({
       )
       setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
       cerrarModalCobroCot()
-      setGuardandoCobroCot(false)
       abrirFacturaTermica(printCot, { autoPrint: true })
     } else {
       setCotPorCobrar(prev => prev.filter(c => c.id !== cot.id))
       cerrarModalCobroCot()
-      setGuardandoCobroCot(false)
       abrirFacturaTermica(
         aplicarPrivacidadMedicamentosImpresion(
           facturaPrintDesdeRegistro({ ...fact, sucursal: suc }),
@@ -2315,6 +2431,12 @@ export default function CajaClient({
         .eq('id', sesion.id).maybeSingle()
       if (s2) setSesion(s2)
     })
+    } catch (e) {
+      console.error('procesarCobroCotizacion:', e)
+      alert('Error inesperado al cobrar cotización. Revise movimientos de caja antes de reintentar.')
+    } finally {
+      setGuardandoCobroCot(false)
+    }
   }
 
   /* ── generar factura después del cobro ── */
@@ -3643,7 +3765,7 @@ export default function CajaClient({
                 <button
                   type="button"
                   onClick={cerrarCaja}
-                  disabled={!formCierre.ventas_efectivo || formCierre.egresos_contado === ''}
+                  disabled={guardandoCierre || !formCierre.ventas_efectivo || formCierre.egresos_contado === ''}
                   className="flex items-center justify-center gap-2 px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm"
                 >
                   <Printer className="w-4 h-4" />
