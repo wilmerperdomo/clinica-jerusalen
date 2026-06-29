@@ -10,6 +10,7 @@ export function claveModuloDesdePath(pathname: string): string | null {
   const segment = pathname.split('/').filter(Boolean)[0] ?? ''
   if (!segment) return 'dashboard'
   if (segment === 'colonias') return 'pacientes'
+  if (segment === 'bancos') return 'ventas'
   if (segment === 'precios') return 'precios'
   if (segment === 'auditoria') return 'auditoria'
   return segment

@@ -8,7 +8,7 @@ import {
   Package, Pill, ShoppingCart, Receipt, CreditCard,
   BarChart3, Settings, LogOut, ChevronRight,
   FileText, BookOpen, CalendarDays, Building2, KeyRound, X, Eye, EyeOff, Truck, Menu, Bell, ClipboardList,
-  Wallet, PieChart, MapPin, ShieldCheck, Tag, Megaphone, Gift,
+  Wallet, PieChart, MapPin, ShieldCheck, Tag, Megaphone, Gift, Landmark,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, getInitials } from '@/lib/utils'
@@ -45,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/proveedores', label: 'Proveedores',  icon: Truck        },
       { href: '/inventario',  label: 'Inventario',   icon: Package      },
       { href: '/productos',   label: 'Productos',    icon: Pill         },
+      { href: '/bancos',      label: 'Catálogo Bancos', icon: Landmark   },
     ],
   },
   {
@@ -131,6 +132,9 @@ export default function Sidebar({
     if (esClinicoBasico && href === '/reportes') return false
     if (href === '/colonias') {
       return modulosPermitidos.includes('pacientes') || modulosPermitidos.includes('configuracion')
+    }
+    if (href === '/bancos') {
+      return modulosPermitidos.includes('ventas') || modulosPermitidos.includes('configuracion')
     }
     // Consulta de precios: visible para personal de mostrador (cualquiera con acceso a estos módulos)
     if (href === '/precios') {

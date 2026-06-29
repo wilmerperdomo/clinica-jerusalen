@@ -1,7 +1,9 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { FORMAS_PAGO } from '@/lib/caja-constants'
-import { BANCOS_HONDURAS } from '@/lib/caja-bancos'
+import { BANCOS_HONDURAS, cargarBancosActivos } from '@/lib/caja-bancos'
+import { createClient } from '@/lib/supabase/client'
 import { calcularCambioEfectivo } from '@/lib/caja-pago-utils'
 
 const ACCENT_STYLES = {
@@ -48,6 +50,18 @@ export default function CobroFormaPagoPanel({
 }: CobroFormaPagoPanelProps) {
   const active = ACCENT_STYLES[accent]
   const formas = sinCredito ? FORMAS_PAGO.filter(f => f.key !== 'CREDITO') : FORMAS_PAGO
+
+  // Lista de bancos editable desde la BD (tabla `bancos`); fallback a la constante.
+  const [bancos, setBancos] = useState<string[]>([...BANCOS_HONDURAS])
+  useEffect(() => {
+    let activo = true
+    cargarBancosActivos(createClient()).then(lista => {
+      if (activo && lista.length) setBancos(lista)
+    })
+    return () => { activo = false }
+  }, [])
+  // Asegura que un banco ya seleccionado siga visible aunque no esté en la lista.
+  const opcionesBanco = banco && !bancos.includes(banco) ? [banco, ...bancos] : bancos
   const cambio = calcularCambioEfectivo(totalACobrar, montoEfectivo)
   const falta = (() => {
     if (formaPago !== 'EFECTIVO' || totalACobrar <= 0 || !montoEfectivo.trim()) return null
@@ -130,7 +144,7 @@ export default function CobroFormaPagoPanel({
                 className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
               >
                 <option value="">Seleccione banco…</option>
-                {BANCOS_HONDURAS.map(b => (
+                {opcionesBanco.map(b => (
                   <option key={b} value={b}>{b}</option>
                 ))}
               </select>
