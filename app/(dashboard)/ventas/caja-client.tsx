@@ -1066,8 +1066,14 @@ export default function CajaClient({
         .eq('consulta_id', c.id)
       if (errServs) console.warn('consulta_servicios:', errServs.message)
 
-      // Medicamentos recetados — precio desde catálogo (soporta legacy id_producto)
-      const detsFlat = await cargarConsultaDetalleConPrecios(sb, c.id)
+      // Medicamentos recetados — precio desde catálogo (soporta legacy id_producto).
+      // Best-effort: si falla la carga/empate por nombre, no debe bloquear el cobro.
+      let detsFlat: Awaited<ReturnType<typeof cargarConsultaDetalleConPrecios>> = []
+      try {
+        detsFlat = await cargarConsultaDetalleConPrecios(sb, c.id)
+      } catch (e) {
+        console.warn('cargarConsultaDetalleConPrecios:', e)
+      }
 
       // Análisis de laboratorio — id_consulta es TEXT en esa tabla
       const { data: labs, error: errLabs } = await sb
@@ -1094,24 +1100,33 @@ export default function CajaClient({
         sucursal_id:         extra?.sucursal_id ?? c.sucursal_id ?? sesion?.sucursal_id,
       }
 
-      const det = calcularTotalConsulta(full)
       const factInit = datosFacturaDesdePaciente(pac ?? undefined)
       setTitularFacturaRegistrado({ nombre: factInit.nombre_cliente, rtn: factInit.rtn_cliente })
       setConsultaCobro(full)
       setFormCobro({ ...FORM_COBRO_VACIO })
       setFormFactura({ nombre_cliente: factInit.nombre_cliente, rtn_cliente: factInit.rtn_cliente, exento: true, mostrar_nombres_meds: false })
+      setAlertasStockCobro([])
 
-      const sucIdStock = full.sucursal_id ?? sesion?.sucursal_id ?? perfil?.sucursal_id ?? null
-      const stockEval = await evaluarStockMedicamentos(
-        sb,
-        detsFlat
-          .filter(d => d.producto_id)
-          .map(d => ({ productoId: d.producto_id!, cantidad: d.cant, nombre: d.no_producto })),
-        sucIdStock,
-      )
-      setAlertasStockCobro(stockEval.mensajes)
-
+      // Abrir el modal de inmediato; las alertas de stock se cargan después
+      // sin bloquear (best-effort) para que el botón nunca se quede colgado.
       setModalCobro(true)
+
+      try {
+        const sucIdStock = full.sucursal_id ?? sesion?.sucursal_id ?? perfil?.sucursal_id ?? null
+        const stockEval = await evaluarStockMedicamentos(
+          sb,
+          detsFlat
+            .filter(d => d.producto_id)
+            .map(d => ({ productoId: d.producto_id!, cantidad: d.cant, nombre: d.no_producto })),
+          sucIdStock,
+        )
+        setAlertasStockCobro(stockEval.mensajes)
+      } catch (e) {
+        console.warn('evaluarStockMedicamentos:', e)
+      }
+    } catch (e) {
+      console.error('abrirModalCobro:', e)
+      alert('No se pudo abrir el cobro. Intente de nuevo.')
     } finally {
       setLoadingCobro(false)
     }

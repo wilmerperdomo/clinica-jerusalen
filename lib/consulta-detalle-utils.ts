@@ -115,32 +115,46 @@ export async function resolverProductosPorNombre(
 ): Promise<Map<string, ProductoResuelto>> {
   const out = new Map<string, ProductoResuelto>()
   const unicos = [...new Set(nombres.map(n => (n || '').trim()).filter(Boolean))]
+  if (!unicos.length) return out
 
-  for (const original of unicos) {
-    // Parte significativa: antes de coma o paréntesis (ej. "Nobiliax 75mg, Tabletas").
+  // Parte significativa de cada nombre (antes de coma/paréntesis) y término de
+  // búsqueda (primeras 2 palabras, solo alfanumérico → filtro ilike seguro).
+  const bases = unicos.map(original => {
     const base = normNombre(original).split(/[,(]/)[0].trim()
-    if (base.length < 3) continue
-
-    // Término de búsqueda: primeras 2 palabras, solo alfanumérico (filtro ilike seguro).
     const term = base
       .split(' ')
       .slice(0, 2)
       .join(' ')
       .replace(/[^a-z0-9 ]/gi, ' ')
       .trim()
-    if (term.length < 3) continue
+    return { original, base, term }
+  }).filter(b => b.base.length >= 3 && b.term.length >= 3)
 
+  if (!bases.length) return out
+
+  // Una sola consulta para todos los términos (evita N round-trips que cuelgan el modal).
+  const terms = [...new Set(bases.map(b => b.term))]
+  const orFilter = terms
+    .flatMap(t => [`nombre.ilike.%${t}%`, `nombre_generico.ilike.%${t}%`])
+    .join(',')
+
+  let candidatos: Record<string, unknown>[] = []
+  try {
     const { data } = await sb
       .from('productos')
       .select('id, nombre, nombre_generico, precio_venta')
-      .or(`nombre.ilike.%${term}%,nombre_generico.ilike.%${term}%`)
-      .limit(15)
+      .or(orFilter)
+      .limit(80)
+    candidatos = (data ?? []) as Record<string, unknown>[]
+  } catch {
+    return out
+  }
+  if (!candidatos.length) return out
 
-    if (!data?.length) continue
-
+  for (const { original, base } of bases) {
     let best: ProductoResuelto | null = null
     let bestScore = 0
-    for (const c of data) {
+    for (const c of candidatos) {
       const nc = normNombre(String(c.nombre ?? ''))
       const ng = normNombre(String(c.nombre_generico ?? ''))
       let score = 0
@@ -154,7 +168,6 @@ export async function resolverProductosPorNombre(
         best = { id: Number(c.id), precio_venta: Number(c.precio_venta) || 0, nombre: String(c.nombre ?? '') }
       }
     }
-
     // Solo coincidencias fuertes (igualdad o prefijo). Evita descuentos erróneos.
     if (best && bestScore >= 2) out.set(original, best)
   }
