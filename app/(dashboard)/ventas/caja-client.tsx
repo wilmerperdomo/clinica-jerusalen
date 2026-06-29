@@ -294,6 +294,7 @@ export default function CajaClient({
   const [usarPuntosLab, setUsarPuntosLab] = useState(false)
   const [puntosCanjearLab, setPuntosCanjearLab] = useState('')
   const [loadingCobro, setLoadingCobro] = useState(false)
+  const [consultaCobro, setConsultaCobro] = useState<ConsultaPorCobrar | null>(null)
   const [modalCobro,     setModalCobro]     = useState(false)
   const [cobroExitoso, setCobroExitoso] = useState<{
     total: number; pacNombre: string; formaPago: string
@@ -5362,7 +5363,7 @@ function CobroFacturaFields({
   rtnRegistrado?: string
   esSuperAdmin: boolean
   sucursalId?: number | null
-  supabase: ReturnType<typeof sb>
+  supabase: ReturnType<typeof createClient>
   resetKey?: string | number
 }) {
   return (
