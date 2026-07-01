@@ -14,7 +14,12 @@ export const dynamic = 'force-dynamic'
 
 function apiKeyValida(req: NextRequest): boolean {
   const key = process.env.AGENTES_API_KEY?.trim()
-  if (!key) return process.env.NODE_ENV !== 'production'
+  if (!key) {
+    // Sin API key: permitir en dev y en la página pública /agentes/prueba en Vercel
+    if (process.env.NODE_ENV !== 'production') return true
+    const ref = req.headers.get('referer') ?? ''
+    return ref.includes('/agentes/prueba')
+  }
   return req.headers.get('x-agentes-api-key') === key
 }
 

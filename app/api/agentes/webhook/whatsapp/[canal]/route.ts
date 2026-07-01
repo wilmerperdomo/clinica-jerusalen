@@ -63,23 +63,44 @@ export async function POST(req: NextRequest, { params }: Params) {
       : parseWhatsAppMetaWebhook(body, clave)
 
   const resultados = []
+  const errores: { etapa: string; error: string }[] = []
+
   for (const entrada of entradas) {
-    const res = await procesarMensajeEntrante(sb, entrada)
-    for (const r of res.respuestas) {
-      await enviarRespuestaCanal({
-        canal: clave,
-        contacto: entrada.contactoExterno,
-        texto: r.texto,
-        proveedor: entrada.proveedor,
+    try {
+      const res = await procesarMensajeEntrante(sb, entrada)
+      for (const r of res.respuestas) {
+        try {
+          await enviarRespuestaCanal({
+            canal: clave,
+            contacto: entrada.contactoExterno,
+            texto: r.texto,
+            proveedor: entrada.proveedor,
+          })
+        } catch (e) {
+          errores.push({
+            etapa: 'envio',
+            error: e instanceof Error ? e.message : 'Error al enviar respuesta',
+          })
+        }
+      }
+      resultados.push({
+        conversacionId: res.conversacionId,
+        agente: res.agente,
+        intencion: res.intencion,
+        escalado: res.escalado,
+      })
+    } catch (e) {
+      errores.push({
+        etapa: 'procesamiento',
+        error: e instanceof Error ? e.message : 'Error al procesar mensaje',
       })
     }
-    resultados.push({
-      conversacionId: res.conversacionId,
-      agente: res.agente,
-      intencion: res.intencion,
-      escalado: res.escalado,
-    })
   }
 
-  return NextResponse.json({ ok: true, procesados: resultados.length, resultados })
+  return NextResponse.json({
+    ok: true,
+    procesados: resultados.length,
+    resultados,
+    errores: errores.length ? errores : undefined,
+  })
 }
