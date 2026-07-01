@@ -9,6 +9,7 @@ export function claveModuloDesdePath(pathname: string): string | null {
   if (!pathname || pathname === '/') return 'dashboard'
   const segment = pathname.split('/').filter(Boolean)[0] ?? ''
   if (!segment) return 'dashboard'
+  if (segment === 'agentes') return 'agentes_ia'
   if (segment === 'colonias') return 'pacientes'
   if (segment === 'bancos') return 'ventas'
   if (segment === 'precios') return 'precios'
@@ -71,6 +72,11 @@ export async function verificarAccesoModulo(pathname: string): Promise<void> {
 
   if (clave === 'promociones') {
     if (!perfil.esSuperAdmin && !perfil.esAdmin && !modulos.includes('promociones')) redirect('/')
+    return
+  }
+
+  if (clave === 'agentes_ia') {
+    if (!perfil.esSuperAdmin && !perfil.esAdmin && !modulos.includes('agentes_ia')) redirect('/')
     return
   }
 

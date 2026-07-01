@@ -8,7 +8,7 @@ import {
   Package, Pill, ShoppingCart, Receipt, CreditCard,
   BarChart3, Settings, LogOut, ChevronRight,
   FileText, BookOpen, CalendarDays, Building2, KeyRound, X, Eye, EyeOff, Truck, Menu, Bell, ClipboardList,
-  Wallet, PieChart, MapPin, ShieldCheck, Tag, Megaphone, Gift, Landmark,
+  Wallet, PieChart, MapPin, ShieldCheck, Tag, Megaphone, Gift,   Landmark, Bot,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, getInitials } from '@/lib/utils'
@@ -27,6 +27,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/agenda',         label: 'Agenda',            icon: CalendarDays },
       { href: '/notificaciones', label: 'Notificaciones',    icon: Bell         },
+      { href: '/agentes',        label: 'Agentes IA',        icon: Bot          },
       { href: '/consultas',      label: 'Consultas Médicas', icon: Stethoscope  },
       { href: '/documentos',     label: 'Documentos Médicos', icon: FileText    },
       { href: '/pacientes',   label: 'Pacientes',         icon: Users        },
@@ -143,6 +144,9 @@ export default function Sidebar({
     }
     if (href === '/fidelidad') {
       return Boolean(esAdmin || esSuperAdmin)
+    }
+    if (href === '/agentes') {
+      return modulosPermitidos.includes('agentes_ia') || Boolean(esAdmin || esSuperAdmin)
     }
     const clave = href.replace('/', '') || 'dashboard'
     return modulosPermitidos.includes(clave)
