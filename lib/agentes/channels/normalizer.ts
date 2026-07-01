@@ -1,16 +1,48 @@
 import type { CanalClave, MensajeEntrante, ProveedorCanal } from '@/lib/agentes/types'
 import { esCanalClave } from '@/lib/agentes/config/canales'
 
+/** Mapea Phone number ID de Meta → canal del sistema */
+export function canalClaveDesdePhoneNumberId(phoneNumberId: string): CanalClave | null {
+  const id = phoneNumberId.trim()
+  const map: [string | undefined, CanalClave][] = [
+    [process.env.WHATSAPP_PHONE_ID_PRINCIPAL, 'whatsapp_principal'],
+    [process.env.WHATSAPP_PHONE_ID_SUCURSAL, 'whatsapp_sucursal'],
+    [process.env.WHATSAPP_PHONE_ID_CORPORATIVO, 'whatsapp_corporativo'],
+  ]
+  for (const [envId, clave] of map) {
+    if (envId?.trim() === id) return clave
+  }
+  if (process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() === id) return 'whatsapp_principal'
+  return null
+}
+
+function extraerPhoneNumberId(body: unknown): string | null {
+  const root = body as {
+    entry?: { changes?: { value?: { metadata?: { phone_number_id?: string } } }[] }[]
+  }
+  for (const entry of root.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const id = change.value?.metadata?.phone_number_id
+      if (id) return id
+    }
+  }
+  return null
+}
+
 /** Meta WhatsApp Cloud API — webhook payload simplificado */
 export function parseWhatsAppMetaWebhook(
   body: unknown,
   canalClave: CanalClave,
 ): MensajeEntrante[] {
   const mensajes: MensajeEntrante[] = []
+  const phoneNumberId = extraerPhoneNumberId(body)
+  const canal = (phoneNumberId && canalClaveDesdePhoneNumberId(phoneNumberId)) || canalClave
+
   const root = body as {
     entry?: {
       changes?: {
         value?: {
+          metadata?: { phone_number_id?: string }
           messages?: {
             id: string
             from: string
@@ -32,7 +64,7 @@ export function parseWhatsAppMetaWebhook(
         if (msg.type !== 'text' || !msg.text?.body) continue
         mensajes.push({
           proveedor: 'whatsapp_meta',
-          canalClave,
+          canalClave: canal,
           mensajeExternoId: msg.id,
           contactoExterno: msg.from,
           contactoNombre: contactName,
@@ -46,6 +78,15 @@ export function parseWhatsAppMetaWebhook(
   return mensajes
 }
 
+/** Resuelve canal desde webhook Meta (coexistencia multi-número) */
+export function resolverCanalMetaWebhook(body: unknown, fallback: CanalClave): CanalClave {
+  const phoneNumberId = extraerPhoneNumberId(body)
+  if (phoneNumberId) {
+    const clave = canalClaveDesdePhoneNumberId(phoneNumberId)
+    if (clave) return clave
+  }
+  return fallback
+}
 /** Evolution API — evento messages.upsert */
 export function parseWhatsAppEvolutionWebhook(
   body: unknown,

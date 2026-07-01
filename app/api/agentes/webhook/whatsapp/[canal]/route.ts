@@ -6,6 +6,7 @@ import {
   parseWhatsAppEvolutionWebhook,
   validarCanalParam,
   verificarWebhookToken,
+  resolverCanalMetaWebhook,
 } from '@/lib/agentes/channels/normalizer'
 import { enviarRespuestaCanal } from '@/lib/agentes/channels/outbound'
 import type { CanalClave } from '@/lib/agentes/types'
@@ -57,10 +58,12 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!body) return NextResponse.json({ error: 'Body inválido' }, { status: 400 })
 
   const proveedor = req.headers.get('x-agentes-proveedor') ?? 'meta'
+  const claveEfectiva =
+    proveedor === 'evolution' ? clave : resolverCanalMetaWebhook(body, clave)
   const entradas =
     proveedor === 'evolution'
-      ? parseWhatsAppEvolutionWebhook(body, clave)
-      : parseWhatsAppMetaWebhook(body, clave)
+      ? parseWhatsAppEvolutionWebhook(body, claveEfectiva)
+      : parseWhatsAppMetaWebhook(body, claveEfectiva)
 
   const resultados = []
   const errores: { etapa: string; error: string }[] = []
@@ -71,7 +74,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       for (const r of res.respuestas) {
         try {
           await enviarRespuestaCanal({
-            canal: clave,
+            canal: claveEfectiva,
             contacto: entrada.contactoExterno,
             texto: r.texto,
             proveedor: entrada.proveedor,
