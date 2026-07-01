@@ -1,5 +1,6 @@
 import { BRAND, derechosReservadosHtml } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
+import { fechaSumarDias } from '@/lib/fecha-hn'
 
 /** Utilidades compartidas para el módulo de Cotizaciones */
 
@@ -72,9 +73,7 @@ export function calcularTotalesCot(
 }
 
 export function fechaVencimiento(fecha: string, dias = VALIDEZ_DIAS_DEFAULT): string {
-  const d = new Date(fecha + 'T12:00:00')
-  d.setDate(d.getDate() + dias)
-  return d.toISOString().split('T')[0]
+  return fechaSumarDias(dias, fecha)
 }
 
 export function estadoEfectivo(

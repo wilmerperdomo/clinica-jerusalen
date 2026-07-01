@@ -1,3 +1,5 @@
+import { fechaHoyHN } from '@/lib/fecha-hn'
+
 export type EstadoLab =
   | 'PENDIENTE_COBRO'
   | 'PAGADO'
@@ -94,7 +96,7 @@ export function estadoMinimoGrupo(estados: EstadoLab[]): EstadoLab {
 export function slaVencido(fechaPrometida?: string | null, estado?: EstadoLab): boolean {
   if (!fechaPrometida) return false
   if (estado === 'ENTREGADO' || estado === 'VALIDADO') return false
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
   return fechaPrometida < hoy
 }
 

@@ -1,5 +1,6 @@
 import { imprimirReporte } from '@/lib/reporte-utils'
 import { BRAND } from '@/lib/brand'
+import { fechaSumarDias, fechaHN } from '@/lib/fecha-hn'
 
 export interface CitaPrint {
   fecha: string
@@ -12,16 +13,14 @@ export interface CitaPrint {
 }
 
 export function addDays(fecha: string, n: number) {
-  const d = new Date(fecha + 'T12:00:00')
-  d.setDate(d.getDate() + n)
-  return d.toISOString().split('T')[0]
+  return fechaSumarDias(n, fecha)
 }
 
 export function lunesDe(fecha: string) {
   const d = new Date(fecha + 'T12:00:00')
   const dia = d.getDay() === 0 ? 6 : d.getDay() - 1
   d.setDate(d.getDate() - dia)
-  return d.toISOString().split('T')[0]
+  return fechaHN(d)
 }
 
 export function fmtFecha(fecha: string) {

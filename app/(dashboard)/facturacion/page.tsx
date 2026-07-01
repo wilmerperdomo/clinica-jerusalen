@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal, rolesTienenPermisoAccion } from '@/lib/get-sucursal'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import FacturacionClient from './facturacion-client'
 
 export const dynamic = 'force-dynamic'
@@ -8,7 +9,7 @@ export const metadata = { title: 'Facturación' }
 export default async function FacturacionPage() {
   const supabase  = await createClient()
   const { userId, sucursalId, rolId, esSuperAdmin, esAdmin, nombre } = await getPerfilSucursal()
-  const hoy       = new Date().toISOString().split('T')[0]
+  const hoy       = fechaHoyHN()
   const mesInicio = `${hoy.slice(0,7)}-01`
 
   const cajeroNombre = nombre

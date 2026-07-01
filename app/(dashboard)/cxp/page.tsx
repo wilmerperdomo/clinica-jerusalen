@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import CxpClient from './cxp-client'
 
 export const dynamic = 'force-dynamic'
@@ -8,7 +9,7 @@ export const metadata = { title: 'Cuentas por Pagar' }
 export default async function CxpPage() {
   const supabase = await createClient()
   const { userId, sucursalId, esSuperAdmin, nombre } = await getPerfilSucursal()
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
 
   const cxpQuery = supabase
     .from('compra_cxp')

@@ -69,6 +69,12 @@ import CobroFormaPagoPanel from './components/cobro-forma-pago-panel'
 import type { LineaCobroDesc } from '@/lib/membresia-utils'
 import { descontarStockVenta } from '@/lib/inventario-descuento'
 import { insertarMovimientoCaja, insertarMovimientosCaja } from '@/lib/caja-movimiento-utils'
+import {
+  rpcRegistrarAbonoCxc,
+  rpcCrearCxcCredito,
+  rpcRegistrarIngresoCreditoCxc,
+} from '@/lib/finanzas-rpc'
+import { fechaSumarDias } from '@/lib/fecha-hn'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnPrimary, ModuleBtnGhost } from '@/components/module-layout'
 import { useConfirm } from '@/components/confirm-dialog'
 import { Modal } from './components/caja-modal'
@@ -1033,47 +1039,24 @@ export default function CajaClient({
     const pacNombre = cxcActual.paciente_nombre
       || `${cxcActual.paciente?.nombre || ''} ${cxcActual.paciente?.apellido1 || ''}`.trim()
 
-    const { error: errMov } = await insertarMovimientoCaja(supabase, {
+    const resAbono = await rpcRegistrarAbonoCxc(supabase, {
+      cxc_id:          cxcActual.id,
       sesion_id:       sesion.id,
       sucursal_id:     sesion.sucursal_id,
-      cajero_id:       userId,
-      tipo:            'INGRESO',
-      concepto:        `Abono CXC — ${cxcActual.concepto || 'Cuenta por cobrar'}`,
-      paciente_id:     cxcActual.paciente_id ?? null,
-      paciente_nombre: pacNombre || null,
       monto:           montoAbono,
       forma_pago:      formAbono.forma_pago,
-      referencia_pago: construirReferenciaPago(formAbono.forma_pago, formAbono.referencia, formAbono.banco),
       nota:            formAbono.nota || null,
       fecha:           fechaHoy,
       hora,
+      concepto:        `Abono CXC — ${cxcActual.concepto || 'Cuenta por cobrar'}`,
+      paciente_id:     cxcActual.paciente_id ?? null,
+      paciente_nombre: pacNombre || null,
+      referencia_pago: construirReferenciaPago(formAbono.forma_pago, formAbono.referencia, formAbono.banco),
     })
-    if (errMov) { return alert('Error al registrar ingreso en caja: ' + errMov.message) }
-
-    const { error: errSes } = await supabase.from('caja_sesiones').update({
-      total_ingresos: (sesion.total_ingresos || 0) + montoAbono,
-    }).eq('id', sesion.id)
-    if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
-
-    const { error: errAbono } = await supabase.from('cxc_abonos').insert({
-      cxc_id:     cxcActual.id,
-      sesion_id:  sesion.id,
-      monto:      montoAbono,
-      forma_pago: formAbono.forma_pago,
-      nota:       formAbono.nota || null,
-      cajero_id:  userId,
-    })
-    if (errAbono) { return alert('Error al registrar abono: ' + errAbono.message) }
-
-    const nuevoPagado = cxcActual.monto_pagado + montoAbono
-    const nuevoEstado = nuevoPagado >= cxcActual.monto_total ? 'PAGADO' : 'PARCIAL'
-    const { error: errCxc } = await supabase.from('cxc').update({
-      monto_pagado: nuevoPagado,
-      saldo:        cxcActual.monto_total - nuevoPagado,
-      estado:       nuevoEstado,
-      fecha_pago:   nuevoEstado === 'PAGADO' ? fechaHoy : null,
-    }).eq('id', cxcActual.id)
-    if (errCxc) { return alert('Error al actualizar CXC: ' + errCxc.message) }
+    if (!resAbono.ok) {
+      alert('Error al registrar abono: ' + resAbono.error)
+      return
+    }
 
     setModalAbono(false)
     setFormAbono({ monto: '', ...FORM_COBRO_VACIO })
@@ -1126,9 +1109,7 @@ export default function CajaClient({
     if (!esAdmin) return
     setCargandoHistorial(true)
     try {
-    const d = new Date(fechaHoy + 'T12:00:00')
-    d.setDate(d.getDate() - 14)
-    const desde = d.toISOString().split('T')[0]
+    const desde = fechaSumarDias(-14, fechaHoy)
 
     const { data } = await supabase
       .from('caja_sesiones')
@@ -1556,21 +1537,19 @@ export default function CajaClient({
     }
 
     if (formCobro.forma_pago === 'CREDITO') {
-      const { error: errCxc } = await sb.from('cxc').insert({
-        paciente_id:    consultaCobro.paciente_id,
+      const resCxc = await rpcCrearCxcCredito(sb, {
+        paciente_id:     consultaCobro.paciente_id,
         paciente_nombre: pacNombre,
-        concepto:       `Consulta #${consultaCobro.id}`,
-        monto_total:    total,
-        monto_pagado:   0,
-        saldo:          total,
-        estado:         'PENDIENTE',
-        fecha:          fecha,
+        concepto:        `Consulta #${consultaCobro.id}`,
+        monto_total:     total,
+        fecha,
+        sucursal_id:     sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
       })
-      if (errCxc) {
-        console.error('CXC consulta:', errCxc)
+      if (!resCxc.ok) {
+        console.error('CXC consulta:', resCxc.error)
         alert(
           `ATENCIÓN: El cobro quedó registrado pero NO se creó la cuenta por cobrar (CXC). ` +
-          `Informe a administración — Consulta #${consultaCobro.id}: ${errCxc.message}`,
+          `Informe a administración — Consulta #${consultaCobro.id}: ${resCxc.error}`,
         )
       }
     }
@@ -1857,6 +1836,35 @@ export default function CajaClient({
       : (aplicaDescBase ? motivoLabBase : null)
 
     // ── 2. Registrar el dinero; si falla, revertir el claim ──
+    if (formCobroLab.forma_pago === 'CREDITO') {
+      const resCred = await rpcRegistrarIngresoCreditoCxc(sb, {
+        movimiento: {
+          sesion_id: sesion.id,
+          sucursal_id: sesion.sucursal_id ?? perfil?.sucursal_id,
+          concepto: `Laboratorio — ${pacNombre}`,
+          monto: total,
+          monto_bruto: subtotal,
+          descuento_pct: pct,
+          descuento_monto: valDesc + descPuntos,
+          descuento_motivo: motivoDesc,
+          fecha: fechaHoy,
+          hora,
+          nota: formCobroLab.nota || notaPuntos,
+          paciente_id: labGrupoCobro.pacienteId || null,
+          paciente_nombre: pacNombre,
+        },
+        cxc_concepto: `Laboratorio — ${labGrupoCobro.ordenes.map(o => o.no_analisis).join(', ')}`,
+        paciente_id: labGrupoCobro.pacienteId,
+        paciente_nombre: pacNombre,
+        sucursal_id: sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
+      })
+      if (!resCred.ok) {
+        await revertirClaim()
+        alert('Error al registrar cobro a crédito: ' + resCred.error)
+        setGuardandoCobroLab(false)
+        return
+      }
+    } else {
     const { error: errMov } = await insertarMovimientoCaja(sb, {
       sesion_id: sesion.id,
       cajero_id: userId,
@@ -1885,6 +1893,7 @@ export default function CajaClient({
       total_ingresos: (sesion.total_ingresos || 0) + total,
     }).eq('id', sesion.id)
     if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
+    }
 
     // ── 3. Canjear puntos DESPUÉS de cobrar (irreversible va al final) ──
     if (puntosCanje > 0 && labGrupoCobro.pacienteId) {
@@ -1900,25 +1909,8 @@ export default function CajaClient({
       }
     }
 
-    if (formCobroLab.forma_pago === 'CREDITO') {
-      const { error: errCxc } = await sb.from('cxc').insert({
-        paciente_id: labGrupoCobro.pacienteId || null,
-        paciente_nombre: pacNombre,
-        concepto: `Laboratorio — ${labGrupoCobro.ordenes.map(o => o.no_analisis).join(', ')}`,
-        monto_total: total,
-        monto_pagado: 0,
-        saldo: total,
-        estado: 'PENDIENTE',
-        fecha: fechaHoy,
-        sucursal_id: sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
-      })
-      if (errCxc) {
-        alert('Error al crear cuenta por cobrar: ' + errCxc.message)
-        setGuardandoCobroLab(false)
-        return
-      }
-      startTransition(() => recargar())
-    }
+
+    if (formCobroLab.forma_pago === 'CREDITO') startTransition(() => recargar())
 
     setLabPorCobrar(prev => prev.filter(g => g.grupoId !== labGrupoCobro.grupoId))
     setLabFacturaCtx({ grupo: labGrupoCobro, subtotal, valDesc: valDesc + descPuntos })
@@ -2339,6 +2331,33 @@ export default function CajaClient({
     const cajeroNombre = `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.trim()
 
     // ── 2. Registrar el dinero; si falla, revertir el claim ──
+    if (formCobroCot.forma_pago === 'CREDITO') {
+      const resCred = await rpcRegistrarIngresoCreditoCxc(sb2, {
+        movimiento: {
+          sesion_id: sesion.id,
+          sucursal_id: sesion.sucursal_id,
+          concepto: `Cotización ${cot.numero} — ${cot.cliente_nombre}`,
+          paciente_id: cot.paciente_id ?? null,
+          paciente_nombre: cot.cliente_nombre,
+          monto: total,
+          monto_bruto: totalesCot.subtotal || total,
+          descuento_monto: totalesCot.descuento_monto || 0,
+          nota: formCobroCot.nota || `Cotización ${cot.numero}`,
+          fecha: fechaHoy,
+          hora,
+        },
+        cxc_concepto: `Cotización ${cot.numero}`,
+        paciente_id: cot.paciente_id ?? null,
+        paciente_nombre: cot.cliente_nombre,
+        sucursal_id: sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
+      })
+      if (!resCred.ok) {
+        await revertirClaim()
+        alert('Error al registrar cobro a crédito: ' + resCred.error)
+        setGuardandoCobroCot(false)
+        return
+      }
+    } else {
     const { error: errMov } = await insertarMovimientoCaja(sb2, {
       sesion_id:       sesion.id,
       sucursal_id:     sesion.sucursal_id,
@@ -2367,24 +2386,9 @@ export default function CajaClient({
       total_ingresos: (sesion.total_ingresos || 0) + total,
     }).eq('id', sesion.id)
     if (errSes) console.warn('caja_sesiones total_ingresos:', errSes.message)
-
-    // ── 3. Crédito → cuenta por cobrar ──
-    if (formCobroCot.forma_pago === 'CREDITO') {
-      const { error: errCxc } = await sb2.from('cxc').insert({
-        paciente_id:     cot.paciente_id ?? null,
-        paciente_nombre: cot.cliente_nombre,
-        concepto:        `Cotización ${cot.numero}`,
-        monto_total:     total,
-        monto_pagado:    0,
-        saldo:           total,
-        estado:          'PENDIENTE',
-        fecha:           fechaHoy,
-        sucursal_id:     sesion.sucursal_id ?? perfil?.sucursal_id ?? null,
-      })
-      if (errCxc) console.warn('cxc cotización:', errCxc.message)
     }
 
-    // ── 4. Emitir factura fiscal con correlativo (claim-first del número) ──
+    // ── 3. Emitir factura fiscal con correlativo (claim-first del número) ──
     const itemsBd = prepararItemsCotizacionParaBd(itemsCotBlind)
 
     const payloadBase = {

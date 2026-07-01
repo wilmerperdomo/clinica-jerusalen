@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import ComprasClient from './compras-client'
 
 export const dynamic = 'force-dynamic'
@@ -7,7 +8,7 @@ export const metadata = { title: 'Compras' }
 
 export default async function ComprasPage() {
   const supabase = await createClient()
-  const hoy      = new Date().toISOString().split('T')[0]
+  const hoy      = fechaHoyHN()
   const mesInicio= `${hoy.slice(0,7)}-01`
 
   const { userId, sucursalId, esSuperAdmin, nombre } = await getPerfilSucursal()

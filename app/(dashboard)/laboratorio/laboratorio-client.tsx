@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useMemo, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { fechaSumarDias } from '@/lib/fecha-hn'
 import {
   FlaskConical, Plus, Search, RefreshCw, ClipboardList,
   CheckCircle2, Clock, X, Save, AlertCircle,
@@ -602,11 +603,7 @@ export default function LaboratorioClient({
     setPerfilesState(prev => prev.filter(x => x.id !== p.id))
   }
 
-  const hace7 = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 7)
-    return d.toISOString().split('T')[0]
-  }, [])
+  const hace7 = useMemo(() => fechaSumarDias(-7), [])
 
   const recargar = useCallback(async () => {
     let q = supabase

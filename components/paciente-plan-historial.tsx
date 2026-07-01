@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { CreditCard, CalendarDays, Wallet, Users, AlertTriangle } from 'lucide-react'
 import { estadoVisualPlan, etiquetaEstadoPlan, claseEstadoPlan } from '@/lib/membresia-estado'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 
 const fmt = (n: number) => `L. ${n.toLocaleString('es-HN', { minimumFractionDigits: 2 })}`
 
@@ -36,7 +37,7 @@ interface Props {
 }
 
 export default function PacientePlanHistorial({ membresias, pagos, linkCaja = true }: Props) {
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
   const activa = membresias.find(m => m.estado === 'activo' && m.fecha_fin >= hoy)
   const anteriores = membresias.filter(m => m.id !== activa?.id)
   const pagosHechos = pagos.filter(p => p.estado === 'pagado')

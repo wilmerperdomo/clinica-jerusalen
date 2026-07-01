@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, Fragment, useEffect } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { fechaHoyHN, fechaSumarDias } from '@/lib/fecha-hn'
 import {
   CreditCard, Plus, Search, RefreshCw, Users, Star,
   ChevronDown, ChevronUp, Printer, CheckCircle, XCircle,
@@ -71,8 +72,8 @@ interface Props {
 
 /* ══════════════════ HELPERS ══════════════════════════════════ */
 const fmt        = (n: number) => `L. ${n.toLocaleString('es-HN', { minimumFractionDigits: 2 })}`
-const hoyStr     = () => new Date().toISOString().split('T')[0]
-const semanaStr  = () => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0] }
+const hoyStr     = () => fechaHoyHN()
+const semanaStr  = () => fechaSumarDias(7)
 
 function diasRestantes(fechaFin: string) {
   return diasRestantesPlan(fechaFin)
@@ -127,8 +128,7 @@ function descuentosPlanTipo(t: Tipo) {
 }
 function recalcFin(inicio: string, dias: number) {
   if (!inicio || !dias) return ''
-  const d = new Date(inicio); d.setDate(d.getDate() + dias)
-  return d.toISOString().split('T')[0]
+  return fechaSumarDias(dias, inicio)
 }
 function colorPago(estado: string, vence: string) {
   if (estado === 'pagado')  return 'bg-green-50 border-green-200'
@@ -629,10 +629,9 @@ export default function MembresiasClient({
     try {
       const dias = m.tipo?.duracion_dias || 30
       const hoyD = hoyStr()
-      const inicioC = new Date(m.fecha_fin); inicioC.setDate(inicioC.getDate() + 1)
-      const inicio  = inicioC.toISOString().split('T')[0] > hoyD ? inicioC.toISOString().split('T')[0] : hoyD
-      const finD    = new Date(inicio); finD.setDate(finD.getDate() + dias)
-      const fin     = finD.toISOString().split('T')[0]
+      const inicioC = fechaSumarDias(1, m.fecha_fin)
+      const inicio  = inicioC > hoyD ? inicioC : hoyD
+      const fin     = fechaSumarDias(dias, inicio)
       await supabase.from('membresias').update({ estado: 'inactivo' }).eq('paciente_id', m.paciente_id).eq('estado', 'activo')
       const { data: newM } = await supabase.from('membresias')
         .insert({ paciente_id: m.paciente_id, tipo_id: m.tipo_id, fecha_inicio: inicio, fecha_fin: fin, cuotas_pagadas: 0, estado: 'activo', comentarios: `Renovación de ${m.numero_carnet}`, sucursal_id: m.sucursal_id })
@@ -1887,10 +1886,9 @@ export default function MembresiasClient({
         const m = renovarTarget
         const dias = m.tipo?.duracion_dias || 30
         const hoyD = hoyStr()
-        const inicioC = new Date(m.fecha_fin); inicioC.setDate(inicioC.getDate() + 1)
-        const inicio = inicioC.toISOString().split('T')[0] > hoyD ? inicioC.toISOString().split('T')[0] : hoyD
-        const finD = new Date(inicio); finD.setDate(finD.getDate() + dias)
-        const fin = finD.toISOString().split('T')[0]
+        const inicioC = fechaSumarDias(1, m.fecha_fin)
+        const inicio = inicioC > hoyD ? inicioC : hoyD
+        const fin = fechaSumarDias(dias, inicio)
         const cuotas = numCuotasPlan(dias)
         const montoCuota = (m.tipo?.precio || 0) / cuotas
         const benAct = (m.beneficiarios || []).filter(b => b.activo)

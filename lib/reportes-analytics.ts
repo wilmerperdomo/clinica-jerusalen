@@ -1,6 +1,7 @@
 /** Análisis y resumen ejecutivo para Reportes Pro */
 
 import { fmtReporte } from '@/lib/reporte-utils'
+import { fechaHN } from '@/lib/fecha-hn'
 
 export const CHART_COLORS = {
   ingreso: '#16a34a',
@@ -39,7 +40,7 @@ function diasEnRango(desde: string, hasta: string): string[] {
   const end = new Date(`${hasta}T12:00:00`)
   if (Number.isNaN(d.getTime()) || Number.isNaN(end.getTime())) return dias
   while (d <= end) {
-    dias.push(d.toISOString().split('T')[0])
+    dias.push(fechaHN(d))
     d.setDate(d.getDate() + 1)
   }
   return dias

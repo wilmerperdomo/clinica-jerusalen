@@ -1,5 +1,6 @@
 import { BRAND, derechosReservadosHtml } from '@/lib/brand'
 import { logoTicketHtml } from '@/lib/brand-logo'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 
 /** Utilidades compartidas para el módulo de Reportes */
 
@@ -20,7 +21,7 @@ export function exportarCSV(nombre: string, headers: string[], rows: (string | n
   const url  = URL.createObjectURL(blob)
   const a    = document.createElement('a')
   a.href     = url
-  a.download = `${nombre}_${new Date().toISOString().split('T')[0]}.csv`
+  a.download = `${nombre}_${fechaHoyHN()}.csv`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

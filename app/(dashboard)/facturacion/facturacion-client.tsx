@@ -22,6 +22,7 @@ import {
   facturaTieneMedicamentos,
   isvPctSeguroMedicamento,
 } from '@/lib/factura-medicamentos'
+import { fechaSumarDias } from '@/lib/fecha-hn'
 
 /* ══════════════════ TIPOS ════════════════════════════════════ */
 interface ItemFactura {
@@ -652,7 +653,7 @@ export default function FacturacionClient({
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {sucursales.map(s => {
           const vencido = s.fecha_limite && s.fecha_limite < hoy
-          const proxVencer = s.fecha_limite && !vencido && s.fecha_limite <= new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
+          const proxVencer = s.fecha_limite && !vencido && s.fecha_limite <= fechaSumarDias(30, hoy)
           return (
             <div key={s.id} className={`bg-white border rounded-2xl p-4 ${vencido ? 'border-red-300 bg-red-50' : proxVencer ? 'border-amber-300 bg-amber-50' : ''}`}>
               <div className="flex items-center justify-between mb-2">

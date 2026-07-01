@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { PACIENTE_BUSQUEDA_SELECT } from '@/lib/buscar-pacientes'
+import { fechaHoyHN, fechaSumarDias } from '@/lib/fecha-hn'
 import type { LabInsumo } from '@/lib/lab-insumos'
 import LaboratorioClient from './laboratorio-client'
 
@@ -10,11 +11,8 @@ export default async function LaboratorioPage() {
   const supabase = await createClient()
   if (!supabase) throw new Error('No se pudo inicializar Supabase')
   const { sucursalId, esSuperAdmin, rol } = await getPerfilSucursal()
-  const hoy = new Date().toISOString().split('T')[0]
-
-  const hace7 = new Date()
-  hace7.setDate(hace7.getDate() - 7)
-  const desde = hace7.toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
+  const desde = fechaSumarDias(-7, hoy)
 
   const ordenesQuery = supabase
     .from('consulta_analisis')

@@ -1,5 +1,6 @@
 import type { LabCostoOrden } from '@/lib/lab-costos'
 import { calcularReporteRentabilidad } from '@/lib/lab-costos'
+import { fechaSumarDias } from '@/lib/fecha-hn'
 import {
   type EstadoLab,
   inferirEstadoLab,
@@ -337,9 +338,7 @@ export function textoRangosCampo(rangos: LabRango[]): string {
 }
 
 export function computeFechaPrometida(fechaOrden: string, diasEntrega: number): string {
-  const d = new Date(fechaOrden + 'T12:00:00')
-  d.setDate(d.getDate() + Math.max(1, diasEntrega || 1))
-  return d.toISOString().split('T')[0]
+  return fechaSumarDias(Math.max(1, diasEntrega || 1), fechaOrden)
 }
 
 export interface LabReporteStats {

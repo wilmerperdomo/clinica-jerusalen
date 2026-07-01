@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import PacientesClient from './pacientes-client'
 
 export const dynamic = 'force-dynamic'
@@ -6,7 +7,7 @@ export const metadata = { title: 'Pacientes' }
 
 export default async function PacientesPage() {
   const supabase = await createClient()
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
 
   const [{ data: pacientes }, { data: listas }, { data: membresiasActivas }, { data: colonias }] = await Promise.all([
     supabase

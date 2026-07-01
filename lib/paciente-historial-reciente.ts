@@ -1,6 +1,7 @@
 /** Historial reciente de un paciente — para pantalla post-registro */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 
 export type ConsultaReciente = {
   id: number
@@ -61,7 +62,7 @@ export async function cargarHistorialPaciente(
   supabase: SupabaseClient,
   pacienteId: number,
 ): Promise<HistorialPacienteReciente> {
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
 
   const [consultasRes, comprasRes, cxcRes, membRes] = await Promise.all([
     supabase

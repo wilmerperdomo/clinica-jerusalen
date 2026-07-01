@@ -1,6 +1,7 @@
 /** Utilidades — Control financiero mensual por sucursal */
 
 import type { LabCostoOrden } from '@/lib/lab-costos'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 
 export function resumirMargenLab(costos: LabCostoOrden[]) {
   const ingresos = costos.reduce((s, c) => s + Number(c.ingreso || 0), 0)
@@ -136,7 +137,7 @@ function descargarCsv(nombre: string, lineas: string[]) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${nombre}_${new Date().toISOString().split('T')[0]}.csv`
+  a.download = `${nombre}_${fechaHoyHN()}.csv`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

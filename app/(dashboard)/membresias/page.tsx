@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
-import { fechaHoyHN } from '@/lib/fecha-hn'
+import { fechaHoyHN, fechaSumarDias } from '@/lib/fecha-hn'
 import MembresiasClient from './membresias-client'
 
 export const metadata = { title: 'Planes Médicos' }
@@ -16,7 +16,7 @@ export default async function MembresiasPage({
   const supabase = await createClient()
   const { esSuperAdmin, esAdmin, userId } = await getPerfilSucursal()
   const hoy      = fechaHoyHN()
-  const hace90   = new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0]
+  const hace90   = fechaSumarDias(-90, hoy)
 
   // ¿Caja del día abierta para este cajero? (aviso en Planes Activos)
   const { data: sesionCaja } = userId
@@ -80,8 +80,8 @@ export default async function MembresiasPage({
           paciente:pacientes(nombre, apellido1, telefono, foto_url)
         )
       `)
-      .gte('fecha_vencimiento', new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0])
-      .lte('fecha_vencimiento', new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0])
+      .gte('fecha_vencimiento', fechaSumarDias(-90, hoy))
+      .lte('fecha_vencimiento', fechaSumarDias(60, hoy))
       .order('fecha_vencimiento'),
 
     supabase.from('perfiles').select('sucursal_id, nombre, apellido1').single(),

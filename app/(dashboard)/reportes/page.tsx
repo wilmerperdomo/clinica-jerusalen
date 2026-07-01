@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
 import { esRolEnfermeria, esRolMedico } from '@/lib/consultas-utils'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import { redirect } from 'next/navigation'
 import ReportesClient from './reportes-client'
 
@@ -16,7 +17,7 @@ export default async function ReportesPage({
   const { sucursalId: sucursalUsuario, esSuperAdmin, rol } = await getPerfilSucursal()
   if (!esSuperAdmin && (esRolEnfermeria(rol) || esRolMedico(rol))) redirect('/')
   const params    = await searchParams
-  const hoy       = new Date().toISOString().split('T')[0]
+  const hoy       = fechaHoyHN()
   const desde     = params.desde    || hoy
   const hasta     = params.hasta    || hoy
   // No-admin users are forced to their own sucursal

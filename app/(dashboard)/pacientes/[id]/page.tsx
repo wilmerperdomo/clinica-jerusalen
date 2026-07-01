@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import PacienteDetalleClient from './paciente-detalle-client'
 import type { HistorialMembresia, HistorialPago } from '@/components/paciente-plan-historial'
 
@@ -15,7 +16,7 @@ export default async function PacienteDetallePage({
   if (isNaN(pacienteId)) notFound()
 
   const supabase = await createClient()
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
 
   const [
     { data: paciente },

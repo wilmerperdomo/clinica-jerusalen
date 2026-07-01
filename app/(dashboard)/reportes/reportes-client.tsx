@@ -10,6 +10,7 @@ import {
   Scale, ShoppingCart, LayoutGrid, BadgePercent,
 } from 'lucide-react'
 import { exportarCSV, fmtReporte, imprimirReporte } from '@/lib/reporte-utils'
+import { fechaHoyHN, fechaSumarDias } from '@/lib/fecha-hn'
 import { ModuleShell, ModuleHero, ModuleContent } from '@/components/module-layout'
 import ReportesEjecutivo from '@/components/reportes/reportes-ejecutivo'
 import ReportesPacientesPro from '@/components/reportes/reportes-pacientes-pro'
@@ -383,16 +384,16 @@ export default function ReportesClient({
           </button>
           {/* accesos rápidos */}
           {[
-            { label: 'Hoy', fn: () => { const h = new Date().toISOString().split('T')[0]; aplicarFiltro(h, h, sucursalFiltro) } },
+            { label: 'Hoy', fn: () => { const h = fechaHoyHN(); aplicarFiltro(h, h, sucursalFiltro) } },
             { label: 'Esta semana', fn: () => {
-              const hoy  = new Date()
-              const lun  = new Date(hoy); lun.setDate(hoy.getDate() - hoy.getDay() + 1)
-              aplicarFiltro(lun.toISOString().split('T')[0], hoy.toISOString().split('T')[0], sucursalFiltro)
+              const h = fechaHoyHN()
+              const lun = fechaSumarDias(-((new Date(`${h}T12:00:00`).getDay() + 6) % 7), h)
+              aplicarFiltro(lun, h, sucursalFiltro)
             }},
             { label: 'Este mes', fn: () => {
-              const hoy = new Date()
-              const ini = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split('T')[0]
-              aplicarFiltro(ini, hoy.toISOString().split('T')[0], sucursalFiltro)
+              const h = fechaHoyHN()
+              const ini = `${h.slice(0, 7)}-01`
+              aplicarFiltro(ini, h, sucursalFiltro)
             }},
           ].map(r => (
             <button key={r.label} onClick={r.fn}

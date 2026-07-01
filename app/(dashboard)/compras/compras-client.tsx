@@ -1,6 +1,8 @@
 'use client'
 import { useState, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { fechaHN } from '@/lib/fecha-hn'
+import { rpcRegistrarAbonoCxp } from '@/lib/finanzas-rpc'
 import {
   ShoppingCart, Plus, Search, Printer, X, Package, Truck,
   AlertTriangle, ChevronDown, ChevronUp, Check, CreditCard,
@@ -322,7 +324,7 @@ export default function ComprasClient({
           proveedor_nombre:   proveedor?.nombre ?? '',
           sucursal_id:        sucursalId,
           numero_compra:      numero,
-          fecha_vencimiento:  venc.toISOString().split('T')[0],
+          fecha_vencimiento:  fechaHN(venc),
           monto_total:        pagoCredito,
           monto_pagado:       0,
           saldo:              pagoCredito,
@@ -366,32 +368,30 @@ export default function ComprasClient({
     if (monto > modalAbonar.saldo)  return alert('El abono supera el saldo')
     setAbonando(true)
     try {
-      const nuevoMontoPagado = modalAbonar.monto_pagado + monto
-      const nuevoSaldo       = modalAbonar.saldo - monto
-      const nuevoEstado      = nuevoSaldo <= 0 ? 'PAGADO' : 'PARCIAL'
       const hora = new Date().toTimeString().slice(0, 8)
-      const { data: { user } } = await supabase.auth.getUser()
 
-      await supabase.from('compra_cxp_abonos').insert({
-        cxp_id: modalAbonar.id, compra_id: modalAbonar.compra_id,
-        proveedor_nombre: modalAbonar.proveedor_nombre, monto,
-        forma_pago: 'EFECTIVO', cajero_id: user?.id, cajero_nombre: cajeroNombre,
-        sucursal_id: sucursalDefault, fecha: hoy, hora,
+      const res = await rpcRegistrarAbonoCxp(supabase, {
+        cxp_id: modalAbonar.id,
+        monto,
+        forma_pago: 'EFECTIVO',
+        cajero_nombre: cajeroNombre,
+        sucursal_id: sucursalDefault,
+        registrar_caja: false,
+        fecha: hoy,
+        hora,
       })
 
-      const { error } = await supabase
-        .from('compra_cxp')
-        .update({ monto_pagado: nuevoMontoPagado, saldo: nuevoSaldo, estado: nuevoEstado })
-        .eq('id', modalAbonar.id)
-      if (!error) {
+      if (res.ok) {
         setCxpPendientes(prev =>
           prev.map(c => c.id === modalAbonar.id
-            ? { ...c, monto_pagado: nuevoMontoPagado, saldo: nuevoSaldo, estado: nuevoEstado }
+            ? { ...c, monto_pagado: res.data.monto_pagado, saldo: res.data.saldo, estado: res.data.estado }
             : c
           ).filter(c => c.estado !== 'PAGADO')
         )
         setModalAbonar(null)
         setMontoAbono('')
+      } else {
+        alert('Error al registrar abono: ' + res.error)
       }
     } finally {
       setAbonando(false)
