@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { fechaHoyHN, fechaSumarDias, fechaHN } from '@/lib/fecha-hn'
 import AgendaClient from './agenda-client'
 
 export const dynamic = 'force-dynamic'
@@ -10,16 +11,16 @@ export default async function AgendaPage() {
   const supabase = await createClient()
   const { sucursalId, esSuperAdmin, sucursalNombre } = await getPerfilSucursal()
 
-  const hoy = new Date().toISOString().split('T')[0]
-  const manana = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
+  const manana = fechaSumarDias(1, hoy)
 
   // Semana actual: lunes → domingo
-  const d    = new Date(hoy)
+  const d    = new Date(`${hoy}T12:00:00`)
   const dia  = d.getDay() === 0 ? 6 : d.getDay() - 1
   const lunes = new Date(d); lunes.setDate(d.getDate() - dia)
   const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6)
-  const semanaInicio = lunes.toISOString().split('T')[0]
-  const semanaFin    = domingo.toISOString().split('T')[0]
+  const semanaInicio = fechaHN(lunes)
+  const semanaFin    = fechaHN(domingo)
 
   const citasQuery = supabase
     .from('citas')

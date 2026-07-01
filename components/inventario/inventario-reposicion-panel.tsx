@@ -1,6 +1,6 @@
 'use client'
 
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { PackagePlus, RefreshCw, Truck } from 'lucide-react'
 import type { SugerenciaReposicion } from '@/lib/inventario-profesional'
 
@@ -11,9 +11,6 @@ interface Props {
   onRecargar: () => void
 }
 
-function sb() {
-  return createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
-}
 
 export default function InventarioReposicionPanel({
   sugerencias,
@@ -21,7 +18,7 @@ export default function InventarioReposicionPanel({
   proveedorNombre,
   onRecargar,
 }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
 
   async function guardarSugerencias() {
     if (sugerencias.length === 0) return

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Gift, Save, RefreshCw, Info, Percent, Coins, Shield } from 'lucide-react'
 import {
   type FidelidadConfig,
@@ -20,15 +20,9 @@ interface Props {
   configInicial: FidelidadConfig
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function FidelidadClient({ configInicial }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const [config, setConfig] = useState<FidelidadConfig>(configInicial)
   const [guardando, setGuardando] = useState(false)
   const [mensaje, setMensaje] = useState('')

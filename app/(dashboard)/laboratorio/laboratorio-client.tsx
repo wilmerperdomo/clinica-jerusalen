@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useMemo, useEffect, useCallback, useRef } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   FlaskConical, Plus, Search, RefreshCw, ClipboardList,
   CheckCircle2, Clock, X, Save, AlertCircle,
@@ -87,12 +87,6 @@ interface CampoResultadoForm {
   resultadoId?: number
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function LaboratorioClient({
   ordenes: init, pruebas, pacientes, fechaHoy,
@@ -207,7 +201,7 @@ export default function LaboratorioClient({
   const [formPerfil, setFormPerfil] = useState({ nombre: '', descripcion: '', precio: '', activo: true, pruebas_ids: [] as number[] })
   const [guardandoPerfil, setGuardandoPerfil] = useState(false)
 
-  const supabase = useMemo(() => sb(), [])
+  const supabase = useMemo(() => createClient(), [])
   const confirmDialog = useConfirm()
   const esRolClinicoBasico = esRolEnfermeria(rolUsuario) || esRolMedico(rolUsuario)
   const puedeVerAdminLab = esSuperAdmin || !esRolClinicoBasico
@@ -778,33 +772,35 @@ export default function LaboratorioClient({
     }
 
     setGuardandoOrden(true)
-    let error = (await supabase.from('consulta_analisis').insert(filas)).error
+    try {
+      let error = (await supabase.from('consulta_analisis').insert(filas)).error
 
-    if (error && /lab_grupo_id|fecha_prometida|estado_lab|paciente_id|sucursal_id|medico_id|medico_nombre|perfil_id|observaciones|entrega_|urgente|schema cache/i.test(error.message)) {
-      const filasBase = filas.map(({
-        lab_grupo_id, fecha_prometida, estado_lab, paciente_id, sucursal_id,
-        medico_id, medico_nombre, perfil_id, observaciones, entrega_fecha,
-        entrega_whatsapp, entrega_email, entrega_fisico, urgente,
-        ...rest
-      }) => rest)
-      error = (await supabase.from('consulta_analisis').insert(filasBase)).error
+      if (error && /lab_grupo_id|fecha_prometida|estado_lab|paciente_id|sucursal_id|medico_id|medico_nombre|perfil_id|observaciones|entrega_|urgente|schema cache/i.test(error.message)) {
+        const filasBase = filas.map(({
+          lab_grupo_id, fecha_prometida, estado_lab, paciente_id, sucursal_id,
+          medico_id, medico_nombre, perfil_id, observaciones, entrega_fecha,
+          entrega_whatsapp, entrega_email, entrega_fisico, urgente,
+          ...rest
+        }) => rest)
+        error = (await supabase.from('consulta_analisis').insert(filasBase)).error
+      }
+
+      if (error) {
+        alert('Error al generar la orden: ' + error.message)
+        return
+      }
+
+      cerrarModalOrden()
+      setTab('cola')
+      setFiltroLab('todas')
+      await recargar()
+      alert(
+        `Orden generada correctamente (${filas.length} prueba${filas.length !== 1 ? 's' : ''}).\n\n` +
+        'Aparece en la columna «Sin cobrar» del Kanban. Cobre en Ventas → Lab por cobrar.',
+      )
+    } finally {
+      setGuardandoOrden(false)
     }
-
-    setGuardandoOrden(false)
-
-    if (error) {
-      alert('Error al generar la orden: ' + error.message)
-      return
-    }
-
-    cerrarModalOrden()
-    setTab('cola')
-    setFiltroLab('todas')
-    await recargar()
-    alert(
-      `Orden generada correctamente (${filas.length} prueba${filas.length !== 1 ? 's' : ''}).\n\n` +
-      'Aparece en la columna «Sin cobrar» del Kanban. Cobre en Ventas → Lab por cobrar.',
-    )
   }
 
   function claveCampo(ordenId: number, campoId?: number | null) {

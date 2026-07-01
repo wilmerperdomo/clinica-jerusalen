@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   Users, Shield, Building2, Settings, X, Save,
   RefreshCw, Edit2, CheckCircle2, XCircle, Plus,
@@ -62,16 +62,11 @@ interface Props {
   esSuperAdmin: boolean
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 /* ═══════════════════════════════════════════════════════ */
 export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales: initSucs, modulos, perfilRoles: initPerfilRoles, servicios: initServicios, permisos, rolPermisos: initRolPermisos, accesoLogs, esSuperAdmin }: Props) {
   const confirmDialog = useConfirm()
+  const supabase = createClient()
   const [tab, setTab] = useState<'roles' | 'sucursales' | 'servicios' | 'permisos' | 'seguridad'>('roles')
   const [rolPermisos, setRolPermisos] = useState<RolPerm[]>(initRolPermisos)
   const [guardandoPerm, setGuardandoPerm] = useState(false)
@@ -104,7 +99,6 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
   }
   const [formSucursal, setFormSucursal] = useState(sucursalVacia)
 
-  const supabase = sb()
 
   /* ── recargar ─ */
   async function recargar() {
@@ -152,7 +146,7 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
   async function guardarServicio() {
     if (!formServicio.nombre.trim()) return
     setGuardandoServ(true)
-    const supabase = sb()
+    const supabase = createClient()
     const payload = {
       nombre:      formServicio.nombre.trim(),
       tipo:        formServicio.tipo || 'General',
@@ -184,7 +178,7 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
       })
       if (!confirmed) return
     }
-    const supabase = sb()
+    const supabase = createClient()
     const { error } = await supabase.from('servicios').update({ activo }).eq('id', id)
     if (error) return alert('Error: ' + error.message)
     setServicios(prev => prev.map(s => s.id === id ? { ...s, activo } : s))
@@ -546,7 +540,7 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
           const perm = permisos.find(p => p.modulo_id === mod.id && p.accion === accion)
           if (!perm) return alert('Falta el permiso en la base de datos. Aplica la migración de permisos.')
           setGuardandoPerm(true)
-          const supabase = sb()
+          const supabase = createClient()
           if (activo) {
             const { error } = await supabase.from('rol_permisos').delete()
               .eq('rol_id', rolId).eq('permiso_id', perm.id)
@@ -593,7 +587,7 @@ export default function ConfigClient({ perfiles: initPerfiles, roles, sucursales
             if (!confirmed) return
           }
           setGuardandoPerm(true)
-          const supabase = sb()
+          const supabase = createClient()
           if (activo) {
             const { error } = await supabase.from('rol_permisos').delete()
               .eq('rol_id', rolId).eq('permiso_id', perm.id)
@@ -1013,7 +1007,7 @@ function RolSelector({ perfilId, rolActual, roles, onCambio }: {
   const [valor, setValor]       = useState(String(rolActual || ''))
   const [saving, setSaving]     = useState(false)
   const [saved,  setSaved]      = useState(false)
-  const supabase = sb()
+  const supabase = createClient()
 
   const rol = roles.find(r => r.id === Number(valor))
 

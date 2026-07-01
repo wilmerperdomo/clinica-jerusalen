@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { fechaHoyHN, fechaSumarDias } from '@/lib/fecha-hn'
 import Link from 'next/link'
 import { BRAND } from '@/lib/brand'
 import {
@@ -48,7 +49,7 @@ function citaBadge(estado: string) {
 
 export default async function DashboardPage() {
   const supabase = await createClient()
-  const hoy      = new Date().toISOString().split('T')[0]
+  const hoy      = fechaHoyHN()
   const mesInicio= `${hoy.slice(0, 7)}-01`
 
   const perfilAuth = await getPerfilSucursal()
@@ -114,7 +115,7 @@ export default async function DashboardPage() {
       .select('id, fecha_fin, paciente:pacientes(nombre, apellido1)')
       .eq('estado', 'activo')
       .gte('fecha_fin', hoy)
-      .lte('fecha_fin', new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0])
+      .lte('fecha_fin', fechaSumarDias(7, hoy))
       .order('fecha_fin')
       .limit(5),
 

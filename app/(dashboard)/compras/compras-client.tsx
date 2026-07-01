@@ -365,34 +365,37 @@ export default function ComprasClient({
     if (isNaN(monto) || monto <= 0) return alert('Monto inválido')
     if (monto > modalAbonar.saldo)  return alert('El abono supera el saldo')
     setAbonando(true)
-    const nuevoMontoPagado = modalAbonar.monto_pagado + monto
-    const nuevoSaldo       = modalAbonar.saldo - monto
-    const nuevoEstado      = nuevoSaldo <= 0 ? 'PAGADO' : 'PARCIAL'
-    const hora = new Date().toTimeString().slice(0, 8)
-    const { data: { user } } = await supabase.auth.getUser()
+    try {
+      const nuevoMontoPagado = modalAbonar.monto_pagado + monto
+      const nuevoSaldo       = modalAbonar.saldo - monto
+      const nuevoEstado      = nuevoSaldo <= 0 ? 'PAGADO' : 'PARCIAL'
+      const hora = new Date().toTimeString().slice(0, 8)
+      const { data: { user } } = await supabase.auth.getUser()
 
-    await supabase.from('compra_cxp_abonos').insert({
-      cxp_id: modalAbonar.id, compra_id: modalAbonar.compra_id,
-      proveedor_nombre: modalAbonar.proveedor_nombre, monto,
-      forma_pago: 'EFECTIVO', cajero_id: user?.id, cajero_nombre: cajeroNombre,
-      sucursal_id: sucursalDefault, fecha: hoy, hora,
-    })
+      await supabase.from('compra_cxp_abonos').insert({
+        cxp_id: modalAbonar.id, compra_id: modalAbonar.compra_id,
+        proveedor_nombre: modalAbonar.proveedor_nombre, monto,
+        forma_pago: 'EFECTIVO', cajero_id: user?.id, cajero_nombre: cajeroNombre,
+        sucursal_id: sucursalDefault, fecha: hoy, hora,
+      })
 
-    const { error } = await supabase
-      .from('compra_cxp')
-      .update({ monto_pagado: nuevoMontoPagado, saldo: nuevoSaldo, estado: nuevoEstado })
-      .eq('id', modalAbonar.id)
-    if (!error) {
-      setCxpPendientes(prev =>
-        prev.map(c => c.id === modalAbonar.id
-          ? { ...c, monto_pagado: nuevoMontoPagado, saldo: nuevoSaldo, estado: nuevoEstado }
-          : c
-        ).filter(c => c.estado !== 'PAGADO')
-      )
-      setModalAbonar(null)
-      setMontoAbono('')
+      const { error } = await supabase
+        .from('compra_cxp')
+        .update({ monto_pagado: nuevoMontoPagado, saldo: nuevoSaldo, estado: nuevoEstado })
+        .eq('id', modalAbonar.id)
+      if (!error) {
+        setCxpPendientes(prev =>
+          prev.map(c => c.id === modalAbonar.id
+            ? { ...c, monto_pagado: nuevoMontoPagado, saldo: nuevoSaldo, estado: nuevoEstado }
+            : c
+          ).filter(c => c.estado !== 'PAGADO')
+        )
+        setModalAbonar(null)
+        setMontoAbono('')
+      }
+    } finally {
+      setAbonando(false)
     }
-    setAbonando(false)
   }
 
   /* ── Imprimir orden ───────────────────────────────────────────── */

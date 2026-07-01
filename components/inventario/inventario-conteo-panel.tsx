@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { ClipboardCheck, Plus, Save } from 'lucide-react'
 import { useConfirm } from '@/components/confirm-dialog'
 import type { StockPro } from '@/lib/inventario-profesional'
@@ -14,9 +14,6 @@ interface Props {
   onRecargar: () => void
 }
 
-function sb() {
-  return createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
-}
 
 export default function InventarioConteoPanel({
   inventario,
@@ -25,7 +22,7 @@ export default function InventarioConteoPanel({
   userId,
   onRecargar,
 }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const confirmDialog = useConfirm()
   const [sucursalId, setSucursalId] = useState(String(sucursalUsuario || sucursales[0]?.id || ''))
   const [responsable, setResponsable] = useState('')

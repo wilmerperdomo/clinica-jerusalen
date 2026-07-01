@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getPerfilSucursal } from '@/lib/get-sucursal'
+import { fechaHoyHN, fechaSumarDias } from '@/lib/fecha-hn'
 
 export type AlertaTipo = 'danger' | 'warning' | 'info'
 
@@ -28,10 +29,10 @@ export async function getAlertas(): Promise<Alerta[]> {
   const supabase = await createClient()
   const { sucursalId, esSuperAdmin } = await getPerfilSucursal()
 
-  const hoy     = new Date().toISOString().split('T')[0]
-  const manana  = new Date(Date.now() + 86400000).toISOString().split('T')[0]
-  const en7dias = new Date(Date.now() + 7  * 86400000).toISOString().split('T')[0]
-  const en30dias= new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]
+  const hoy     = fechaHoyHN()
+  const manana  = fechaSumarDias(1, hoy)
+  const en7dias = fechaSumarDias(7, hoy)
+  const en30dias= fechaSumarDias(30, hoy)
 
   const filtroSuc = <T extends { eq: (col: string, val: number) => T }>(q: T) =>
     !esSuperAdmin && sucursalId ? q.eq('sucursal_id', sucursalId) : q
@@ -111,7 +112,7 @@ export async function getAlertas(): Promise<Alerta[]> {
       const { data: topPacientes } = await supabase
         .from('consultas')
         .select('paciente_id, paciente:pacientes(nombre, apellido1)')
-        .gte('fecha', new Date(Date.now() - 90 * 86400000).toISOString().split('T')[0])
+        .gte('fecha', fechaSumarDias(-90, hoy))
       const counts = new Map<number, { nombre: string; count: number }>()
       for (const c of topPacientes ?? []) {
         const pid = c.paciente_id as number
@@ -268,7 +269,7 @@ export async function getAlertas(): Promise<Alerta[]> {
     })
   }
   // CXC antiguas (>30 días)
-  const hace30 = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+  const hace30 = fechaSumarDias(-30, hoy)
   for (const c of (cxcLista ?? []).filter(c => c.fecha && c.fecha < hace30)) {
     alertas.push({
       id: `cxc-ant-${c.id}`,

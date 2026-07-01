@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   Calendar, ChevronLeft, ChevronRight, Plus, X, Save,
   Search, Clock, Phone, CheckCircle2, XCircle,
@@ -83,12 +83,6 @@ const CITAS_SELECT = `
   servicio:servicios(id, nombre, tipo, precio)
 `
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 function calcEdad(fn?: string) {
   if (!fn) return ''
@@ -118,7 +112,7 @@ export default function AgendaClient({
   sucursalUsuario, esSuperAdmin, sucursalNombre,
   fechaHoy, semanaInicio: initSemana,
 }: Props) {
-  const sb = supabase()
+  const sb = createClient()
   const confirmDialog = useConfirm()
   const timelineRef = useRef<HTMLDivElement>(null)
   const [reloj, setReloj] = useState(() => new Date())

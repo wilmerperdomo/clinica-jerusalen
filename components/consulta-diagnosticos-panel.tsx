@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Stethoscope, Star, Trash2, Plus } from 'lucide-react'
 import Cie10Buscador from '@/components/cie10-buscador'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   type DiagnosticoItem,
   type Cie10Entry,
@@ -27,10 +27,7 @@ export default function ConsultaDiagnosticosPanel({ items, onChange }: Props) {
       principal: items.length === 0,
     }))
     try {
-      const sb = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      )
+      const sb = createClient()
       const { data: { user } } = await sb.auth.getUser()
       if (!user) return
       await sb.from('medico_cie10_favorito').upsert({

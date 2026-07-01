@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   History, ChevronDown, ChevronUp, Pill, Stethoscope, Activity,
   FlaskConical, AlertCircle,
@@ -45,12 +45,6 @@ interface Props {
   alergias?: string | null
 }
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function ConsultaContextoClinicoPanel({ pacienteId, consultaActualId, alergias }: Props) {
   const [abierto, setAbierto] = useState(true)
@@ -64,7 +58,7 @@ export default function ConsultaContextoClinicoPanel({ pacienteId, consultaActua
   useEffect(() => {
     if (!pacienteId) return
     setCargando(true)
-    const sb = supabase()
+    const sb = createClient()
     const col = columnaConsultaDetalle()
 
     Promise.all([

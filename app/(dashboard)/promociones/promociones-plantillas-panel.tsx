@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Plus, Pencil, Trash2, FileText } from 'lucide-react'
 import ResponsiveModal from '@/components/responsive-modal'
 import {
@@ -18,12 +18,6 @@ interface Props {
   modoSeleccion?: boolean
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 const VACIA: Omit<PromocionPlantilla, 'id' | 'created_at'> = {
   nombre: '', contenido: '', categoria_servicio: 'general', activa: true, sucursal_id: null,
@@ -32,7 +26,7 @@ const VACIA: Omit<PromocionPlantilla, 'id' | 'created_at'> = {
 export default function PromocionesPlantillasPanel({
   esSuperAdmin, sucursalId, onSeleccionar, modoSeleccion,
 }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const confirmDialog = useConfirm()
   const [plantillas, setPlantillas] = useState<PromocionPlantilla[]>([])
   const [modal, setModal] = useState(false)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Baby, Printer, AlertTriangle, Plus, Syringe } from 'lucide-react'
 import {
   alertasPediatricas, claseSeveridadAlerta,
@@ -25,12 +25,6 @@ interface Props {
   apellido2?: string
 }
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function ExpedientePediatriaPanel({
   pacienteId, fechaNac, genero, codigo, nombre, apellido1, apellido2,
@@ -47,7 +41,7 @@ export default function ExpedientePediatriaPanel({
 
   async function recargar() {
     setCargando(true)
-    const sb = supabase()
+    const sb = createClient()
     const [catRes, vacRes, conRes, pedRes] = await Promise.all([
       sb.from('vacuna_catalogo').select('*').eq('activo', true).order('orden'),
       sb.from('paciente_vacuna').select('*, vacuna:vacuna_catalogo(*)').eq('paciente_id', pacienteId).order('fecha_aplicada', { ascending: false }),
@@ -86,7 +80,7 @@ export default function ExpedientePediatriaPanel({
   async function registrarVacuna() {
     if (!vacunaSel) return
     setGuardando(true)
-    const sb = supabase()
+    const sb = createClient()
     const { error } = await sb.from('paciente_vacuna').insert({
       paciente_id: pacienteId,
       vacuna_id: Number(vacunaSel),

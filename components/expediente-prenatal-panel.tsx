@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Heart, Printer, AlertTriangle } from 'lucide-react'
 import { alertasPrenatales, claseSeveridadAlerta } from '@/lib/alertas-clinicas'
 import { imprimirHojaControlPrenatal } from '@/lib/prenatal-print'
@@ -31,12 +31,6 @@ interface ControlRow {
   notas?: string | null
 }
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function ExpedientePrenatalPanel({
   pacienteId, codigo, nombre, apellido1, apellido2, fechaNac,
@@ -51,7 +45,7 @@ export default function ExpedientePrenatalPanel({
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => {
-    const sb = supabase()
+    const sb = createClient()
     async function load() {
       setCargando(true)
       const embRes = await sb.from('embarazo').select('id,fum,fpp,activo').eq('paciente_id', pacienteId).eq('activo', true).maybeSingle()

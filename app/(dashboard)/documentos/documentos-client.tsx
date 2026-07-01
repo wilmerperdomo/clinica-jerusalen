@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   FileText, Printer, Search, RefreshCw, Filter, ExternalLink,
   Pill, FileHeart, Skull, Stethoscope, Eye, X, Calendar,
@@ -45,13 +45,6 @@ const DOCUMENTOS_SELECT = `
   paciente:pacientes(${PACIENTE_CONSULTA_SELECT}, direccion)
 `
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
-
 export default function DocumentosClient({
   documentosIniciales,
   sucursales,
@@ -59,7 +52,7 @@ export default function DocumentosClient({
   sucursalId,
   sucursalNombre,
 }: Props) {
-  const sb = supabase()
+  const sb = createClient()
   const [documentos, setDocumentos] = useState<DocumentoHistorial[]>(documentosIniciales)
   const [buscar, setBuscar] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<TipoDocCorrelativo | 'todos'>('todos')

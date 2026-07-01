@@ -19,3 +19,11 @@ export function fechaHoyHN(): string {
 export function fechaHN(d: Date): string {
   return d.toLocaleDateString('en-CA', { timeZone: ZONA_HN })
 }
+
+/** Suma días a una fecha base (YYYY-MM-DD) y devuelve fecha HN. */
+export function fechaSumarDias(dias: number, base?: string): string {
+  const ref = base ?? fechaHoyHN()
+  const d = new Date(`${ref}T12:00:00`)
+  d.setDate(d.getDate() + dias)
+  return fechaHN(d)
+}

@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useMemo, useCallback, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   Calendar, Clock, Stethoscope, Plus, Search,
   CheckCircle2, XCircle, AlertCircle, ClipboardList,
@@ -93,6 +93,7 @@ import {
 } from '@/lib/consulta-diagnosticos-utils'
 import { estudiosPlanAMatchear, medicamentosPlanAReceta } from '@/lib/ordenes-conectadas-utils'
 import { alertasConsultaEnVivo } from '@/lib/alertas-clinicas'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import { edadEnMeses, type VacunaCatalogo, type PacienteVacuna } from '@/lib/vacunas-utils'
 import {
   PLANTILLAS_EXAMEN_FISICO, aplicarPlantillaExamen, type FormExamenFisico,
@@ -180,12 +181,6 @@ interface Props {
   abrirNuevaConsulta?: boolean
 }
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 /* ─── componente principal ──────────────────────────────── */
 export default function ConsultasClient({
@@ -223,7 +218,7 @@ export default function ConsultasClient({
     rolesActivos.some(nombre => puedeAtenderConsulta(nombre, { rolIdsMedico })) ||
     (rolId != null && rolIdsMedico.includes(rolId))
   const esEnfermeria = esRolEnfermeria(rolUsuario)
-  const sbRef = useRef(supabase())
+  const sbRef = useRef(createClient())
   const buscarPacienteRemoto = useCallback(
     (termino: string) => buscarPacientesActivos(sbRef.current, termino),
     [],
@@ -346,7 +341,7 @@ export default function ConsultasClient({
   const [vacunasPaciente, setVacunasPaciente] = useState<PacienteVacuna[]>([])
   const [labsHistorial, setLabsHistorial] = useState<{ nombre: string; fecha: string }[]>([])
 
-  const sb = supabase()
+  const sb = createClient()
 
   useEffect(() => {
     sb.auth.getUser().then(async ({ data: { user } }) => {
@@ -932,7 +927,7 @@ export default function ConsultasClient({
     // Insertar solo las pruebas nuevas (las que aún no tienen orden creada)
     const nuevosLab = labItems.filter(l => l.id == null)
     if (nuevosLab.length > 0) {
-      const hoy = new Date().toISOString().split('T')[0]
+      const hoy = fechaHoyHN()
       const hora = new Date().toTimeString().slice(0, 8)
       const { data: insertados, error: errLab } = await sb.from('consulta_analisis').insert(
         nuevosLab.map(l => ({

@@ -150,80 +150,81 @@ export default function CxpClient({
     if (monto > modalAbono.saldo)   return toast.error('El abono supera el saldo pendiente')
 
     setGuardando(true)
-    const ahora = new Date()
-    const hora  = ahora.toTimeString().slice(0, 8)
+    try {
+      const ahora = new Date()
+      const hora  = ahora.toTimeString().slice(0, 8)
 
-    const nuevoPagado = modalAbono.monto_pagado + monto
-    const nuevoSaldo  = modalAbono.saldo - monto
-    const nuevoEstado = nuevoSaldo <= 0.005 ? 'PAGADO' : 'PARCIAL'
+      const nuevoPagado = modalAbono.monto_pagado + monto
+      const nuevoSaldo  = modalAbono.saldo - monto
+      const nuevoEstado = nuevoSaldo <= 0.005 ? 'PAGADO' : 'PARCIAL'
 
-    // 1. Registrar abono
-    const { data: abonoNuevo, error: errAbono } = await supabase
-      .from('compra_cxp_abonos')
-      .insert({
-        cxp_id:           modalAbono.id,
-        compra_id:        modalAbono.compra_id,
-        proveedor_id:     modalAbono.proveedor_id ?? null,
-        proveedor_nombre: modalAbono.proveedor_nombre,
-        monto,
-        forma_pago:       formAbono.forma_pago,
-        nota:             formAbono.nota || null,
-        cajero_id:        userId,
-        cajero_nombre:    cajeroNombre,
-        sucursal_id:      modalAbono.sucursal_id ?? sucursalDefault,
-        sesion_id:        formAbono.registrarCaja && sesionAbierta ? sesionAbierta : null,
-        fecha:            hoy,
-        hora,
-      })
-      .select()
-      .single()
+      // 1. Registrar abono
+      const { data: abonoNuevo, error: errAbono } = await supabase
+        .from('compra_cxp_abonos')
+        .insert({
+          cxp_id:           modalAbono.id,
+          compra_id:        modalAbono.compra_id,
+          proveedor_id:     modalAbono.proveedor_id ?? null,
+          proveedor_nombre: modalAbono.proveedor_nombre,
+          monto,
+          forma_pago:       formAbono.forma_pago,
+          nota:             formAbono.nota || null,
+          cajero_id:        userId,
+          cajero_nombre:    cajeroNombre,
+          sucursal_id:      modalAbono.sucursal_id ?? sucursalDefault,
+          sesion_id:        formAbono.registrarCaja && sesionAbierta ? sesionAbierta : null,
+          fecha:            hoy,
+          hora,
+        })
+        .select()
+        .single()
 
-    if (errAbono) {
-      toast.error('Error al registrar abono', errAbono.message)
+      if (errAbono) {
+        toast.error('Error al registrar abono', errAbono.message)
+        return
+      }
+
+      // 2. Actualizar CXP
+      const { error: errCxp } = await supabase
+        .from('compra_cxp')
+        .update({ monto_pagado: nuevoPagado, saldo: nuevoSaldo, estado: nuevoEstado })
+        .eq('id', modalAbono.id)
+
+      if (errCxp) {
+        toast.error('Error al actualizar saldo', errCxp.message)
+        return
+      }
+
+      // 3. Registrar egreso en caja si hay sesión abierta
+      if (formAbono.registrarCaja && sesionAbierta) {
+        await supabase.from('caja_movimientos').insert({
+          sesion_id:       sesionAbierta,
+          sucursal_id:     modalAbono.sucursal_id ?? sucursalDefault,
+          tipo:            'EGRESO',
+          concepto:        `Pago CXP — ${modalAbono.proveedor_nombre}`,
+          monto,
+          forma_pago:      formAbono.forma_pago === 'TARJETA' ? 'TARJETA' : formAbono.forma_pago === 'TRANSFERENCIA' ? 'TRANSFERENCIA' : 'EFECTIVO',
+          nota:            formAbono.nota || `Abono CXP #${modalAbono.id} — Compra ${modalAbono.numero_compra ?? modalAbono.compra_id}`,
+          cajero_id:       userId,
+          fecha:           hoy,
+          hora,
+        })
+      }
+
+      // Actualizar estado local
+      setCxpLista(prev => prev.map(c =>
+        c.id === modalAbono.id
+          ? { ...c, monto_pagado: nuevoPagado, saldo: nuevoSaldo, estado: nuevoEstado }
+          : c
+      ))
+      if (abonoNuevo) setAbonos(prev => [abonoNuevo, ...prev])
+
+      toast.success('Pago registrado', `${fmt(monto)} a ${modalAbono.proveedor_nombre}`)
+      setModalAbono(null)
+      setFormAbono({ monto: '', forma_pago: 'EFECTIVO', nota: '', registrarCaja: true })
+    } finally {
       setGuardando(false)
-      return
     }
-
-    // 2. Actualizar CXP
-    const { error: errCxp } = await supabase
-      .from('compra_cxp')
-      .update({ monto_pagado: nuevoPagado, saldo: nuevoSaldo, estado: nuevoEstado })
-      .eq('id', modalAbono.id)
-
-    if (errCxp) {
-      toast.error('Error al actualizar saldo', errCxp.message)
-      setGuardando(false)
-      return
-    }
-
-    // 3. Registrar egreso en caja si hay sesión abierta
-    if (formAbono.registrarCaja && sesionAbierta) {
-      await supabase.from('caja_movimientos').insert({
-        sesion_id:       sesionAbierta,
-        sucursal_id:     modalAbono.sucursal_id ?? sucursalDefault,
-        tipo:            'EGRESO',
-        concepto:        `Pago CXP — ${modalAbono.proveedor_nombre}`,
-        monto,
-        forma_pago:      formAbono.forma_pago === 'TARJETA' ? 'TARJETA' : formAbono.forma_pago === 'TRANSFERENCIA' ? 'TRANSFERENCIA' : 'EFECTIVO',
-        nota:            formAbono.nota || `Abono CXP #${modalAbono.id} — Compra ${modalAbono.numero_compra ?? modalAbono.compra_id}`,
-        cajero_id:       userId,
-        fecha:           hoy,
-        hora,
-      })
-    }
-
-    // Actualizar estado local
-    setCxpLista(prev => prev.map(c =>
-      c.id === modalAbono.id
-        ? { ...c, monto_pagado: nuevoPagado, saldo: nuevoSaldo, estado: nuevoEstado }
-        : c
-    ))
-    if (abonoNuevo) setAbonos(prev => [abonoNuevo, ...prev])
-
-    toast.success('Pago registrado', `${fmt(monto)} a ${modalAbono.proveedor_nombre}`)
-    setModalAbono(null)
-    setFormAbono({ monto: '', forma_pago: 'EFECTIVO', nota: '', registrarCaja: true })
-    setGuardando(false)
   }
 
   // ── Imprimir comprobante de abono ───────────────────────────

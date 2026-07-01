@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { BarChart3, Mail, MessageCircle, Eye, Reply, Send } from 'lucide-react'
 import { nombrePaciente } from '@/lib/consultas-utils'
 import { calcularResumenReporte } from '@/lib/promociones-plantillas'
@@ -11,15 +11,9 @@ interface Props {
   campanas: Campana[]
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function PromocionesReportesPanel({ campanas }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const [campanaId, setCampanaId] = useState<number | ''>('')
   const [envios, setEnvios] = useState<EnvioRegistro[]>([])
   const [cargando, setCargando] = useState(false)

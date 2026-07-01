@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Search } from 'lucide-react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import type { Cie10Entry } from '@/lib/consulta-diagnosticos-utils'
 import { normalizarTexto } from '@/lib/texto-utils'
 
@@ -12,12 +12,6 @@ interface Props {
   className?: string
 }
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function Cie10Buscador({ onSeleccionar, placeholder, className = '' }: Props) {
   const [q, setQ] = useState('')
@@ -27,7 +21,7 @@ export default function Cie10Buscador({ onSeleccionar, placeholder, className = 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    const sb = supabase()
+    const sb = createClient()
     sb.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
       const { data } = await sb
@@ -55,7 +49,7 @@ export default function Cie10Buscador({ onSeleccionar, placeholder, className = 
     }
     timer.current = setTimeout(async () => {
       setBuscando(true)
-      const sb = supabase()
+      const sb = createClient()
       const esCodigo = /^[A-Za-z]\d/.test(term)
       let query = sb.from('cie10').select('codigo, descripcion, capitulo').eq('activo', true).limit(40)
       if (esCodigo) {

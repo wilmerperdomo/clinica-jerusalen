@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef } from 'react'
 import Link from 'next/link'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useConfirm } from '@/components/confirm-dialog'
 import {
   Pill, Plus, Search, Edit2, X, Save, ToggleLeft, ToggleRight,
@@ -39,13 +39,6 @@ const FORM_VACIO = {
   precio_minimo: '', dias_reposicion: '7', isv_porcentaje: '0', proveedor_preferido_id: '',
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
-
 interface Props {
   productos: Producto[]
   proveedores: ProveedorMin[]
@@ -58,7 +51,7 @@ interface Props {
 export default function ProductosClient({
   productos: init, proveedores, categorias, stock, esSuperAdmin,
 }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const confirmDialog = useConfirm()
   const fileRef = useRef<HTMLInputElement>(null)
 

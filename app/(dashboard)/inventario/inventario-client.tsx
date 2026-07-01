@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useTransition, useMemo, useEffect, useRef } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import { useConfirm } from '@/components/confirm-dialog'
 import {
   Package, Plus, Search, RefreshCw, AlertTriangle, X,
@@ -66,14 +67,8 @@ interface Props {
   sucursalUsuario: number | null
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
-function hoy() { return new Date().toISOString().split('T')[0] }
+function hoy() { return fechaHoyHN() }
 
 /* badge de vencimiento */
 function badgeVenc(fecha?: string) {
@@ -90,7 +85,7 @@ export default function InventarioClient({
   productos: initProd, inventario: initInv, movimientos: initMovs,
   sucursales, proveedores: initProvs, categorias, userId, sucursalUsuario,
 }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const confirmDialog = useConfirm()
   const [tab, setTab]       = useState<'ejecutivo' | 'stock' | 'alertas' | 'reposicion' | 'conteo' | 'vencer' | 'kardex' | 'productos' | 'proveedores'>('ejecutivo')
   const [isPending, start]  = useTransition()

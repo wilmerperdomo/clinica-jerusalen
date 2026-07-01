@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   Users, Shield, X, Save, RefreshCw, Edit2, CheckCircle2, XCircle,
   Crown, UserCheck, UserPlus, AlertCircle, KeyRound, Eye, EyeOff, Copy,
@@ -48,19 +48,13 @@ interface Props {
   esSuperAdmin: boolean
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 /* ═══════════════════════════════════════════════════════ */
 export default function UsuariosClient({
   perfiles: initPerfiles, roles, sucursales, perfilRoles: initPerfilRoles, esSuperAdmin,
 }: Props) {
   const confirmDialog = useConfirm()
-  const supabase = sb()
+  const supabase = createClient()
   const [isPending, startTransition] = useTransition()
 
   const [perfiles,    setPerfiles]    = useState<Perfil[]>(initPerfiles)

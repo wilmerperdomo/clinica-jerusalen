@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Megaphone, Plus, Image as ImageIcon, Calendar, Send, Users,
   MessageCircle, Mail, Sparkles, Trash2, Pencil, Play, Clock,
   CheckCircle2, ChevronRight, ChevronLeft, RefreshCw,
@@ -48,13 +48,6 @@ interface Props {
   sucursalId?: number | null
   sucursalNombre?: string | null
   stats: Stats
-}
-
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
 }
 
 function mensajeError(e: unknown): string {
@@ -111,7 +104,7 @@ export default function PromocionesClient({
   promocionesIniciales, campanasIniciales, sucursales, servicios,
   esSuperAdmin = false, sucursalId, sucursalNombre, stats,
 }: Props) {
-  const sb = supabase()
+  const sb = createClient()
   const confirmDialog = useConfirm()
   const [tab, setTab] = useState<'promociones' | 'campanas' | 'contactos' | 'plantillas' | 'reportes' | 'auto'>('promociones')
   const [filtroCategoria, setFiltroCategoria] = useState<CategoriaServicioPromo | 'todas'>('todas')

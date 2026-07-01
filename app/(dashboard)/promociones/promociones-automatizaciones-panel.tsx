@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Plus, Pencil, Trash2, Cake, UserX, Zap, ClipboardList } from 'lucide-react'
 import ResponsiveModal from '@/components/responsive-modal'
 import { CANAL_CFG, esEncuesta, type Promocion } from '@/lib/promociones-utils'
@@ -17,12 +17,6 @@ interface Props {
   procesando?: boolean
 }
 
-function sb() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 const DISPARADOR_CFG: Record<TipoDisparadorRegla, { label: string; icon: typeof Cake; desc: string }> = {
   cumpleanos: { label: 'Cumpleaños', icon: Cake, desc: 'Envía el día del cumpleaños (o días antes)' },
@@ -47,7 +41,7 @@ const REGLA_VACIA = {
 export default function PromocionesAutomatizacionesPanel({
   promociones, esSuperAdmin, sucursalId, onProcesar, procesando,
 }: Props) {
-  const supabase = sb()
+  const supabase = createClient()
   const confirmDialog = useConfirm()
   const [reglas, setReglas] = useState<PromocionRegla[]>([])
   const [plantillas, setPlantillas] = useState<PromocionPlantilla[]>([])

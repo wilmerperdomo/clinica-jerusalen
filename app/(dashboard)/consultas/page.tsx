@@ -8,6 +8,7 @@ import {
 } from '@/lib/consultas-utils'
 import { buildMembresiasMap } from '@/lib/membresia-utils'
 import { UMBRAL_CUOTAS_MORA } from '@/lib/membresia-mora'
+import { fechaHoyHN } from '@/lib/fecha-hn'
 import ConsultasClient from './consultas-client'
 
 export const dynamic = 'force-dynamic'
@@ -61,7 +62,7 @@ export default async function ConsultasPage({
     esAdmin ||
     (await rolesTienenPermisoAccion(rolIdsUsuario, 'consultas', 'crear'))
 
-  const hoy = new Date().toISOString().split('T')[0]
+  const hoy = fechaHoyHN()
 
   const citasQ = supabase
     .from('citas')

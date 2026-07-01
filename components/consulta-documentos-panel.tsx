@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import {
   FileText, FileHeart, Skull, Pill, Printer, Save, Upload,
   FolderOpen, Trash2, Lock, CheckCircle2, Image as ImageIcon, RotateCcw, ExternalLink,
@@ -55,13 +55,6 @@ interface Props {
   fechaConsulta?: string
 }
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
-
 const CATEGORIAS_ARCHIVO = ['Laboratorio', 'Radiografía', 'Ultrasonido', 'Tomografía', 'Otro']
 
 export default function ConsultaDocumentosPanel({
@@ -70,7 +63,7 @@ export default function ConsultaDocumentosPanel({
   esSuperAdmin = false,
   fechaConsulta,
 }: Props) {
-  const sb = supabase()
+  const sb = createClient()
   const confirmDialog = useConfirm()
   const [subTab, setSubTab] = useState<'documentos' | 'archivos'>('documentos')
   const [docs, setDocs] = useState<DocRegistro[]>([])

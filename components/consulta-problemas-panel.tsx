@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { HeartPulse, Plus, Trash2, X } from 'lucide-react'
 import { useConfirm } from '@/components/confirm-dialog'
 
@@ -20,12 +20,6 @@ interface Props {
 
 const ETIQUETAS_RAPIDAS = ['HTA', 'Diabetes', 'Asma', 'Embarazo', 'Alergias', 'ERC', 'Obesidad']
 
-function supabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
-}
 
 export default function ConsultaProblemasPanel({ pacienteId, diagnosticosActuales = [] }: Props) {
   const confirmDialog = useConfirm()
@@ -35,7 +29,7 @@ export default function ConsultaProblemasPanel({ pacienteId, diagnosticosActuale
 
   useEffect(() => {
     if (!pacienteId) return
-    const sb = supabase()
+    const sb = createClient()
     sb.from('paciente_problema_activo')
       .select('id,etiqueta,cie10_codigo,activo,notas')
       .eq('paciente_id', pacienteId)
@@ -49,7 +43,7 @@ export default function ConsultaProblemasPanel({ pacienteId, diagnosticosActuale
 
   async function guardar(lista: ProblemaActivo[]) {
     setItems(lista)
-    const sb = supabase()
+    const sb = createClient()
     for (const p of lista) {
       if (p.id) continue
       const { data } = await sb.from('paciente_problema_activo').insert({
@@ -79,7 +73,7 @@ export default function ConsultaProblemasPanel({ pacienteId, diagnosticosActuale
     })
     if (!confirmed) return
     if (p.id) {
-      await supabase().from('paciente_problema_activo').update({ activo: false }).eq('id', p.id)
+      await createClient().from('paciente_problema_activo').update({ activo: false }).eq('id', p.id)
     }
     setItems(prev => prev.filter((_, i) => i !== idx))
   }
