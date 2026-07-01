@@ -4,9 +4,9 @@ import { useState, useTransition } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   Users, Shield, X, Save, RefreshCw, Edit2, CheckCircle2, XCircle,
-  Crown, UserCheck, UserPlus, AlertCircle,
+  Crown, UserCheck, UserPlus, AlertCircle, KeyRound, Eye, EyeOff, Copy,
 } from 'lucide-react'
-import { crearUsuario } from './actions'
+import { cambiarPasswordUsuario, crearUsuario } from './actions'
 import { useConfirm } from '@/components/confirm-dialog'
 import { ModuleShell, ModuleHero, ModuleContent, ModuleBtnGhost } from '@/components/module-layout'
 
@@ -16,7 +16,8 @@ interface Perfil {
   id: string; nombre?: string | null; apellido?: string | null
   cedula?: string | null; telefono?: string | null; activo: boolean
   sucursal_id?: number | null; rol_id?: number | null
-  created_at: string; rol?: Rol | null
+  created_at: string; email?: string | null
+  rol?: Rol | null
 }
 interface Sucursal { id: number; nombre: string; activo: boolean }
 interface PerfilRol { perfil_id: string; rol_id: number }
@@ -75,6 +76,15 @@ export default function UsuariosClient({
   const [errorNuevo, setErrorNuevo] = useState('')
   const [okNuevo,    setOkNuevo]    = useState('')
   const [creando,    setCreando]    = useState(false)
+
+  const [modalPassword, setModalPassword] = useState(false)
+  const [perfilPassword, setPerfilPassword] = useState<Perfil | null>(null)
+  const [formPassword, setFormPassword] = useState({ password: '', confirmar: '' })
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmar, setShowConfirmar] = useState(false)
+  const [errorPassword, setErrorPassword] = useState('')
+  const [passwordAsignada, setPasswordAsignada] = useState('')
+  const [guardandoPassword, setGuardandoPassword] = useState(false)
 
   /* forms */
   const [formUsuario, setFormUsuario] = useState({
@@ -188,6 +198,67 @@ export default function UsuariosClient({
     const { error } = await supabase.from('perfiles').update({ activo: !perfil.activo }).eq('id', perfil.id)
     if (error) return alert('Error: ' + error.message)
     startTransition(() => { recargar() })
+  }
+
+  function generarPasswordTemporal(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+    let s = ''
+    for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)]
+    return s
+  }
+
+  function abrirModalPassword(perfil: Perfil) {
+    setPerfilPassword(perfil)
+    setFormPassword({ password: '', confirmar: '' })
+    setErrorPassword('')
+    setPasswordAsignada('')
+    setShowPassword(false)
+    setShowConfirmar(false)
+    setModalPassword(true)
+  }
+
+  function cerrarModalPassword() {
+    setModalPassword(false)
+    setPerfilPassword(null)
+    setFormPassword({ password: '', confirmar: '' })
+    setErrorPassword('')
+    setPasswordAsignada('')
+  }
+
+  async function guardarPasswordUsuario() {
+    if (!perfilPassword) return
+    setErrorPassword('')
+    if (formPassword.password.length < 6) {
+      setErrorPassword('La contraseña debe tener al menos 6 caracteres.')
+      return
+    }
+    if (formPassword.password !== formPassword.confirmar) {
+      setErrorPassword('Las contraseñas no coinciden.')
+      return
+    }
+
+    const { confirmed } = await confirmDialog({
+      title: 'Restablecer contraseña',
+      message: `¿Asignar una nueva contraseña a ${perfilPassword.nombre || ''} ${perfilPassword.apellido || ''}? El usuario podrá entrar de inmediato con la nueva clave.`,
+      variant: 'warning',
+      confirmLabel: 'Restablecer',
+    })
+    if (!confirmed) return
+
+    setGuardandoPassword(true)
+    const result = await cambiarPasswordUsuario({
+      userId: perfilPassword.id,
+      password: formPassword.password,
+    })
+    setGuardandoPassword(false)
+
+    if (result.error) {
+      setErrorPassword(result.error)
+      return
+    }
+
+    setPasswordAsignada(formPassword.password)
+    setFormPassword({ password: '', confirmar: '' })
   }
 
   /* ── crear nuevo usuario ─ */
@@ -351,6 +422,10 @@ export default function UsuariosClient({
                           className="p-1.5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100" title="Editar">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
+                        <button onClick={() => abrirModalPassword(p)}
+                          className="p-1.5 rounded bg-amber-50 text-amber-700 hover:bg-amber-100" title="Restablecer contraseña">
+                          <KeyRound className="w-3.5 h-3.5" />
+                        </button>
                         <button onClick={() => toggleActivo(p)}
                           className={`p-1.5 rounded ${p.activo ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
                           title={p.activo ? 'Desactivar' : 'Activar'}>
@@ -492,6 +567,118 @@ export default function UsuariosClient({
                 <Save className="w-4 h-4 inline mr-1" /> Guardar Roles
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ══════════ MODAL RESTABLECER CONTRASEÑA ══════════ */}
+      {modalPassword && perfilPassword && (
+        <Modal title="Restablecer contraseña" onClose={cerrarModalPassword}>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-white font-bold">
+                {(perfilPassword.nombre?.[0] || '?').toUpperCase()}
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900">
+                  {perfilPassword.nombre || '—'} {perfilPassword.apellido || ''}
+                </p>
+                {perfilPassword.email && (
+                  <p className="text-xs text-gray-500">{perfilPassword.email}</p>
+                )}
+              </div>
+            </div>
+
+            {passwordAsignada ? (
+              <div className="space-y-3">
+                <div className="flex items-start gap-2 bg-green-50 text-green-800 text-sm rounded-lg px-3 py-2 border border-green-200">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  <p>Contraseña actualizada. Entregue esta clave al usuario; no se volverá a mostrar aquí.</p>
+                </div>
+                <div className="rounded-xl border border-green-200 bg-white p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Nueva contraseña</p>
+                    <p className="font-mono font-bold text-xl tracking-widest text-green-700">{passwordAsignada}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(passwordAsignada)}
+                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
+                    title="Copiar"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={cerrarModalPassword} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium">
+                    Listo
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {errorPassword && (
+                  <div className="flex items-center gap-2 bg-red-50 text-red-700 text-sm rounded-lg px-3 py-2 border border-red-200">
+                    <AlertCircle className="w-4 h-4 shrink-0" /> {errorPassword}
+                  </div>
+                )}
+                <p className="text-sm text-gray-600">
+                  Asigne una contraseña temporal. El usuario entrará con su correo y esta clave; puede cambiarla después desde el menú lateral.
+                </p>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm font-medium text-gray-700">Nueva contraseña *</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const gen = generarPasswordTemporal()
+                        setFormPassword({ password: gen, confirmar: gen })
+                      }}
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      Generar automática
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={formPassword.password}
+                      onChange={e => setFormPassword(p => ({ ...p, password: e.target.value }))}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full border rounded-lg px-3 py-2 pr-10 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                    <button type="button" onClick={() => setShowPassword(v => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña *</label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmar ? 'text' : 'password'}
+                      value={formPassword.confirmar}
+                      onChange={e => setFormPassword(p => ({ ...p, confirmar: e.target.value }))}
+                      placeholder="Repite la contraseña"
+                      className="w-full border rounded-lg px-3 py-2 pr-10 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    />
+                    <button type="button" onClick={() => setShowConfirmar(v => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                      {showConfirmar ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button onClick={cerrarModalPassword} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+                  <button onClick={guardarPasswordUsuario} disabled={guardandoPassword}
+                    className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                    <KeyRound className="w-4 h-4 inline mr-1" />
+                    {guardandoPassword ? 'Guardando…' : 'Restablecer contraseña'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}

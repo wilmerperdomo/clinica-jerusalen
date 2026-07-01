@@ -148,3 +148,45 @@ export async function crearUsuario(data: {
       : 'Si no puede entrar: ejecute scripts/ARREGLAR-TODO-USUARIOS.sql en Supabase o desactive "Confirm email".',
   }
 }
+
+/** Restablece la contraseña de un usuario (solo administradores). */
+export async function cambiarPasswordUsuario(data: {
+  userId: string
+  password: string
+}) {
+  const { esAdmin, userId: adminUserId } = await getPerfilSucursal()
+  if (!adminUserId || !esAdmin) {
+    return { error: 'No autorizado. Solo administradores pueden restablecer contraseñas.' }
+  }
+
+  if (!data.userId?.trim()) {
+    return { error: 'Usuario no válido.' }
+  }
+  if (!data.password || data.password.length < 6) {
+    return { error: 'La contraseña debe tener al menos 6 caracteres.' }
+  }
+
+  const serviceKey = getServiceRoleKey()
+  if (!serviceKey) {
+    return {
+      error: 'Falta SUPABASE_SERVICE_ROLE_KEY en el servidor. Configure la variable en Vercel para restablecer contraseñas.',
+    }
+  }
+
+  const env = getPublicSupabaseEnv()
+  if (!env) {
+    return { error: 'Falta configuración de Supabase' }
+  }
+
+  const admin = createSupabaseClient(env.url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+
+  const { error } = await admin.auth.admin.updateUserById(data.userId, {
+    password: data.password,
+  })
+
+  if (error) return { error: traducirErrorAuth(error.message) }
+
+  return { ok: true as const }
+}
