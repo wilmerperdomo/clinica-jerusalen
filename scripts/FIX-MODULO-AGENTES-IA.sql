@@ -1,0 +1,1 @@
+-- Copiar contenido de supabase/migrations/102_modulo_agentes_ia.sql

@@ -8,6 +8,9 @@
     "start": "node server.js",
     "start:next": "next start",
     "lint": "next lint",
+    "test:agentes": "node lib/agentes/__tests__/run.mjs",
+    "test:agentes:local": "node scripts/test-agentes-local.mjs",
+    "seed:agentes": "node scripts/seed-agentes-canales.mjs",
     "extract:lab-plantilla": "node scripts/extract-lab-plantilla.mjs"
   },
   "engines": {

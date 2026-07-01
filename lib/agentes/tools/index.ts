@@ -1,0 +1,5 @@
+export * from '@/lib/agentes/tools/pacientes'
+export * from '@/lib/agentes/tools/citas'
+export * from '@/lib/agentes/tools/laboratorio'
+export * from '@/lib/agentes/tools/promociones'
+export * from '@/lib/agentes/tools/facturacion'
