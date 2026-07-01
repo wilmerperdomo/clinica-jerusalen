@@ -1,5 +1,6 @@
 import type { CanalClave, ConfigCanal, HorarioCanal } from '@/lib/agentes/types'
-import { BRAND } from '@/lib/brand'
+import { BRAND, FISCAL } from '@/lib/brand'
+import { horaLocalHN } from '@/lib/fecha-hn'
 
 /** Horario estándar L–S 7:00–19:00 (ajustar por sucursal en BD o aquí) */
 const HORARIO_CLINICA: HorarioCanal[] = [
@@ -11,7 +12,7 @@ const BASE: Omit<ConfigCanal, 'clave' | 'nombre'> = {
   tono: 'profesional, cálido y claro en español de Honduras',
   ubicacion: 'Tegucigalpa, Honduras',
   direccion: 'Consultar en recepción o sitio web',
-  telefono: '',
+  telefono: FISCAL.telefonos,
   horarios: HORARIO_CLINICA,
   servicios_destacados: [
     'Consultas médicas generales y especializadas',
@@ -73,15 +74,14 @@ export function obtenerConfigCanal(
 }
 
 export function canalEstaEnHorario(config: ConfigCanal, ahora = new Date()): boolean {
-  const dia = ahora.getDay()
-  const slot = config.horarios.find(h => h.dia === dia)
+  const { diaSemana, minutosDesdeMedianoche } = horaLocalHN(ahora)
+  const slot = config.horarios.find(h => h.dia === diaSemana)
   if (!slot) return false
-  const mins = ahora.getHours() * 60 + ahora.getMinutes()
   const [ah, am] = slot.abre.split(':').map(Number)
   const [ch, cm] = slot.cierra.split(':').map(Number)
   const abre = ah * 60 + (am || 0)
   const cierra = ch * 60 + (cm || 0)
-  return mins >= abre && mins < cierra
+  return minutosDesdeMedianoche >= abre && minutosDesdeMedianoche < cierra
 }
 
 export function esCanalClave(v: string): v is CanalClave {

@@ -27,19 +27,38 @@ export async function POST(req: NextRequest) {
 
   const entradas = parseMessengerWebhook(body)
   const resultados = []
+  const errores: { etapa: string; error: string }[] = []
 
   for (const entrada of entradas) {
-    const res = await procesarMensajeEntrante(sb, entrada)
-    for (const r of res.respuestas) {
-      await enviarRespuestaCanal({
-        canal: 'messenger_pagina',
-        contacto: entrada.contactoExterno,
-        texto: r.texto,
-        proveedor: 'messenger',
+    try {
+      const res = await procesarMensajeEntrante(sb, entrada)
+      for (const r of res.respuestas) {
+        try {
+          await enviarRespuestaCanal({
+            canal: 'messenger_pagina',
+            contacto: entrada.contactoExterno,
+            texto: r.texto,
+            proveedor: 'messenger',
+          })
+        } catch (e) {
+          errores.push({
+            etapa: 'envio',
+            error: e instanceof Error ? e.message : 'Error al enviar respuesta',
+          })
+        }
+      }
+      resultados.push(res)
+    } catch (e) {
+      errores.push({
+        etapa: 'procesamiento',
+        error: e instanceof Error ? e.message : 'Error al procesar mensaje',
       })
     }
-    resultados.push(res)
   }
 
-  return NextResponse.json({ ok: true, procesados: resultados.length })
+  return NextResponse.json({
+    ok: true,
+    procesados: resultados.length,
+    errores: errores.length ? errores : undefined,
+  })
 }

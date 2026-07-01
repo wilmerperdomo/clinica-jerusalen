@@ -12,15 +12,20 @@ import type { CanalClave, MensajeEntrante } from '@/lib/agentes/types'
 
 export const dynamic = 'force-dynamic'
 
-function apiKeyValida(req: NextRequest): boolean {
+async function accesoAutorizado(req: NextRequest): Promise<boolean> {
   const key = process.env.AGENTES_API_KEY?.trim()
-  if (!key) {
-    // Sin API key: permitir en dev y en la página pública /agentes/prueba en Vercel
-    if (process.env.NODE_ENV !== 'production') return true
+  if (key && req.headers.get('x-agentes-api-key') === key) return true
+  if (process.env.NODE_ENV !== 'production') return true
+  if (process.env.AGENTES_PRUEBA_ENABLED === 'true') {
     const ref = req.headers.get('referer') ?? ''
-    return ref.includes('/agentes/prueba')
+    if (ref.includes('/agentes/prueba')) return true
   }
-  return req.headers.get('x-agentes-api-key') === key
+  const supabase = await createClient()
+  if (supabase) {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) return true
+  }
+  return false
 }
 
 /**
@@ -28,7 +33,7 @@ function apiKeyValida(req: NextRequest): boolean {
  * POST { canalClave, contactoExterno, texto, contactoNombre? }
  */
 export async function POST(req: NextRequest) {
-  if (!apiKeyValida(req)) {
+  if (!(await accesoAutorizado(req))) {
     return NextResponse.json({ error: 'API key inválida' }, { status: 401 })
   }
 
@@ -120,13 +125,15 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const authed = supabase ? (await supabase.auth.getUser()).data.user : null
-  if (!authed && !apiKeyValida(req)) {
+  if (!authed && !(await accesoAutorizado(req))) {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
   }
   return NextResponse.json({
     ok: true,
     modulo: 'agentes_ia',
+    produccion: process.env.NODE_ENV === 'production',
     openai: Boolean(process.env.OPENAI_API_KEY),
+    ignorarHorario: process.env.AGENTES_IGNORAR_HORARIO === 'true',
     canales: ['whatsapp_principal', 'whatsapp_sucursal', 'whatsapp_corporativo', 'messenger_pagina'],
     envio: proveedorEnvioDisponible(),
     webhook_whatsapp: '/api/agentes/webhook/whatsapp/whatsapp_principal',
